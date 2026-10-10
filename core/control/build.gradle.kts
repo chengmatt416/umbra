@@ -6,5 +6,6 @@ plugins {
 dependencies {
     api(project(":core:model"))
     api(project(":core:recovery"))
+    api(project(":core:nodes"))
     api(libs.kotlinx.coroutines.core)
 }

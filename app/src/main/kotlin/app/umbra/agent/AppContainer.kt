@@ -98,6 +98,10 @@ class AppContainer(val context: Context) {
     /** The commit gate (§11): promotions of a repository's commit to a remote branch, conditional and journaled. */
     val commits by lazy { app.umbra.core.control.CommitGate(control, app.umbra.agent.integration.guestGit(this)) }
 
+    /** Paired nodes, their jobs and the placement policy (§10), and the phone's connections to them. */
+    val nodes = app.umbra.core.control.NodeRegistry(control)
+    val nodeConnections by lazy { app.umbra.agent.nodes.NodeConnections(this, scope) }
+
     /** The Shared Runtime Service Manager's state (§9): references, admission, breakers, fenced recovery owners. */
     val services = app.umbra.core.control.SharedServices(control).also { s ->
         listOf(ServiceMonitor.LINUX, ServiceMonitor.HELPER, ServiceMonitor.ROOT_HELPER, ServiceMonitor.X_DESKTOP, ServiceMonitor.LAYA).forEach(s::declare)
