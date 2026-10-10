@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Display
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
 import app.umbra.core.model.Clock
 import app.umbra.core.model.Point
@@ -107,6 +108,8 @@ class AccessibilityUiBackend(
             for (window in windows.valueAt(i)) {
                 if (window.title?.toString() == UmbraOverlay.WINDOW_TITLE) continue
                 val root = window.root ?: continue
+                // Umbra's own capsule is an accessibility overlay when the service draws it: never part of what agents see.
+                if (window.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && root.packageName?.toString() == svc.packageName) continue
                 trees += NodeMapper.tree(displayId, window, root, options, now, nodes)
             }
         }

@@ -109,10 +109,16 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
                 apiKeyEnv = if (keyGiven) "UMBRA_KEY_" + str(args, "id").uppercase().replace(Regex("[^A-Z0-9]"), "_") else null,
                 custom = true, baseUrl = str(args, "base_url"), api = (args["api"] as? JsonPrimitive)?.content ?: "openai-completions",
                 models = listOf(str(args, "model")), keyless = !keyGiven,
+                images = (args["images"] as? JsonPrimitive)?.content == "true",
             )
             (args["key"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() && config.apiKeyEnv != null }?.let { container.secrets.put(config.apiKeyEnv!!, it) }
             container.settings.update { p -> p.copy(providers = p.providers.filterNot { it.id == config.id } + config, defaultModel = ModelRef(config.id, str(args, "model"))) }
             buildJsonObject { put("ok", true) }
+        }
+        "capsule.set" -> {
+            val on = (args["on"] as? JsonPrimitive)?.content != "false"
+            container.settings.update { it.copy(overlayEnabled = on) }
+            buildJsonObject { put("on", on) }
         }
         "approval_mode" -> {
             container.settings.update { it.copy(approvalMode = app.umbra.core.safety.ApprovalMode.valueOf(str(args, "mode").uppercase())) }

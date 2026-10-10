@@ -121,11 +121,16 @@ class AgentSupervisor(
         return deps.store.create(session)
     }
 
-    /** Creates a session and starts working on the request. */
-    suspend fun launch(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null): Session {
+    /** Creates a session and starts working on the request, with [images] (a screen selection, a photo) attached. */
+    suspend fun launch(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList()): Session {
+        // What would refuse the start refuses it before a session exists: a refused request leaves no failed session.
+        // (send checks again, and takes the slot.)
+        checkFence()
+        deps.admission(projectId, runningByProject())?.let { throw CapacityException(it) }
+        governor?.decision?.value?.let { if (!it.allowNewSessions) throw CapacityException(capacityReason()) }
         val session = create(request, title, workspaceId, model, projectId = projectId)
         try {
-            send(session.id, request)
+            send(session.id, request, images)
         } catch (e: Exception) {
             // The session exists but could not start; the user sees why and can retry. The start may already have
             // moved it to running (or not): mark it failed from whichever state it is in, and keep the real error.

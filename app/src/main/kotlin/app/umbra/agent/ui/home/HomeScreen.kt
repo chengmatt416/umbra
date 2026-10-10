@@ -126,15 +126,22 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: ()
             projects = projects.values.sortedBy { it.createdAtMs }.map { it.id to it.name },
             onProject = { container.ui.setHomeProject(it) },
             sending = sending,
+            onSnapshot = {
+                // Circle something in the app behind Umbra: step aside, select, and come back to the composer there.
+                if (!android.provider.Settings.canDrawOverlays(context) && !app.umbra.platform.android.UmbraAccessibilityService.connected.value) {
+                    error = "Selecting from the screen needs the draw-over-apps permission or Umbra's accessibility service."
+                } else {
+                    (context as? Activity)?.moveTaskToBack(true)
+                    container.capsule.startSelection(delayMs = 450)
+                }
+            },
             onSend = { text ->
                 sending = true
                 scope.launch {
                     try {
-                        app.umbra.agent.AgentService.start(context)
-                        val session = container.supervisor.launch(text, projectId = homeProject?.takeIf { projects.containsKey(it) })
-                        container.ui.saveDraft("")
+                        val id = container.capsule.screen.send(text, sessionId = null, projectId = homeProject?.takeIf { projects.containsKey(it) }, fromCapsule = false)
                         error = null
-                        onOpenSession(session.id)
+                        onOpenSession(id)
                     } catch (e: Exception) {
                         error = e.message ?: e::class.simpleName
                     } finally {
@@ -194,8 +201,9 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: ()
 }
 
 /**
- * The Smart Composer (`.smart-composer`): one draft shared with the Capsule, the project new work goes to, the
- * microphone (speech recognition when the phone has it) and Send. The keyboard opens only when the field is tapped.
+ * The Smart Composer (`.smart-composer`): one draft and one set of context chips shared with the Capsule, the project
+ * new work goes to, Snapshot selection, the microphone (speech recognition when the phone has it) and Send. The
+ * keyboard opens only when the field is tapped.
  */
 @Composable
 fun SmartComposer(
@@ -203,11 +211,13 @@ fun SmartComposer(
     projects: List<Pair<String, String>>,
     onProject: (String?) -> Unit,
     sending: Boolean,
+    onSnapshot: () -> Unit,
     onSend: (String) -> Unit,
 ) {
     val container = LocalContext.current.container
     val context = LocalContext.current
     val draft by container.ui.draft.collectAsStateWithLifecycle()
+    val chips by container.ui.draftContext.collectAsStateWithLifecycle()
     var projectMenu by remember { mutableStateOf(false) }
     val canListen = remember { SpeechRecognizer.isRecognitionAvailable(context) }
     val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -221,6 +231,9 @@ fun SmartComposer(
         Modifier.fillMaxWidth().shadow(8.dp, shape, ambientColor = Color(0x22455F49), spotColor = Color(0x33455F49)).clip(shape)
             .background(Color(0xFFF7FAF4)).border(1.dp, Color(0xB5FFFFFF), shape).padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
+        // The same context the Capsule's composers hold (§3.1): a screen selection made over another app shows here too.
+        chips.forEach { chip -> app.umbra.agent.capsule.ChipRow(chip) { container.ui.removeContext(chip.id) } }
+        if (chips.isNotEmpty()) Gap(8.dp)
         Box(Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
             if (draft.isEmpty()) Text("Ask Umbra to do anything…", fontSize = 15.sp, color = Color(0xFF9AAA98))
             BasicTextField(
@@ -241,6 +254,8 @@ fun SmartComposer(
                 }
             }
             Box(Modifier.weight(1f))
+            PButton("", onSnapshot, style = ButtonStyle.Alt, tiny = true, icon = PIcons.target, contentDescription = "Select from the screen")
+            Box(Modifier.padding(start = 6.dp))
             if (canListen) {
                 PButton("", {
                     speech.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))

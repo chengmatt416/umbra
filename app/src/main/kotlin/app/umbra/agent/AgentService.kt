@@ -37,7 +37,6 @@ class AgentService : Service() {
     private val approvalNotifications = HashMap<String, Int>()
     private val lastStates = HashMap<String, SessionState>()
     private var wakeLock: PowerManager.WakeLock? = null
-    private var overlay: OverlayController? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -54,13 +53,13 @@ class AgentService : Service() {
             started = true
             startForeground(ONGOING_ID, ongoing(emptyList(), emptyList(), 0), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
             observe()
-            overlay = OverlayController(this, container, scope).also { it.start() }
+            container.capsule.start()
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
-        overlay?.stop()
+        container.capsule.stop()
         holdAwake(false)
         scope.cancel()
         super.onDestroy()
@@ -85,7 +84,9 @@ class AgentService : Service() {
             while (true) {
                 delay(15_000)
                 val busy = container.sessionStore.list().any { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL || it.state == SessionState.PAUSED } ||
-                    container.approvals.pending.value.isNotEmpty() || container.questions.pending.value.isNotEmpty()
+                    container.approvals.pending.value.isNotEmpty() || container.questions.pending.value.isNotEmpty() ||
+                    // The capsule is on screen: the process must stay for it to stay.
+                    (container.settings.value.overlayEnabled && (android.provider.Settings.canDrawOverlays(this@AgentService) || app.umbra.platform.android.UmbraAccessibilityService.connected.value))
                 if (busy) idleSince = System.currentTimeMillis()
                 else if (System.currentTimeMillis() - idleSince > IDLE_STOP_MS) {
                     stopForeground(STOP_FOREGROUND_REMOVE)

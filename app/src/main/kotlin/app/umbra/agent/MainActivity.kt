@@ -14,6 +14,7 @@ import app.umbra.agent.ui.shell.PorcelainApp
 
 class MainActivity : ComponentActivity() {
     private var requestedSession by mutableStateOf<String?>(null)
+    private var requestedPage by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -23,9 +24,10 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
         )
         requestedSession = intent?.getStringExtra(EXTRA_SESSION)
+        requestedPage = intent?.getStringExtra(EXTRA_PAGE)
         setContent {
             PorcelainTheme {
-                PorcelainApp(openSession = requestedSession, onOpened = { requestedSession = null })
+                PorcelainApp(openSession = requestedSession, openPage = requestedPage, onOpened = { requestedSession = null; requestedPage = null })
             }
         }
     }
@@ -33,9 +35,13 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         requestedSession = intent.getStringExtra(EXTRA_SESSION)
+        requestedPage = intent.getStringExtra(EXTRA_PAGE)
     }
 
     companion object {
         const val EXTRA_SESSION = "session"
+
+        /** A page to open by its route ("inbox", "emergency"), for the Capsule's links. */
+        const val EXTRA_PAGE = "page"
     }
 }

@@ -250,8 +250,10 @@ class AdmissionTest {
                 runBlocking {
                     val first = rig.supervisor.launch("slow work", projectId = "p1")
                     rig.awaitState(first.id, SessionState.RUNNING)
+                    val before = rig.store.list().size
                     val refused = kotlin.test.assertFailsWith<CapacityException> { rig.supervisor.launch("more work", projectId = "p1") }
                     assertTrue("maximum 1" in refused.message.orEmpty(), refused.message)
+                    assertEquals(before, rig.store.list().size, "a refused start leaves no failed session behind")
                     val other = rig.supervisor.launch("independent work")
                     rig.awaitState(other.id, SessionState.COMPLETED)
                     rig.awaitState(first.id, SessionState.COMPLETED)

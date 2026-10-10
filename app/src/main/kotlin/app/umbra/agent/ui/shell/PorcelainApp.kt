@@ -96,9 +96,9 @@ enum class Dest(val route: String, val title: String, val icon: IconSpec, val gr
     Settings("settings", "Settings", PIcons.settings, "SYSTEM"),
 }
 
-/** The app: Porcelain shell, bottom bar, drawer, and every screen. [openSession] deep-links into a task. */
+/** The app: Porcelain shell, bottom bar, drawer, and every screen. [openSession] deep-links into a task, [openPage] to a page. */
 @Composable
-fun PorcelainApp(openSession: String?, onOpened: () -> Unit) {
+fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () -> Unit) {
     val container = LocalContext.current.container
     val nav = rememberNavController()
     val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -120,9 +120,12 @@ fun PorcelainApp(openSession: String?, onOpened: () -> Unit) {
         go(Dest.Current)
     }
 
-    LaunchedEffect(openSession) {
+    LaunchedEffect(openSession, openPage) {
         if (openSession != null) {
             openSessionNow(openSession)
+            onOpened()
+        } else if (openPage != null) {
+            Dest.entries.firstOrNull { it.route == openPage }?.let { go(it) }
             onOpened()
         }
     }

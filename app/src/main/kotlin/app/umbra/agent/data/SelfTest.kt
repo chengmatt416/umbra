@@ -157,7 +157,7 @@ class ModelProbe(private val container: AppContainer) {
             agentFiles.write("models.yml", app.umbra.runtime.omp.OmpModelsFile.toYaml(custom.map {
                 app.umbra.runtime.omp.OmpProvider(
                     id = it.id, baseUrl = it.baseUrl!!, api = it.api, apiKeyEnv = it.apiKeyEnv?.takeIf { env -> env in secrets },
-                    auth = if (it.keyless) "none" else null, models = it.models.map { m -> app.umbra.runtime.omp.OmpModel(m) },
+                    auth = if (it.keyless) "none" else null, models = it.models.map { m -> app.umbra.runtime.omp.OmpModel(m, inputImages = it.images) },
                 )
             }))
         }

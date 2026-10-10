@@ -36,6 +36,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Speech for the Capsule's composer: asks the recognizer and puts the words into the shared draft. -->
+        <activity
+            android:name=".capsule.VoiceInputActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Delivers Shizuku's binder to this app, so it can ask Shizuku to host the privileged helper. -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"

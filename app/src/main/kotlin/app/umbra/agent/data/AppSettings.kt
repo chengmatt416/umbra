@@ -29,6 +29,8 @@ data class ProviderConfig(
     val api: String = "openai-completions",
     val models: List<String> = emptyList(),
     val keyless: Boolean = false,
+    /** A custom provider's models take pictures (a screen selection, a photo). Umbra cannot tell, so the user says. */
+    val images: Boolean = false,
 )
 
 @Serializable
@@ -43,7 +45,13 @@ data class AppPrefs(
     /** Appended to the agent's instructions in every session. */
     val standingInstructions: String = "",
     val notifyOnApproval: Boolean = true,
+    /** The Capsule (§3.1): drawn over other apps at the camera, idle or busy. */
     val overlayEnabled: Boolean = false,
+    /**
+     * Live Context (§3.1), explicitly opted into: each message sent from the Capsule carries what the app in front
+     * shows at that moment, read from the accessibility tree. Off, only a snapshot the user selected is attached.
+     */
+    val liveContext: Boolean = false,
     /** Where the Linux environment archive is downloaded from (an https URL). */
     val rootfsUrl: String = "",
     val setupDismissed: Boolean = false,
@@ -108,7 +116,7 @@ class AppProviderResolver(private val settings: AppSettings, private val secrets
                     api = p.api,
                     apiKeyEnv = env?.takeIf { it in keys },
                     auth = if (p.keyless || env == null) "none" else null,
-                    models = p.models.map { OmpModel(it) },
+                    models = p.models.map { OmpModel(it, inputImages = p.images) },
                 )
             }
         }

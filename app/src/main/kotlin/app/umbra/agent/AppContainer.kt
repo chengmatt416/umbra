@@ -121,6 +121,9 @@ class AppContainer(val context: Context) {
         } else null
     }
     val ui = app.umbra.agent.data.UiState(context)
+
+    /** The Material Capsule and Snapshot selection (§3.1); shown by the foreground service while the user has it on. */
+    val capsule by lazy { app.umbra.agent.capsule.Capsule(context, this) }
     val secrets = SecretStore(context)
 
     // ---- privileged helper (shell user): started by root, Shizuku or adb; see HelperController ----
@@ -368,6 +371,10 @@ class AppContainer(val context: Context) {
             launch { startLogMonitor() }
             health.start(scope)
             launch { while (true) { runCatching { capabilities.refresh() }; kotlinx.coroutines.delay(60_000) } }
+            // The capsule lives in the foreground service: it is there whenever the user has it on.
+            launch {
+                settings.flow.map { it.overlayEnabled }.distinctUntilChanged().filter { it }.collect { runCatching { AgentService.start(context) } }
+            }
             // The foreground service (and its notification) exists while a task runs, however the task was started.
             launch {
                 sessionStore.sessionsFlow()

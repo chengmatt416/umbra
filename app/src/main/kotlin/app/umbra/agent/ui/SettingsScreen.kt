@@ -114,7 +114,22 @@ fun SettingsScreen(
 
             SectionTitle("Notifications")
             SettingSwitch("Approval requests", "Notify me when a task needs a decision.", prefs.notifyOnApproval) { on -> container.settings.update { it.copy(notifyOnApproval = on) } }
-            SettingSwitch("Floating controls", "Show a stop button and approvals over other apps while a task runs. Needs the draw-over-apps permission.", prefs.overlayEnabled) { on -> container.settings.update { it.copy(overlayEnabled = on) } }
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            SettingSwitch(
+                "Capsule",
+                "A capsule at the camera shows what agents are doing, answers approvals and opens the composer over any app. Long-press it to select from the screen. Needs the draw-over-apps permission; with Umbra's accessibility service on it sits at the camera itself.",
+                prefs.overlayEnabled,
+            ) { on ->
+                container.settings.update { it.copy(overlayEnabled = on) }
+                if (on && !android.provider.Settings.canDrawOverlays(ctx)) {
+                    ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:${ctx.packageName}")))
+                }
+            }
+            SettingSwitch(
+                "Live context",
+                "Off: only a screen selection you make is sent. On: each message from the Capsule also carries what the app in front shows at that moment (its text, read through the accessibility service; never password fields).",
+                prefs.liveContext,
+            ) { on -> container.settings.update { it.copy(liveContext = on) } }
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
             SectionTitle("Privileged helper")

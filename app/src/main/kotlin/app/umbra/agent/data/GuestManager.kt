@@ -106,15 +106,25 @@ class GuestManager(
 
     /**
      * Root when it answers, proot otherwise. An environment unpacked under proot belongs to the app's uid, and the
-     * chroot's guarantees (ADR 0010) need root's files, so it keeps running under proot even when root appears.
+     * chroot's guarantees (ADR 0010) need root's files, so it keeps running under proot even when root appears. One
+     * unpacked for root stays with root: without it, it runs only if its files are open to the app.
      */
+    private fun ownedByApp(file: File): Boolean =
+        runCatching { android.system.Os.stat(file.path).st_uid == android.os.Process.myUid() }.getOrDefault(false)
+
     private suspend fun choose(): LinuxMode? {
         val rootOk = runCatching { root.isAvailable() }.getOrDefault(false)
         val installed = installedFor() ?: if (File(layout.rootfs, "usr/bin/bash").exists()) LinuxMode.CHROOT else null
         val mode = when {
             installed == LinuxMode.PROOT && proot != null -> LinuxMode.PROOT
             installed == LinuxMode.CHROOT && rootOk -> LinuxMode.CHROOT
-            installed == LinuxMode.CHROOT && proot != null -> LinuxMode.PROOT // root went away: proot can still run it
+            // Root went away: proot can run the environment only if its files are the app's. Files root unpacked are
+            // root's, and permission bits that look open do not mean the app may execute them (SELinux labels).
+            installed == LinuxMode.CHROOT && proot != null && withContext(Dispatchers.IO) { ownedByApp(File(layout.rootfs, "usr/bin/env")) } -> LinuxMode.PROOT
+            installed == LinuxMode.CHROOT -> throw BackendException(
+                app.umbra.core.model.action.ErrorCode.BACKEND_UNAVAILABLE,
+                "The Linux environment was set up with root, and root is not answering now. Start the root helper (or Shizuku as root) to use it again.",
+            )
             installed == null && rootOk -> LinuxMode.CHROOT
             proot != null -> LinuxMode.PROOT
             else -> null

@@ -39,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.material3.Checkbox
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -203,6 +204,7 @@ private fun AddProviderDialog(existing: Set<String>, onDismiss: () -> Unit, onSa
     var url by remember { mutableStateOf("") }
     var api by remember { mutableStateOf("openai-completions") }
     var models by remember { mutableStateOf("") }
+    var images by remember { mutableStateOf(false) }
     val custom = choice == "custom"
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -223,6 +225,10 @@ private fun AddProviderDialog(existing: Set<String>, onDismiss: () -> Unit, onSa
                         listOf("openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai").forEach {
                             FilterChip(selected = api == it, onClick = { api = it }, label = { Text(it) })
                         }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(images, { images = it })
+                        Text("Its models accept images (screen selections, photos)", style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 if (choice != null) {
@@ -251,7 +257,7 @@ private fun AddProviderDialog(existing: Set<String>, onDismiss: () -> Unit, onSa
                         val env = "UMBRA_KEY_" + id.uppercase().replace(Regex("[^A-Z0-9]"), "_")
                         ProviderConfig(
                             id, id, apiKeyEnv = env.takeIf { key.isNotBlank() }, custom = true, baseUrl = url.trim(), api = api,
-                            models = models.split(',').map { it.trim() }.filter { it.isNotEmpty() }, keyless = key.isBlank(),
+                            models = models.split(',').map { it.trim() }.filter { it.isNotEmpty() }, keyless = key.isBlank(), images = images,
                         )
                     }
                     onSave(config, key)
