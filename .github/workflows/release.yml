@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  # The Linux environment the APK carries: Debian + omp, and the offline package repository for the add-ons.
+  rootfs:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - run: runtime-build/rootfs/build.sh ${{ github.ref_name }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rootfs
+          path: |
+            build/rootfs/umbra-rootfs-*
+            build/rootfs/umbra-packs-*
+            build/rootfs/manifest.json
+
+  apk:
+    needs: rootfs
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-37 build-tools;37.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: rootfs
+          path: build/rootfs
+      - run: runtime-build/proot/fetch.sh
+      - name: Decode the signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.UMBRA_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/umbra.jks"
+            echo "UMBRA_KEYSTORE=$RUNNER_TEMP/umbra.jks" >> "$GITHUB_ENV"
+          fi
+      - run: ./gradlew :app:assembleRelease -Pumbra.linuxVersion=${{ github.ref_name }}
+        env:
+          UMBRA_KEYSTORE_PASSWORD: ${{ secrets.UMBRA_KEYSTORE_PASSWORD }}
+          UMBRA_KEY_ALIAS: ${{ secrets.UMBRA_KEY_ALIAS }}
+          UMBRA_KEY_PASSWORD: ${{ secrets.UMBRA_KEY_PASSWORD }}
+      - run: cp app/build/outputs/apk/release/app-release.apk umbra-${{ github.ref_name }}.apk && sha256sum umbra-${{ github.ref_name }}.apk > umbra-${{ github.ref_name }}.apk.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: umbra-*.apk*
+
+  publish:
+    needs: [apk, rootfs]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            umbra-*.apk
+            umbra-*.apk.sha256
+            umbra-rootfs-*.tar.xz
+            umbra-rootfs-*.tar.xz.sha256

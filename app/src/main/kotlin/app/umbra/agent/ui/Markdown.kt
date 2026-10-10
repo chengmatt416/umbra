@@ -1,0 +1,137 @@
+package app.umbra.agent.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+/** The subset of Markdown agents actually write: paragraphs, headings, lists, code blocks, bold, italics, inline code. */
+@Composable
+fun MarkdownText(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurface) {
+    val blocks = remember(text) { MarkdownParser.parse(text) }
+    val codeBackground = MaterialTheme.colorScheme.surfaceVariant
+    val inlineCode = MaterialTheme.colorScheme.surfaceVariant
+    SelectionContainer {
+        Column(modifier) {
+            blocks.forEachIndexed { index, block ->
+                if (index > 0) Spacer(Modifier.height(6.dp))
+                when (block) {
+                    is MarkdownParser.Block.Code -> Text(
+                        block.text,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(codeBackground, RoundedCornerShape(8.dp))
+                            .horizontalScroll(rememberScrollState())
+                            .padding(10.dp),
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                        color = color,
+                    )
+                    is MarkdownParser.Block.Heading -> Text(
+                        MarkdownParser.inline(block.text, inlineCode),
+                        style = if (block.level <= 1) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
+                        color = color,
+                    )
+                    is MarkdownParser.Block.Bullet -> Row {
+                        Text(if (block.ordered != null) "${block.ordered}." else "•", Modifier.padding(end = 8.dp, start = (block.depth * 12).dp), color = color)
+                        Text(MarkdownParser.inline(block.text, inlineCode), style = MaterialTheme.typography.bodyMedium, color = color)
+                    }
+                    is MarkdownParser.Block.Paragraph -> Text(MarkdownParser.inline(block.text, inlineCode), style = MaterialTheme.typography.bodyMedium, color = color)
+                    MarkdownParser.Block.Rule -> androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                }
+            }
+        }
+    }
+}
+
+internal object MarkdownParser {
+    sealed interface Block {
+        data class Paragraph(val text: String) : Block
+        data class Heading(val level: Int, val text: String) : Block
+        data class Bullet(val text: String, val depth: Int, val ordered: Int?) : Block
+        data class Code(val text: String) : Block
+        data object Rule : Block
+    }
+
+    private val BULLET = Regex("""^(\s*)([-*+])\s+(.*)$""")
+    private val ORDERED = Regex("""^(\s*)(\d+)[.)]\s+(.*)$""")
+    private val HEADING = Regex("""^(#{1,6})\s+(.*)$""")
+
+    fun parse(text: String): List<Block> {
+        val blocks = ArrayList<Block>()
+        val paragraph = StringBuilder()
+        fun flush() {
+            if (paragraph.isNotEmpty()) blocks += Block.Paragraph(paragraph.toString().trimEnd()).also { paragraph.clear() }
+        }
+        var inCode = false
+        val code = StringBuilder()
+        for (line in text.lines()) {
+            if (line.trimStart().startsWith("```")) {
+                if (inCode) {
+                    blocks += Block.Code(code.toString().trimEnd('\n'))
+                    code.clear()
+                    inCode = false
+                } else {
+                    flush()
+                    inCode = true
+                }
+                continue
+            }
+            if (inCode) {
+                code.appendLine(line)
+                continue
+            }
+            val heading = HEADING.find(line)
+            val bullet = BULLET.find(line)
+            val ordered = ORDERED.find(line)
+            when {
+                line.isBlank() -> flush()
+                line.trim().matches(Regex("""[-*_]{3,}""")) -> { flush(); blocks += Block.Rule }
+                heading != null -> { flush(); blocks += Block.Heading(heading.groupValues[1].length, heading.groupValues[2]) }
+                bullet != null -> { flush(); blocks += Block.Bullet(bullet.groupValues[3], bullet.groupValues[1].length / 2, null) }
+                ordered != null -> { flush(); blocks += Block.Bullet(ordered.groupValues[3], ordered.groupValues[1].length / 2, ordered.groupValues[2].toInt()) }
+                else -> { if (paragraph.isNotEmpty()) paragraph.append('\n'); paragraph.append(line) }
+            }
+        }
+        if (inCode) blocks += Block.Code(code.toString().trimEnd('\n'))
+        flush()
+        return blocks
+    }
+
+    private val INLINE = Regex("""`([^`]+)`|\*\*([^*]+)\*\*|\*([^*\s][^*]*)\*|\[([^\]]+)]\(([^)]+)\)""")
+
+    fun inline(text: String, codeBackground: Color): AnnotatedString = buildAnnotatedString {
+        var last = 0
+        for (m in INLINE.findAll(text)) {
+            append(text.substring(last, m.range.first))
+            when {
+                m.groups[1] != null -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBackground, fontSize = 13.sp)) { append(m.groupValues[1]) }
+                m.groups[2] != null -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(m.groupValues[2]) }
+                m.groups[3] != null -> withStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)) { append(m.groupValues[3]) }
+                m.groups[4] != null -> withStyle(SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)) { append(m.groupValues[4]) }
+            }
+            last = m.range.last + 1
+        }
+        append(text.substring(last))
+    }
+}

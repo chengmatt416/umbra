@@ -1,0 +1,87 @@
+  PID USER            RSS ARGS                       
+    1 root           4432 init second_stage
+  103 root           2760 init subcontext u:r:vendor_init:s0 16
+  105 root           3556 ueventd
+  230 prng_seeder    4164 prng_seeder
+  233 logd           8400 logd
+  234 lmkd           4484 lmkd
+  235 system         3760 servicemanager
+  236 system         3032 hwservicemanager
+  237 shell          2816 sh
+  238 root           3276 qemu-props
+  249 root           5612 vold --blkid_context=u:r:blkid:s0 --blkid_untrusted_context=u:r:blkid_untrusted:s0 --fsck_context=u:r:fsck:s0 --fsck_untrusted_context=u:r:fsck_untrusted:s0
+  259 system         4636 android.system.suspend-service
+  260 keystore       9620 keystore2 /data/misc/keystore
+  261 nobody         6340 android.hardware.security.keymint-service
+  263 system         4368 android.hardware.gatekeeper-service.nonsecure
+  290 tombstoned     2860 tombstoned
+  520 statsd         4892 statsd
+  528 system         3428 android.hidl.allocator@1.0-service
+  530 system         5884 android.hardware.camera.provider@2.7-service-google
+  531 system         4808 android.hardware.health-service.example
+  532 media          5196 android.hardware.media.c2@1.0-service-goldfish
+  533 radio          4948 android.hardware.radio-service.ranchu
+  534 system         4776 android.hardware.sensors-service.multihal
+  535 system         4372 android.hardware.usb-service.example
+  536 wifi           5172 android.hardware.wifi-service
+  537 bluetooth      4752 android.hardware.bluetooth-service.default
+  540 system         6888 android.hardware.graphics.composer3-service.ranchu
+  541 nobody         4064 android.hardware.identity-service.example
+  542 nobody         4236 android.hardware.lights-service.example
+  543 hsm            4172 android.hardware.authsecret-service.example
+  544 media          3856 android.hardware.cas-service.example
+  545 context_hub    3928 android.hardware.contexthub-service.example
+  546 system         4868 android.hardware.neuralnetworks-service-sample-all
+  547 system         4744 android.hardware.neuralnetworks-service-sample-limited
+  548 system         4764 android.hardware.neuralnetworks-shim-service-sample
+  551 nobody         4072 android.hardware.power-service.example
+  552 system         4356 android.hardware.power.stats-service.example
+  553 system         4280 android.hardware.rebootescrow-service.default
+  554 nobody         4172 android.hardware.thermal-service.example
+  560 thread_network 4244 android.hardware.threadnetwork-service spinel+hdlc+forkpty:///apex/com.android.hardware.threadnetwork/bin/ot-rcp?forkpty-arg=1
+  562 nobody         4220 android.hardware.vibrator-service.example
+  566 media          6708 android.hardware.drm-service.widevine
+  568 credstore      4684 credstore /data/misc/credstore
+  569 gpu_service    5460 gpuservice
+  571 system        21064 surfaceflinger
+  577 shell          7768 adbd --root_seclabel=u:r:su:s0 --tim_seclabel=u:r:adbd_tradeinmode:s0
+  578 system         6072 android.hardware.graphics.allocator-service.ranchu
+  579 system         5520 android.hardware.camera.provider.ranchu
+  580 uwb            4512 android.hardware.uwb-service /dev/hvc2
+  604 drm            4600 drmserver
+  606 nobody         3052 traced_probes
+  607 nobody         3608 traced
+  608 logd           3996 logcat -f /dev/hvc1 *:V
+  611 bluetooth      3264 bt_vhci_forwarder -virtio_console_dev=/dev/bluetooth0
+  624 incidentd      4448 incidentd
+  625 root           4720 installd
+  626 mediaex        8164 media.extractor aextractor
+  627 media          5448 media.metrics diametrics
+  629 root           4896 storaged
+  631 mediacodec     8988 media.swcodec oid.media.swcodec/bin/mediaswcodec
+  632 system         4300 gatekeeperd /data/misc/gatekeeper
+  647 mdnsr          3704 mdnsd
+ 3168 root         111340 zygote64
+ 3170 audioserver   11528 audioserver
+ 3171 cameraserver   9676 cameraserver
+ 3172 media          9660 mediaserver
+ 3173 root           9524 netd
+ 3174 wifi           5084 wificond
+ 3175 audioserver    5136 android.hardware.audio.service
+ 3183 root           3244 iptables-restore --noflush -w -v
+ 3184 root           3348 ip6tables-restore --noflush -w -v
+ 3231 system       297872 system_server
+ 3467 system         4944 android.hardware.biometrics.fingerprint-service.ranchu
+ 3490 thread_network 4960 ot-daemon -I thread-wpan --auto-attach=0 threadnetwork_hal://binder?none
+ 3499 thread_network 3232 ot-rcp 1
+ 3508 wifi           6732 wpa_supplicant -Dnl80211 -iwlan0 -c/vendor/etc/wifi/wpa_supplicant.conf -g@android:wpa_wlan0
+ 3526 u0_a191      202820 com.android.systemui
+ 3566 gps            5000 android.hardware.gnss-service.ranchu
+ 3587 webview_zygote 64180 webview_zygote
+ 3615 network_stack 111000 com.android.networkstack.process
+    2 root              0 [kthreadd]
+    3 root              0 [pool_workqueue_release]
+    4 root              0 [kworker/R-kvfree_rcu_reclaim]
+    5 root              0 [kworker/R-rcu_gp]
+    6 root              0 [kworker/R-sync_wq]
+    7 root              0 [kworker/R-slub_flushwq]

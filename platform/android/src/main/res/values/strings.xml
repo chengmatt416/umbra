@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="umbra_accessibility_label">Umbra agent control</string>
+    <string name="umbra_accessibility_description">Lets the Umbra agent read what is on screen and tap, type and scroll for you. It only acts on tasks you start, and anything risky asks for your approval first.</string>
+    <string name="umbra_notification_listener_label">Umbra notifications</string>
+</resources>

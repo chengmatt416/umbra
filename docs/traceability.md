@@ -1,0 +1,42 @@
+# Traceability: spec section → code → verification
+
+"Spec" is `ANDROID_ON_DEVICE_AGENT_FUNCTIONAL_SPEC.md`. Verification levels:
+
+* **unit**: pure logic, runs anywhere (`./gradlew check`);
+* **omp**: the real omp binary on the host against a scripted model endpoint (skipped without omp);
+* **emulator**: live tests against a real Android 16 arm64 emulator through adb (skipped without a device);
+* **phone**: can only be shown on a real phone; `docs/ONDEVICE_TEST_PLAN.md` says how.
+
+| § | Requirement | Where | Verified by |
+| --- | --- | --- | --- |
+| 1, 2 | Product, Android 16 only | `build-logic` (minSdk 36), `README.md` | build |
+| 3 | omp runtime, persistent sessions, locked version | `runtime/omp` (RPC client, config writer, spawner), `core/orchestrator`, omp 18.6.1 pinned in `runtime-build/rootfs/Dockerfile` | unit (`OmpClientProtocolTest`, `RpcFrameDecoderTest`, `OmpConfigTest`), omp (`OmpIntegrationTest`, `AgentSessionTest`), emulator (`GuestOmpLiveTest`; whole agent runs through the installed app: `scripts/ondevice-scripted-agent.py`, `ondevice-scenario.py`) |
+| 4 | Fast decision engine | `core/decision` (router, heuristics, `LayaHttpEngine`, `SwitchableEngine`), `app/.../LayaSidecar.kt`, `decide` tool | unit (`DecisionRouterTest`, `HeuristicDecisionEngineTest`, `LayaHttpEngineTest`); Laya sidecar install/start: phone (needs ~2 GB) |
+| 5 | Android control | `platform/*`, `tools` (`UiExecutor`, `SystemExecutors`) | emulator (`DeviceBackendsLiveTest`, `HostSideLiveTest`, `OnDeviceLiveTest`) |
+| 6 | Accessibility computer use | `platform/android` (`AccessibilityUiBackend`), `tools/ElementTargeting`, `core/model` (resolver) | unit (`ElementResolverTest`), emulator (`OnDeviceLiveTest`) |
+| 7 | Visual computer use | `platform/vision` (marks, grids), `android_screenshot` | unit (`VisionTest`), emulator |
+| 8 | Shizuku | `app/.../ShizukuLauncher.kt`, `platform/server/HelperUserService` | compiles; **phone** (needs Shizuku running). The helper it hosts is the one tested in `PrivilegedHelperLiveTest` |
+| 9 | Root | `ProcessShell.root()`, `FirstAvailableShell`, `RootViaHelperShell` (ADR 0008), `platform/server` | unit (`FirstAvailableShellTest`), emulator (`PrivilegedHelperLiveTest`, the Linux environment installed through the app by way of the root helper) |
+| 10 | Background workspace | `platform/server` (`VirtualDisplays`), `tools/DisplayLeaseManager`, `DisplaysScreen` | emulator (`PrivilegedHelperLiveTest`, `OnDeviceLiveTest`) |
+| 11 | Linux CLI runtime | `runtime/linux` (`RootChrootRuntime`, `GuestOmpSpawner`, `GuestFileSet`), `runtime-build/rootfs`, `guest/` (scripts and packs, carried by the app: ADR 0009) | unit (`GuestFileSetTest`, `ProcessTableTest`), emulator (`RootChrootRuntimeLiveTest` incl. the root-owned file sync, `GuestOmpLiveTest`) |
+| 12 | Linux graphical runtime | `guest/packs/gui.apt`, `guest/bin/umbra-gui` (Xvfb, openbox, AT-SPI) | emulator (`GuestGuiLiveTest`; `scripts/ondevice-scripted-gui.py` through the app) |
+| 13 | Linux computer use | `runtime/linux/GuestGuiBackend`, `gui_*` tools | emulator (`GuestGuiLiveTest`; `scripts/ondevice-scripted-gui.py`) |
+| 14 | Unified tool system | `tools/HostToolRegistry`, `UmbraToolHost`, `ToolBridgeServer` | omp (`AgentSessionTest.aHostToolCallIsRecorded…`), emulator |
+| 15, 16 | Unified observation and action model | `core/model` | unit (`ActionSerializationTest`, `UiTreeRendererTest`) |
+| 17 | Action verification | `tools/Verifier`, `tools/ActionPipeline` | emulator (`HostSideLiveTest`, `OnDeviceLiveTest`) |
+| 18 | Log monitoring | `platform/logs` (`LogMonitor`, `CrashDetector`) | unit (`LogParsingTest`, `CrashDetectorTest`, `LogMonitorTest`), emulator |
+| 19, 20 | Coding agent, autonomous development loop | omp built-ins in the guest; system prompt in `core/orchestrator/AgentPrompts`; `fixtures/crashy-login` | phone/emulator with a model: `scripts/acceptance-crashy-login.sh` |
+| 21 | Multi-agent | omp `task` subagents, surfaced by `TimelineRecorder` and `ActivityCard`; several sessions run at once under `ResourceGovernor` | omp (subagent events handled), unit (`ResourceGovernorTest`); real subagent runs: phone with a model |
+| 22 | Workspace management | `core/workspace`, `WorkspacesScreen` | unit (`WorkspaceManagerTest`) |
+| 23 | Model providers | `runtime/omp/OmpConfig`, `app/.../AppSettings.kt`, `SecretStore`, `ModelsScreen` | unit (`OmpConfigTest`), emulator (`DiagnosticsScreen` model step with a key) |
+| 24 | Session management | `core/session`, `core/orchestrator` | unit (`SessionStateMachineTest`, `FileSessionStoreTest`), omp (`AgentSessionTest`: complete, follow-up, pause/resume, stop, crash recovery, restart recovery) |
+| 25 | Agent UI | `app/.../ui` | built; inspected on the emulator by screenshot: home, set up, settings, timeline, approval and question cards (see test plan) |
+| 26 | Floating overlay | `app/.../OverlayController.kt` | emulator (`scripts/ondevice-scenario.py`: bubble, expanded card, approving and denying from it) |
+| 27 | Persistent notification | `app/.../AgentService.kt` | emulator (`scripts/ondevice-scenario.py`: Pause, Resume and Stop from the notification, approval buttons) |
+| 28 | Approval and safety, what the agent can reach | `core/safety`, `core/orchestrator/OmpApprovals`, `AppApprovalLedger`, `RootChrootRuntime.secure()` and the other hardening (ADR 0010) | unit (`RiskClassifierTest`, `ShellRiskAnalyzerTest`, `UiRiskAnalyzerTest`, `SafetyGateTest`, `ApprovalPolicyTest`, `ScreenGuardTest`), omp (`AgentSessionTest`: ask, deny, approve, self-protection), emulator (a package removal is classified high risk, waits, and is denied from the app, the notification and the floating card; `RootChrootRuntimeLiveTest.theAgentCannotChangeTheSystemPartOfTheGuest`, `scripts/ondevice-confinement.py`) |
+| 29 | Capability detection | `app/.../Probes.kt`, `core/model/capability`, `CapabilityProbe`, `SelfTest` | unit (`CapabilityDetectorTest`, `StrategySelectorTest`), emulator (diagnostics) |
+| 30 | Recovery and reliability | `core/recovery`, `app/.../Subsystems.kt`, `AgentSession` (process restart, provider retry), `AgentSupervisor.recover` | unit (`HealthSupervisorTest`), omp (`AgentSessionTest`), emulator (`scripts/ondevice-recovery.py`: helper killed, agent process killed, app killed mid-task) |
+| 31 | Performance management | `core/perf`, `AndroidResourceSampler` | unit (`ThrottleTest`, `ResourceGovernorTest`, `HysteresisThrottleTest`) |
+| 32 | User control | pause/resume/stop/delete/duplicate in UI and notification; Settings → *Access and data* (stop all, revoke helpers, screen control off, delete history); `AppSettings` (modes, instructions), approval history | omp (`AgentSessionTest`, incl. stop-all and delete-all), emulator (the four controls pressed by hand, each checked on the device) |
+| 33 | Production acceptance | `fixtures/crashy-login`, `scripts/acceptance-crashy-login.sh`, `scripts/ondevice-scripted-acceptance.py` | the whole loop (build in Linux, install from the workspace, crash found in the log, fix, rebuild, reinstall, sign in) runs with a scripted model; the real model's run needs your key |
+| 34 | Summary | — | — |

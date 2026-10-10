@@ -1,0 +1,3 @@
+directory|4096|1791165892|777|dalvik-cache
+regular file|228546|1791166076|666|pkg.txt
+regular file|25630|1791175627|666|w.xml

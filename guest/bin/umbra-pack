@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Installs optional toolchains into this guest. Needs root inside the guest, which the Umbra app
+# provides when you press "Install" in the environments screen; the agent asks the user rather than
+# running this itself.
+#
+# The app carries every pack's packages in an offline repository (ADR 0011). When the app has put it at
+# /var/cache/umbra-repo, packs come from there and nothing is downloaded. Without it, or when it cannot satisfy a
+# pack (the environment was upgraded online since), apt's normal sources are used.
+#
+#   umbra-pack list
+#   umbra-pack install <pack>...
+set -euo pipefail
+umask 022
+PACKS=/opt/umbra/packs
+REPO=${UMBRA_REPO:-/var/cache/umbra-repo}
+OFFLINE_LIST=/etc/apt/umbra-offline.list
+OFFLINE_PARTS=/etc/apt/umbra-offline.d
+
+# apt-get with only the bundled repository as a source; the lists of the normal sources are left alone.
+offline() {
+  apt-get -o Dir::Etc::SourceList="$OFFLINE_LIST" -o Dir::Etc::SourceParts="$OFFLINE_PARTS" \
+    -o APT::Get::List-Cleanup=0 "$@"
+}
+
+post() {
+  if [ -x "$PACKS/$1.post" ]; then UMBRA_REPO="$REPO" "$PACKS/$1.post"; fi
+}
+
+install_pack() {
+  local name=$1 f="$PACKS/$1.apt" packages
+  [ -f "$f" ] || { echo "umbra-pack: unknown pack '$name'" >&2; return 2; }
+  packages=$(grep -v '^#' "$f" | tr '\n' ' ')
+  export DEBIAN_FRONTEND=noninteractive
+  if [ -f "$REPO/Packages" ]; then
+    echo "deb [trusted=yes] file:$REPO ./" > "$OFFLINE_LIST"
+    mkdir -p "$OFFLINE_PARTS"
+    # shellcheck disable=SC2086
+    if offline update -q && offline install -y --no-install-recommends $packages; then
+      post "$name"
+      echo "umbra-pack: $name installed from the packages that came with the app"
+      return 0
+    fi
+    echo "umbra-pack: the packages that came with the app could not install $name; trying the network" >&2
+  fi
+  apt-get update
+  # shellcheck disable=SC2086
+  apt-get install -y --no-install-recommends $packages
+  post "$name"
+}
+
+case "${1:-list}" in
+  list)
+    for f in "$PACKS"/*.apt; do
+      name=$(basename "$f" .apt)
+      printf '%-14s %s\n' "$name" "$(head -1 "$f" | sed 's/^# *//')"
+    done ;;
+  install)
+    shift
+    [ "$(id -u)" = 0 ] || { echo "umbra-pack: needs root (use the environments screen)" >&2; exit 1; }
+    for name in "$@"; do install_pack "$name"; done ;;
+  *) echo "usage: umbra-pack list | install <pack>..." >&2; exit 2 ;;
+esac

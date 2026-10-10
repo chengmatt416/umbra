@@ -1,0 +1,6 @@
+# C/C++ toolchain: gcc, make, cmake, clang
+build-essential
+pkg-config
+cmake
+clang
+gdb

@@ -1,0 +1,15 @@
+# Virtual X display, window manager, input automation and accessibility bridge for desktop apps
+xvfb
+x11-utils
+x11-xserver-utils
+xdotool
+openbox
+imagemagick
+dbus-x11
+at-spi2-core
+python3-pyatspi
+python3-xlib
+x11vnc
+fonts-dejavu-core
+wmctrl
+xclip

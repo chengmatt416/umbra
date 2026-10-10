@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# The part of the Android build pack that Debian does not package: the d8 dex compiler (R8) and the SDK platform
+# (android.jar). Both are Google's files, checked against the sums below before they are used.
+# Run by `umbra-pack install android` as root, after the apt packages; safe to run again.
+set -euo pipefail
+umask 022
+
+R8_VERSION=9.4.28
+R8_SHA256=51af0a9d41cc541d619064224aec628923bd779cbcc5a62cb914ea2d669c4063
+# Debian's aapt2 is the one from Android 14 (build-tools 14), and it cannot read the resource table of a newer
+# android.jar ("entry offsets overlap actual entry data"). So the platform is API 34, which it links against;
+# newer platforms would need a newer aapt2, and Google ships none for arm64 Linux.
+PLATFORM=34
+PLATFORM_ZIP=platform-34-ext7_r03.zip
+PLATFORM_SHA1=1f2e9478d6a7601425ceaa553311dc43191f103d
+
+SDK=/opt/android-sdk
+REPO=${UMBRA_REPO:-/var/cache/umbra-repo}
+tmp=$(mktemp -d /var/tmp/umbra-android.XXXXXX)
+trap 'rm -rf "$tmp"' EXIT
+
+# From the offline repository the app carries when it has the file (ADR 0011), from Google otherwise. The checksums
+# below are checked either way.
+fetch() {
+  if [ -f "$REPO/extras/$(basename "$1")" ]; then cp "$REPO/extras/$(basename "$1")" "$2"
+  else curl -fsSL --retry 5 --retry-delay 3 --connect-timeout 20 -o "$2" "$1"; fi
+}
+
+mkdir -p "$SDK/r8" "$SDK/platforms"
+
+if [ ! -f "$SDK/r8/r8-$R8_VERSION.jar" ]; then
+  echo "Adding R8 $R8_VERSION (d8)..."
+  fetch "https://dl.google.com/dl/android/maven2/com/android/tools/r8/$R8_VERSION/r8-$R8_VERSION.jar" "$tmp/r8.jar"
+  echo "$R8_SHA256  $tmp/r8.jar" | sha256sum -c --quiet -
+  mv "$tmp/r8.jar" "$SDK/r8/r8-$R8_VERSION.jar"
+fi
+ln -sfn "r8-$R8_VERSION.jar" "$SDK/r8/r8.jar"
+
+# Only the platform aapt2 can read is kept: build scripts take the newest android.jar they find.
+for other in "$SDK"/platforms/android-*; do
+  if [ -d "$other" ] && [ "$other" != "$SDK/platforms/android-$PLATFORM" ]; then rm -rf "$other"; fi
+done
+if [ ! -f "$SDK/platforms/android-$PLATFORM/android.jar" ]; then
+  echo "Adding the Android $PLATFORM platform..."
+  fetch "https://dl.google.com/android/repository/$PLATFORM_ZIP" "$tmp/platform.zip"
+  echo "$PLATFORM_SHA1  $tmp/platform.zip" | sha1sum -c --quiet -
+  mkdir "$tmp/platform"
+  unzip -q "$tmp/platform.zip" -d "$tmp/platform"
+  rm -f "$tmp/platform.zip"
+  # The archive's own modes can be as restrictive as 770; everyone must be able to read the SDK, nobody but root change it.
+  chmod -R u+rwX,go+rX,go-w "$tmp/platform"
+  [ -f "$tmp/platform/android-$PLATFORM/android.jar" ] || { echo "android.post: the platform archive has no android-$PLATFORM/android.jar" >&2; exit 1; }
+  rm -rf "$SDK/platforms/android-$PLATFORM"
+  mv "$tmp/platform/android-$PLATFORM" "$SDK/platforms/android-$PLATFORM"
+fi
+
+# d8 last: its presence is what tells the app the pack is complete.
+cat > /usr/local/bin/r8 <<'WRAP'
+#!/bin/sh
+exec java -cp /opt/android-sdk/r8/r8.jar com.android.tools.r8.R8 "$@"
+WRAP
+cat > /usr/local/bin/d8 <<'WRAP'
+#!/bin/sh
+exec java -cp /opt/android-sdk/r8/r8.jar com.android.tools.r8.D8 "$@"
+WRAP
+chmod 755 /usr/local/bin/r8 /usr/local/bin/d8
+echo "Android build tools are ready (ANDROID_HOME=$SDK)."

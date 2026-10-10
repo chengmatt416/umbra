@@ -1,0 +1,42 @@
+--------- beginning of main
+         1791180604.486  1000  3231  3421 I HalDevMgr: bestIfaceCreationProposal is null, requestIface=STA, existingIface=[name=wlan0 type=STA]
+         1791180604.487  1000  3231  3421 D WifiScoreCard: BSSID update SIGNAL_POLL ID: 743278498 SSID: "AndroidWifi", BSSID: 00:13:10:85:fe:01, MAC: 02:15:b2:00:00:00, IP: /10.0.2.16, Security type: 0, Supplicant state: COMPLETED, Wi-Fi standard: legacy, RSSI: -50, Link speed: 1Mbps, Tx Link speed: 1Mbps, Max Supported Tx Link speed: 11Mbps, Rx Link speed: 2Mbps, Max Supported Rx Link speed: 11Mbps, Frequency: 2447MHz, Net ID: 0, Metered hint: false, score: 83, isUsable: true, CarrierMerged: false, SubscriptionId: -1, IsPrimary: 1, Trusted: true, Restricted: false, Ephemeral: false, OEM paid: false, OEM private: false, OSU AP: false, FQDN: <none>, Provider friendly name: <none>, Requesting package name: <none>"AndroidWifi"openMLO Information: , Is TID-To-Link negotiation supported by the AP: false, AP MLD Address: <none>, AP MLO Link Id: <none>, AP MLO Affiliated links: <none>, Vendor Data: <none>
+         1791180604.488  1000  3231  3421 D WifiScoreCard: txRate: 1 txSpeed: 1
+         1791180604.489  1000  3231  3421 D WifiScoreCard: network update SIGNAL_POLL "AndroidWifi" ID: 1647844050 RSSI -50 txSpeed -1
+         1791180604.492  1000  3231  3421 D WifiClientModeImpl[185238:wlan0]:  ClientModeImpl$L2ConnectedState screen=on 1 0 "AndroidWifi" 00:13:10:85:fe:01 rssi=-50 f=2447 sc=83 link=1 tx=0.0, 0.0, 0.0 rx=0.0 bcn=0 [on:0 tx:0 rx:0 period:3034] from screen [on:0 period:179242060] score=83
+         1791180605.429 radio  3655  3776 D SatelliteController: iisInCarrierRoamingNbIotNtn: satellite is disabled
+         1791180605.448 radio  3655  3776 D SatelliteController: getCarrierRoamingNtnConnectType: Falling back to global carrier config connect type: 0
+         1791180606.479 shell  7560  7560 W df      : type=1400 audit(0.0:12): avc:  denied  { getattr } for  path="/metadata" dev="vdd1" ino=2 scontext=u:r:shell:s0 tcontext=u:object_r:metadata_file:s0 tclass=dir permissive=0
+         1791180606.483 shell  7560  7560 W df      : type=1400 audit(0.0:13): avc:  denied  { getattr } for  path="/system_dlkm" dev="dm-1" ino=38 scontext=u:r:shell:s0 tcontext=u:object_r:system_dlkm_file:s0 tclass=dir permissive=0
+         1791180606.487 shell  7560  7560 W df      : type=1400 audit(0.0:14): avc:  denied  { getattr } for  path="/linkerconfig" dev="tmpfs" ino=3 scontext=u:r:shell:s0 tcontext=u:object_r:linkerconfig_file:s0 tclass=dir permissive=0
+         1791180606.491 shell  7560  7560 W df      : type=1400 audit(0.0:15): avc:  denied  { getattr } for  path="/mnt/vm" dev="tmpfs" ino=1 scontext=u:r:shell:s0 tcontext=u:object_r:vm_data_file:s0 tclass=dir permissive=0
+--------- beginning of kernel
+         1791180606.498  logd   252   252 E logd    : HexToBytes: Invalid size: 11
+         1791180606.495 shell  7560  7560 W df      : type=1400 audit(0.0:16): avc:  denied  { getattr } for  path="/linkerconfig" dev="tmpfs" ino=3 scontext=u:r:shell:s0 tcontext=u:object_r:linkerconfig_file:s0 tclass=dir permissive=0
+         1791180606.495 shell  7560  7560 W df      : type=1400 audit(0.0:17): avc:  denied  { getattr } for  path="/data_mirror" dev="tmpfs" ino=1 scontext=u:r:shell:s0 tcontext=u:object_r:mirror_data_file:s0 tclass=dir permissive=0
+         1791180606.498  logd   252   252 E logd    : HexToBytes: Invalid characters: ", /
+         1791180606.498  logd   252   252 E logd    : HexToBytes: Invalid size: 15
+         1791180606.502  logd   252   252 E logd    : HexToBytes: Invalid size: 9
+         1791180606.502  logd   252   252 E logd    : HexToBytes: Invalid size: 15
+         1791180606.502  logd   252   252 E logd    : HexToBytes: Invalid characters: ", /
+         1791180606.674 shell  7562  7562 W libbinder.BackendUnifiedServiceManager: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: battery
+         1791180606.808 shell  7567  7567 W libbinder.BackendUnifiedServiceManager: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: thermalservice
+         1791180606.986 shell  7570  7570 W libbinder.BackendUnifiedServiceManager: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: connectivity
+         1791180607.501  1000  3231  3421 D WifiClientModeImpl[185238:wlan0]: updateLinkLayerStatsRssiSpeedFrequencyCapabilities rssi=-50 TxLinkspeed=1 freq=2447 RxLinkSpeed=2
+         1791180607.502  1000  3231  3421 D WifiDataStall: tx tput in kbps: 11000
+         1791180607.502  1000  3231  3421 D WifiDataStall: rx tput in kbps: 11000
+         1791180607.502  1000  3231  3421 V WifiConfigManager: Updating scan detail cache freq=2447 BSSID=00:13:10:85:fe:01 RSSI=-50 for "AndroidWifi"NONE
+         1791180607.502  1000  3231  3421 D WifiThroughputPredictor:  utilization (LLS) 80 isBluetoothConnected: false final utilization: 80
+         1791180607.504  1000  3231  3421 D WifiThroughputPredictor:  BW: 0 RSSI: -50 Nss: 1 Mode: 1 symDur: 4000 snrDb 30 bitPerTone: 4500 rate: 54 throughput: 11
+         1791180607.504  1000  3231  3421 D WifiThroughputPredictor:  utilization (LLS) 80 isBluetoothConnected: false final utilization: 80
+         1791180607.504  1000  3231  3421 D WifiThroughputPredictor:  BW: 0 RSSI: -50 Nss: 1 Mode: 1 symDur: 4000 snrDb 30 bitPerTone: 4500 rate: 54 throughput: 11
+         1791180607.515  1000  3231  3421 D WifiThroughputPredictor:  utilization (LLS) 80 isBluetoothConnected: false final utilization: 80
+         1791180607.515  1000  3231  3421 D WifiThroughputPredictor:  BW: 0 RSSI: -50 Nss: 1 Mode: 1 symDur: 4000 snrDb 30 bitPerTone: 4500 rate: 54 throughput: 11
+         1791180607.516  1000  3231  3421 D WifiThroughputPredictor:  utilization (LLS) 80 isBluetoothConnected: false final utilization: 80
+         1791180607.516  1000  3231  3421 D WifiThroughputPredictor:  BW: 0 RSSI: -50 Nss: 1 Mode: 1 symDur: 4000 snrDb 30 bitPerTone: 4500 rate: 54 throughput: 11
+         1791180607.554  1000  3231  3421 I HalDevMgr: bestIfaceCreationProposal is null, requestIface=STA, existingIface=[name=wlan0 type=STA]
+         1791180607.555  1000  3231  3421 D WifiScoreCard: BSSID update SIGNAL_POLL ID: 743278498 SSID: "AndroidWifi", BSSID: 00:13:10:85:fe:01, MAC: 02:15:b2:00:00:00, IP: /10.0.2.16, Security type: 0, Supplicant state: COMPLETED, Wi-Fi standard: legacy, RSSI: -50, Link speed: 1Mbps, Tx Link speed: 1Mbps, Max Supported Tx Link speed: 11Mbps, Rx Link speed: 2Mbps, Max Supported Rx Link speed: 11Mbps, Frequency: 2447MHz, Net ID: 0, Metered hint: false, score: 83, isUsable: true, CarrierMerged: false, SubscriptionId: -1, IsPrimary: 1, Trusted: true, Restricted: false, Ephemeral: false, OEM paid: false, OEM private: false, OSU AP: false, FQDN: <none>, Provider friendly name: <none>, Requesting package name: <none>"AndroidWifi"openMLO Information: , Is TID-To-Link negotiation supported by the AP: false, AP MLD Address: <none>, AP MLO Link Id: <none>, AP MLO Affiliated links: <none>, Vendor Data: <none>
+         1791180607.555  1000  3231  3421 D WifiScoreCard: txRate: 1 txSpeed: 1
+         1791180607.555  1000  3231  3421 D WifiScoreCard: network update SIGNAL_POLL "AndroidWifi" ID: 1647844050 RSSI -50 txSpeed -1
+         1791180607.556  1000  3231  3421 D WifiClientModeImpl[185238:wlan0]:  ClientModeImpl$L2ConnectedState screen=on 1 0 "AndroidWifi" 00:13:10:85:fe:01 rssi=-50 f=2447 sc=83 link=1 tx=0.0, 0.0, 0.0 rx=0.0 bcn=0 [on:0 tx:0 rx:0 period:3064] from screen [on:0 period:179245124] score=83
+         1791180607.690  logd   245   245 I logd    : logdr: UID=2000 GID=2000 PID=7573 n tail=40 logMask=99 pid=0 start=0ns deadline=0ns

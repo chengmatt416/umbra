@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What the app may hand to other apps through the share sheet: workspace files and the zips it makes of them. -->
+<paths>
+    <files-path name="workspaces" path="guest/workspaces/" />
+    <cache-path name="share" path="share/" />
+</paths>

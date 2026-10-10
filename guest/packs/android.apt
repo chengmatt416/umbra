@@ -1,0 +1,5 @@
+# Android app builds: Java 21, aapt2, zipalign, apksigner (d8 and the SDK platform come with android.post)
+openjdk-21-jdk-headless
+aapt
+zipalign
+apksigner

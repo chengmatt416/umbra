@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""umbra-pty COLS ROWS -- COMMAND [ARG...]
+
+Runs COMMAND on a pseudo-terminal and relays it over this process's stdin and stdout, which are plain pipes when the
+Umbra app runs it (as root in the chroot or in proot alike, so the terminal works the same in both). The app's
+terminal view sends size changes in-band: the sequence ESC _ UMBRA;resize;<cols>;<rows> ESC \\ is taken out of the
+input and applied to the terminal, which delivers SIGWINCH to the program. Everything else is passed through
+untouched. Exits with the program's status; closing stdin hangs the program up.
+"""
+import errno
+import fcntl
+import os
+import pty
+import select
+import signal
+import struct
+import sys
+import termios
+
+START = b"\x1b_UMBRA;"
+END = b"\x1b\\"
+LONGEST = 64  # a control sequence of ours is never longer than this
+
+
+def set_size(fd, cols, rows):
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", max(1, rows), max(1, cols), 0, 0))
+
+
+class InputFilter:
+    """Separates our control sequences from the keystrokes around them, also when a read splits one."""
+
+    def __init__(self, on_resize):
+        self.pending = b""
+        self.on_resize = on_resize
+
+    def feed(self, data):
+        data = self.pending + data
+        self.pending = b""
+        out = bytearray()
+        while data:
+            at = data.find(b"\x1b")
+            if at < 0:
+                out += data
+                break
+            out += data[:at]
+            data = data[at:]
+            if len(data) < len(START) and START.startswith(data):
+                self.pending = data  # could be the start of ours: wait for more
+                break
+            if not data.startswith(START):
+                out += data[:1]
+                data = data[1:]
+                continue
+            end = data.find(END)
+            if end < 0:
+                if len(data) <= LONGEST:
+                    self.pending = data
+                    break
+                out += data[:1]  # too long to be ours: an ordinary escape after all
+                data = data[1:]
+                continue
+            self.command(data[len(START):end])
+            data = data[end + len(END):]
+        return bytes(out)
+
+    def command(self, body):
+        parts = body.split(b";")
+        if len(parts) == 3 and parts[0] == b"resize":
+            try:
+                self.on_resize(int(parts[1]), int(parts[2]))
+            except ValueError:
+                pass
+
+
+def main():
+    args = sys.argv[1:]
+    if len(args) < 4 or args[2] != "--":
+        sys.stderr.write("usage: umbra-pty COLS ROWS -- COMMAND [ARG...]\n")
+        return 2
+    cols, rows, command = int(args[0]), int(args[1]), args[3:]
+
+    pid, master = pty.fork()
+    if pid == 0:
+        os.environ.setdefault("TERM", "xterm-256color")
+        os.environ.setdefault("COLORTERM", "truecolor")
+        try:
+            os.execvp(command[0], command)
+        except OSError as e:
+            sys.stderr.write("umbra-pty: cannot run %s: %s\r\n" % (command[0], e.strerror))
+            os._exit(127)
+
+    set_size(master, cols, rows)
+    filt = InputFilter(lambda c, r: set_size(master, c, r))
+    stdin, stdout = sys.stdin.fileno(), sys.stdout.fileno()
+    reading_stdin = True
+
+    while True:
+        watch = [master] + ([stdin] if reading_stdin else [])
+        try:
+            ready, _, _ = select.select(watch, [], [])
+        except InterruptedError:
+            continue
+        if master in ready:
+            try:
+                chunk = os.read(master, 65536)
+            except OSError as e:
+                if e.errno != errno.EIO:  # EIO: the program and everything it started have closed the terminal
+                    raise
+                chunk = b""
+            if not chunk:
+                break
+            os.write(stdout, chunk)
+        if reading_stdin and stdin in ready:
+            chunk = os.read(stdin, 65536)
+            if not chunk:
+                reading_stdin = False  # the app closed the terminal: hang the program up
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGHUP)
+                except OSError:
+                    pass
+                continue
+            data = filt.feed(chunk)
+            while data:
+                written = os.write(master, data)
+                data = data[written:]
+
+    _, status = os.waitpid(pid, 0)
+    if os.WIFEXITED(status):
+        return os.WEXITSTATUS(status)
+    return 128 + os.WTERMSIG(status)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

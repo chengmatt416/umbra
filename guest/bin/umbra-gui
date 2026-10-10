@@ -1,0 +1,529 @@
+#!/usr/bin/env python3
+"""umbra-gui: drive a graphical Linux session for the Umbra agent (spec §12, §13).
+
+One command per call, one JSON object on stdout, exit code 0 when `"ok": true`. It manages a private
+X session (Xvfb, a window manager, a session bus and the AT-SPI bus) and acts on it: the semantic tree
+comes from AT-SPI, input from xdotool, pictures from ImageMagick. State between calls lives in
+/tmp/umbra-gui/state.json, so each call is a fresh process.
+
+    umbra-gui start [--size 1280x800] [--display 99]     umbra-gui stop            umbra-gui status
+    umbra-gui windows                                     umbra-gui tree [--max N]
+    umbra-gui act NODE_ID ACTION [TEXT]                   (click|focus|set_text|select|expand|collapse)
+    umbra-gui click X Y [--right] [--double]              umbra-gui move X Y
+    umbra-gui type TEXT                                   umbra-gui key SPEC       (xdotool key spec: ctrl+s)
+    umbra-gui scroll X Y up|down|left|right CLICKS        umbra-gui drag X1 Y1 X2 Y2 [--hold-ms N] [--duration-ms N]
+    umbra-gui window focus|close|minimize|maximize|move|resize ID [ARGS]
+    umbra-gui shot [--region X,Y,W,H] [--max-edge N]      umbra-gui launch -- CMD [ARGS...]
+    umbra-gui clip get | clip set TEXT
+"""
+import base64
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+STATE_DIR = "/tmp/umbra-gui"
+STATE_FILE = os.path.join(STATE_DIR, "state.json")
+A11Y_ENV = {"GNOME_ACCESSIBILITY": "1", "QT_ACCESSIBILITY": "1", "QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1", "NO_AT_BRIDGE": "0"}
+
+
+class Fail(Exception):
+    pass
+
+
+def out(obj, code=0):
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+    sys.exit(code)
+
+
+def load_state():
+    try:
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def save_state(state):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, TypeError):
+        return False
+
+
+def session_env(state):
+    env = dict(os.environ)
+    env.update(A11Y_ENV)
+    env["DISPLAY"] = ":%d" % state["display"]
+    if state.get("dbus"):
+        env["DBUS_SESSION_BUS_ADDRESS"] = state["dbus"]
+    return env
+
+
+def require_state():
+    state = load_state()
+    if not state or not alive(state.get("xvfb")):
+        raise Fail("no graphical session is running; run `umbra-gui start` first")
+    return state
+
+
+def run(cmd, env=None, timeout=20, check=True, input_bytes=None):
+    p = subprocess.run(cmd, env=env, capture_output=True, timeout=timeout, input=input_bytes)
+    if check and p.returncode != 0:
+        raise Fail("%s failed: %s" % (cmd[0], (p.stderr or p.stdout).decode("utf-8", "replace").strip()[:300]))
+    return p
+
+
+def spawn(cmd, env, log=None):
+    stdout = open(log, "ab") if log else subprocess.DEVNULL
+    return subprocess.Popen(cmd, env=env, stdout=stdout, stderr=stdout, stdin=subprocess.DEVNULL, start_new_session=True)
+
+
+# ---------------------------------------------------------------- session
+
+
+def cmd_start(args):
+    size, display = "1280x800", 99
+    i = 0
+    while i < len(args):
+        if args[i] == "--size":
+            size = args[i + 1]; i += 2
+        elif args[i] == "--display":
+            display = int(args[i + 1]); i += 2
+        else:
+            raise Fail("unknown option " + args[i])
+    if not re.fullmatch(r"\d+x\d+", size):
+        raise Fail("size must look like 1280x800")
+    state = load_state()
+    if state and alive(state.get("xvfb")):
+        return {"ok": True, "display": state["display"], "size": state["size"], "already": True}
+
+    os.makedirs(STATE_DIR, exist_ok=True)
+    for stale in (f"/tmp/.X{display}-lock", f"/tmp/.X11-unix/X{display}"):
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
+    env = dict(os.environ)
+    env.update(A11Y_ENV)
+    env["DISPLAY"] = ":%d" % display
+    log = os.path.join(STATE_DIR, "session.log")
+
+    bus = run(["dbus-daemon", "--session", "--fork", "--print-address", "--print-pid"], env=env).stdout.decode().split()
+    dbus_address, dbus_pid = bus[0], int(bus[1])
+    env["DBUS_SESSION_BUS_ADDRESS"] = dbus_address
+
+    xvfb = spawn(["Xvfb", ":%d" % display, "-screen", "0", size + "x24", "-nolisten", "tcp", "-ac", "+extension", "RANDR"], env, log)
+    socket_path = "/tmp/.X11-unix/X%d" % display
+    for _ in range(100):
+        if os.path.exists(socket_path):
+            break
+        if xvfb.poll() is not None:
+            raise Fail("Xvfb exited: " + open(log, errors="replace").read()[-300:])
+        time.sleep(0.1)
+    else:
+        raise Fail("Xvfb did not start within 10 seconds")
+
+    wm = spawn(["openbox"], env, log)
+    launcher = None
+    for candidate in ("/usr/libexec/at-spi-bus-launcher", "/usr/lib/at-spi2-core/at-spi-bus-launcher"):
+        if os.path.exists(candidate):
+            launcher = spawn([candidate, "--launch-immediately"], env, log)
+            break
+    time.sleep(0.8)
+    save_state({"display": display, "size": size, "dbus": dbus_address, "dbus_pid": dbus_pid, "xvfb": xvfb.pid, "wm": wm.pid, "atspi": launcher.pid if launcher else None})
+    return {"ok": True, "display": display, "size": size}
+
+
+def cmd_stop(args):
+    state = load_state()
+    if state:
+        for key in ("wm", "atspi", "xvfb", "dbus_pid"):
+            pid = state.get(key)
+            if pid and alive(pid):
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except OSError:
+                    pass
+        time.sleep(0.3)
+        shutil.rmtree(STATE_DIR, ignore_errors=True)
+    return {"ok": True}
+
+
+def cmd_status(args):
+    state = load_state()
+    if not state or not alive(state.get("xvfb")):
+        return {"ok": True, "running": False}
+    return {"ok": True, "running": True, "display": state["display"], "size": state["size"]}
+
+
+# ---------------------------------------------------------------- windows
+
+
+def xdo(state, *a, **kw):
+    return run(["xdotool", *a], env=session_env(state), **kw)
+
+
+def cmd_windows(args):
+    state = require_state()
+    env = session_env(state)
+    ids = run(["xdotool", "search", "--onlyvisible", "--name", ""], env=env, check=False).stdout.decode().split()
+    focused = run(["xdotool", "getwindowfocus"], env=env, check=False).stdout.decode().strip()
+    windows = []
+    for wid in ids:
+        name = run(["xdotool", "getwindowname", wid], env=env, check=False).stdout.decode().strip()
+        geo = run(["xdotool", "getwindowgeometry", "--shell", wid], env=env, check=False).stdout.decode()
+        g = dict(re.findall(r"(\w+)=(-?\d+)", geo))
+        if not g:
+            continue
+        pid = run(["xdotool", "getwindowpid", wid], env=env, check=False).stdout.decode().strip()
+        wmclass = run(["xprop", "-id", wid, "WM_CLASS"], env=env, check=False).stdout.decode()
+        m = re.search(r'=\s*"([^"]*)",\s*"([^"]*)"', wmclass)
+        x, y, w, h = int(g.get("X", 0)), int(g.get("Y", 0)), int(g.get("WIDTH", 0)), int(g.get("HEIGHT", 0))
+        if w < 2 or h < 2:
+            continue
+        windows.append({"id": wid, "title": name, "app": m.group(2) if m else None, "pid": int(pid) if pid.isdigit() else None,
+                        "bounds": [x, y, x + w, y + h], "focused": wid == focused})
+    return {"ok": True, "windows": windows}
+
+
+def cmd_window(args):
+    state = require_state()
+    if len(args) < 2:
+        raise Fail("usage: window ACTION ID [ARGS]")
+    action, wid = args[0], args[1]
+    if action == "focus":
+        xdo(state, "windowactivate", "--sync", wid)
+    elif action == "close":
+        xdo(state, "windowclose", wid)
+    elif action == "minimize":
+        xdo(state, "windowminimize", wid)
+    elif action == "maximize":
+        env = session_env(state)
+        run(["wmctrl", "-i", "-r", wid, "-b", "add,maximized_vert,maximized_horz"], env=env)
+    elif action == "move":
+        xdo(state, "windowmove", wid, args[2], args[3])
+    elif action == "resize":
+        xdo(state, "windowsize", wid, args[2], args[3])
+    else:
+        raise Fail("unknown window action " + action)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- AT-SPI tree
+
+
+def atspi():
+    try:
+        import pyatspi  # noqa: WPS433 (loaded late: it needs the session's bus in the environment)
+    except ImportError:
+        raise Fail("python3-pyatspi is not installed; install the gui pack")
+    return pyatspi
+
+
+def bind_env(state):
+    os.environ.update(session_env(state))
+
+
+def flags_of(pyatspi, acc, on_screen):
+    st = acc.getState()
+    names = {
+        pyatspi.STATE_ENABLED: "ENABLED",
+        pyatspi.STATE_FOCUSABLE: "FOCUSABLE", pyatspi.STATE_FOCUSED: "FOCUSED", pyatspi.STATE_EDITABLE: "EDITABLE",
+        pyatspi.STATE_CHECKABLE: "CHECKABLE", pyatspi.STATE_CHECKED: "CHECKED", pyatspi.STATE_SELECTED: "SELECTED",
+    }
+    flags = {label for state_id, label in names.items() if st.contains(state_id)}
+    if on_screen:
+        flags.add("VISIBLE")
+    return sorted(flags)
+
+
+# AT-SPI says "visible" for everything that is not hidden by its own program, a closed menu's items included.
+# What is drawn on the screen is "showing"; toolkits that never set it are believed when their position is real
+# (a program's closed menus report the extreme values below).
+NO_POSITION = -1_000_000
+
+
+def drawn_on_screen(pyatspi, acc, bounds):
+    st = acc.getState()
+    if st.contains(pyatspi.STATE_SHOWING):
+        return True
+    return st.contains(pyatspi.STATE_VISIBLE) and bounds[0] > NO_POSITION and bounds[2] > bounds[0] and bounds[3] > bounds[1]
+
+
+def node_of(pyatspi, acc, node_id, depth, parent):
+    try:
+        role = acc.getRoleName()
+        name = acc.name or ""
+    except Exception:
+        return None
+    bounds = [0, 0, 0, 0]
+    try:
+        comp = acc.queryComponent()
+        e = comp.getExtents(pyatspi.DESKTOP_COORDS)
+        bounds = [e.x, e.y, e.x + e.width, e.y + e.height]
+    except Exception:
+        pass
+    actions = []
+    try:
+        iface = acc.queryAction()
+        actions = [iface.getName(i) for i in range(iface.nActions)]
+    except Exception:
+        pass
+    text = None
+    try:
+        t = acc.queryText()
+        text = t.getText(0, min(t.characterCount, 500))
+    except Exception:
+        pass
+    on_screen = drawn_on_screen(pyatspi, acc, bounds)
+    flags = flags_of(pyatspi, acc, on_screen)
+    if any(a in ("click", "press", "activate", "jump", "toggle") for a in actions):
+        flags.append("CLICKABLE")
+    if role in ("password text",):
+        flags.append("PASSWORD")
+    desc = None
+    try:
+        desc = acc.description or None
+    except Exception:
+        pass
+    return {"id": node_id, "depth": depth, "parent": parent, "role": role, "name": name or None, "text": text if text and text != name else None,
+            "desc": desc, "bounds": bounds, "flags": sorted(set(flags)), "actions": actions, "children": acc.childCount, "on_screen": on_screen}
+
+
+def cmd_tree(args):
+    state = require_state()
+    bind_env(state)
+    pyatspi = atspi()
+    limit = 600
+    if "--max" in args:
+        limit = int(args[args.index("--max") + 1])
+    desktop = pyatspi.Registry.getDesktop(0)
+    windows, budget = [], [limit]
+
+    def walk(acc, node_id, depth, parent, nodes):
+        if budget[0] <= 0:
+            return
+        node = node_of(pyatspi, acc, node_id, depth, parent)
+        if node is None:
+            return
+        # Below the window itself, what is not drawn (closed menus, other tabs, collapsed panels) is neither
+        # worth the agent's attention nor the node budget, and nothing under it is drawn either.
+        if depth > 0 and not node["on_screen"]:
+            return
+        budget[0] -= 1
+        nodes.append(node)
+        for i in range(acc.childCount):
+            try:
+                child = acc.getChildAtIndex(i)
+            except Exception:
+                continue
+            if child is not None:
+                walk(child, "%s.%d" % (node_id, i), depth + 1, node_id, nodes)
+
+    for ai in range(desktop.childCount):
+        try:
+            app = desktop.getChildAtIndex(ai)
+        except Exception:
+            continue
+        if app is None:
+            continue
+        for wi in range(app.childCount):
+            try:
+                win = app.getChildAtIndex(wi)
+            except Exception:
+                continue
+            if win is None or win.getRoleName() not in ("frame", "dialog", "window", "alert", "file chooser", "dock", "notification"):
+                continue
+            nodes = []
+            walk(win, "%d.%d" % (ai, wi), 0, None, nodes)
+            active = win.getState().contains(pyatspi.STATE_ACTIVE)
+            windows.append({"id": "%d.%d" % (ai, wi), "app": app.name, "title": win.name, "active": active, "nodes": nodes, "truncated": budget[0] <= 0})
+    return {"ok": True, "windows": windows}
+
+
+def resolve(pyatspi, node_id):
+    parts = [int(p) for p in node_id.split(".")]
+    desktop = pyatspi.Registry.getDesktop(0)
+    acc = desktop
+    for index in parts:
+        if index >= acc.childCount:
+            raise Fail("stale_element")
+        acc = acc.getChildAtIndex(index)
+        if acc is None:
+            raise Fail("stale_element")
+    return acc
+
+
+def cmd_act(args):
+    state = require_state()
+    bind_env(state)
+    pyatspi = atspi()
+    node_id, action = args[0], args[1]
+    acc = resolve(pyatspi, node_id)
+    if action in ("click", "press", "activate"):
+        iface = acc.queryAction()
+        names = [iface.getName(i) for i in range(iface.nActions)]
+        for wanted in ("click", "press", "activate", "jump", "toggle"):
+            if wanted in names:
+                return {"ok": True, "performed": bool(iface.doAction(names.index(wanted)))}
+        raise Fail("the element has no click-like action (has: %s)" % ", ".join(names))
+    if action == "focus":
+        return {"ok": True, "performed": bool(acc.queryComponent().grabFocus())}
+    if action == "set_text":
+        text = args[2] if len(args) > 2 else ""
+        try:
+            return {"ok": True, "performed": bool(acc.queryEditableText().setTextContents(text))}
+        except NotImplementedError:
+            raise Fail("the element is not an editable text field")
+    if action in ("select", "expand", "collapse"):
+        iface = acc.queryAction()
+        names = [iface.getName(i) for i in range(iface.nActions)]
+        if action in names:
+            return {"ok": True, "performed": bool(iface.doAction(names.index(action)))}
+        raise Fail("the element has no '%s' action (has: %s)" % (action, ", ".join(names)))
+    raise Fail("unknown action " + action)
+
+
+# ---------------------------------------------------------------- input
+
+
+def cmd_click(args):
+    state = require_state()
+    x, y = args[0], args[1]
+    button = "3" if "--right" in args else "1"
+    xdo(state, "mousemove", x, y)
+    if "--double" in args:
+        xdo(state, "click", "--repeat", "2", "--delay", "90", button)
+    else:
+        xdo(state, "click", button)
+    return {"ok": True}
+
+
+def cmd_move(args):
+    xdo(require_state(), "mousemove", args[0], args[1])
+    return {"ok": True}
+
+
+def cmd_type(args):
+    xdo(require_state(), "type", "--delay", "6", "--clearmodifiers", "--", " ".join(args), timeout=120)
+    return {"ok": True}
+
+
+def cmd_key(args):
+    xdo(require_state(), "key", "--clearmodifiers", args[0])
+    return {"ok": True}
+
+
+def cmd_scroll(args):
+    state = require_state()
+    x, y, direction, clicks = args[0], args[1], args[2], int(args[3])
+    button = {"up": "4", "down": "5", "left": "6", "right": "7"}.get(direction)
+    if not button:
+        raise Fail("direction must be up, down, left or right")
+    xdo(state, "mousemove", x, y)
+    xdo(state, "click", "--repeat", str(max(1, clicks)), "--delay", "30", button)
+    return {"ok": True}
+
+
+def cmd_drag(args):
+    state = require_state()
+    x1, y1, x2, y2 = args[:4]
+    hold = int(args[args.index("--hold-ms") + 1]) if "--hold-ms" in args else 150
+    duration = int(args[args.index("--duration-ms") + 1]) if "--duration-ms" in args else 400
+    xdo(state, "mousemove", x1, y1)
+    xdo(state, "mousedown", "1")
+    time.sleep(hold / 1000.0)
+    steps = max(4, duration // 40)
+    for i in range(1, steps + 1):
+        xdo(state, "mousemove", str(int(int(x1) + (int(x2) - int(x1)) * i / steps)), str(int(int(y1) + (int(y2) - int(y1)) * i / steps)))
+        time.sleep(duration / 1000.0 / steps)
+    xdo(state, "mouseup", "1")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- pictures, launching, clipboard
+
+
+def cmd_shot(args):
+    state = require_state()
+    env = session_env(state)
+    cmd = ["import", "-silent", "-window", "root"]
+    if "--region" in args:
+        x, y, w, h = [int(v) for v in args[args.index("--region") + 1].split(",")]
+        cmd += ["-crop", "%dx%d+%d+%d" % (w, h, x, y), "+repage"]
+    if "--max-edge" in args:
+        edge = int(args[args.index("--max-edge") + 1])
+        cmd += ["-resize", "%dx%d>" % (edge, edge)]
+    cmd.append("png:-")
+    png = run(cmd, env=env, timeout=30).stdout
+    identify = run(["identify", "-format", "%w %h", "png:-"], env=env, input_bytes=png, check=False).stdout.decode().split()
+    return {"ok": True, "mime": "image/png", "width": int(identify[0]) if identify else 0, "height": int(identify[1]) if len(identify) > 1 else 0,
+            "data": base64.b64encode(png).decode()}
+
+
+def cmd_launch(args):
+    state = require_state()
+    if args and args[0] == "--":
+        args = args[1:]
+    if not args:
+        raise Fail("usage: launch -- COMMAND [ARGS...]")
+    proc = spawn(args, session_env(state), os.path.join(STATE_DIR, "apps.log"))
+    time.sleep(0.4)
+    if proc.poll() not in (None, 0):
+        raise Fail("%s exited immediately (see %s)" % (args[0], os.path.join(STATE_DIR, "apps.log")))
+    return {"ok": True, "pid": proc.pid}
+
+
+def cmd_clip(args):
+    state = require_state()
+    env = session_env(state)
+    if args and args[0] == "get":
+        p = run(["xclip", "-selection", "clipboard", "-o"], env=env, check=False)
+        return {"ok": True, "text": p.stdout.decode("utf-8", "replace") if p.returncode == 0 else ""}
+    if args and args[0] == "set":
+        p = subprocess.Popen(["xclip", "-selection", "clipboard", "-i"], env=env, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        p.stdin.write(" ".join(args[1:]).encode("utf-8"))
+        p.stdin.close()
+        return {"ok": True}
+    raise Fail("usage: clip get | clip set TEXT")
+
+
+COMMANDS = {
+    "start": cmd_start, "stop": cmd_stop, "status": cmd_status, "windows": cmd_windows, "window": cmd_window,
+    "tree": cmd_tree, "act": cmd_act, "click": cmd_click, "move": cmd_move, "type": cmd_type, "key": cmd_key,
+    "scroll": cmd_scroll, "drag": cmd_drag, "shot": cmd_shot, "launch": cmd_launch, "clip": cmd_clip,
+}
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
+    handler = COMMANDS.get(argv[1])
+    if handler is None:
+        out({"ok": False, "error": "unknown command '%s'" % argv[1]}, 2)
+    try:
+        out(handler(argv[2:]))
+    except Fail as e:
+        out({"ok": False, "error": str(e)}, 1)
+    except subprocess.TimeoutExpired as e:
+        out({"ok": False, "error": "timed out: %s" % (e.cmd[0] if e.cmd else "command")}, 1)
+    except (IndexError, ValueError):
+        out({"ok": False, "error": "bad arguments; see `umbra-gui --help`"}, 2)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
