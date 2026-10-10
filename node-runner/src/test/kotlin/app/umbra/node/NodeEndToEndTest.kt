@@ -194,4 +194,23 @@ class NodeEndToEndTest {
             second.stop()
         }
     }
+
+    @Test
+    fun aNodeKeepsEachPhonesEvidenceAnchorsApart(): Unit = runBlocking {
+        val window = PairingWindow(Pairing.newCode(), System.currentTimeMillis() + 60_000)
+        val (srv, port) = server(window)
+        try {
+            val phone = Phone(dir.toFile(), "phone")
+            val pin = pair(phone, port, window.code)
+            connect(phone, port, pin).use { ch ->
+                ch.request("anchor", buildJsonObject { put("anchor", buildJsonObject { put("id", "a1"); put("digest", "d".repeat(64)) }) })
+                val list = ch.request("anchors")["anchors"] as JsonArray
+                assertEquals(1, list.size)
+                assertTrue("d".repeat(64) in list.toString())
+            }
+            assertTrue(File(dir.resolve("node").toFile(), "anchors.jsonl").readText().contains("\"a1\""))
+        } finally {
+            srv.stop()
+        }
+    }
 }

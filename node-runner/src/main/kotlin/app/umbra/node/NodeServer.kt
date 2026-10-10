@@ -101,6 +101,8 @@ class NodeServer(
                     when {
                         op == "pair" -> pair(req, phone)
                         !paired -> throw JobException("this phone is not paired with this node")
+                        op == "anchor" -> anchor(req, phone!!)
+                        op == "anchors" -> anchors(phone!!)
                         else -> {
                             if (sink == null) {
                                 val s: (JsonObject) -> Unit = { e -> runCatching { send(e) } }
@@ -140,6 +142,25 @@ class NodeServer(
             put("ok", true); put("node_id", home.config.nodeId); put("node_name", home.config.name)
             put("proof", Pairing.nodeProof(window.code, nodeFingerprint, phone))
         }
+    }
+
+    /**
+     * Keeps a phone's evidence digest here, outside the phone's own trust boundary (§13.2): one line per anchor in
+     * `anchors.jsonl`, with the phone's certificate and the time this node received it.
+     */
+    private fun anchor(req: JsonObject, phone: String): JsonObject {
+        val payload = req["anchor"] as? JsonObject ?: throw JobException("no anchor")
+        val line = buildJsonObject { put("phone", phone); put("received_ms", clock()); put("anchor", payload) }.toString()
+        synchronized(this) { java.io.File(home.dir, "anchors.jsonl").appendText(line + "\n") }
+        log("anchored an evidence digest from ${phone.take(16)}")
+        return buildJsonObject { put("ok", true); put("received_ms", clock()) }
+    }
+
+    /** The anchors this phone left here: a phone sees only its own. */
+    private fun anchors(phone: String): JsonObject {
+        val f = java.io.File(home.dir, "anchors.jsonl")
+        val mine = if (!f.exists()) emptyList() else f.readLines().mapNotNull { runCatching { Rsp.json.parseToJsonElement(it).jsonObject }.getOrNull() }.filter { it.str("phone") == phone }
+        return buildJsonObject { put("ok", true); put("anchors", JsonArray(mine)) }
     }
 
     private fun handle(op: String, req: JsonObject): JsonObject = when (op) {

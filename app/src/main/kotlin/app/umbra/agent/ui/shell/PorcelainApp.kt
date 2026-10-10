@@ -79,6 +79,7 @@ enum class Dest(val route: String, val title: String, val icon: IconSpec, val gr
     Inbox("inbox", "Inbox", PIcons.shield, tab = true),
 
     Workspaces("workspaces", "Workspaces", PIcons.grid, "PRODUCT"),
+    Repositories("repositories", "Repository Hub", PIcons.box, "PRODUCT"),
     Commit("commit", "Commit & Integration", PIcons.git, "PRODUCT"),
 
     Planning("planning", "Planning & Agents", PIcons.workflow, "OPERATIONS"),
@@ -89,6 +90,7 @@ enum class Dest(val route: String, val title: String, val icon: IconSpec, val gr
     Terminals("terminals", "Terminals", PIcons.terminal, "OPERATIONS"),
 
     Vault("vault", "Credential Vault", PIcons.key, "TRUST & SAFETY"),
+    Security("security", "Security & Evidence", PIcons.shield, "TRUST & SAFETY"),
     Emergency("emergency", "Emergency Control", PIcons.alert, "TRUST & SAFETY"),
 
     Linux("linux", "Linux & add-ons", PIcons.terminal, "SYSTEM"),
@@ -179,8 +181,16 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                     composable(Dest.Nodes.route) {
                         TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.nodes.NodesScreen() }
                     }
+                    composable(Dest.Repositories.route) {
+                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.integration.RepositoryHubScreen(onCommit = { go(Dest.Commit) }) }
+                    }
                     composable(Dest.Commit.route) {
                         TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.integration.CommitScreen(onOpenVault = { go(Dest.Vault) }) }
+                    }
+                    composable(Dest.Security.route) {
+                        TabPage(onMenu = { scope.launch { drawer.open() } }) {
+                            app.umbra.agent.ui.security.SecurityEvidenceScreen(onGo = { route -> Dest.entries.firstOrNull { it.route == route }?.let { go(it) } })
+                        }
                     }
                     composable(Dest.Vault.route) {
                         TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.vault.CredentialVaultScreen() }

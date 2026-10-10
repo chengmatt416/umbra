@@ -44,6 +44,10 @@ class ControlStore(val root: Path, val clock: Clock = Clock.System, private val 
         return collections.getOrPut(name) { Docs(root.resolve(name), serializer, idOf, json) } as Docs<T>
     }
 
+    /** The journals that exist on disk, by name (each one's hash chain can be checked). */
+    fun journalNames(): List<String> =
+        Files.list(root.resolve("journals").also { Files.createDirectories(it) }).use { s -> s.map { it.fileName.toString() }.filter { it.endsWith(".jsonl") }.map { it.removeSuffix(".jsonl") }.sorted().toList() }
+
     fun journal(name: String): Journal {
         require(SAFE.matches(name)) { "bad journal name: $name" }
         return journals.getOrPut(name) { Journal(root.resolve("journals").resolve("$name.jsonl"), clock, json) }

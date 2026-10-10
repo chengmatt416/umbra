@@ -40,6 +40,14 @@ fun main(args: Array<String>) {
             Thread.currentThread().join()
         }
         "phones" -> home.paired().forEach { println("${shortFingerprint(it.fingerprint)}  ${it.name}") }
+        "evidence-decrypt" -> {
+            val file = File(args.getOrNull(1) ?: run { System.err.println("which file?"); exitProcess(2) })
+            val pass = System.console()?.readPassword("Passphrase: ") ?: System.`in`.bufferedReader().readLine()?.toCharArray() ?: exitProcess(2)
+            val plain = runCatching { app.umbra.core.control.Evidence.open(file.readBytes(), pass) }.getOrElse {
+                System.err.println("cannot open it: wrong passphrase, or the file was changed"); exitProcess(1)
+            }
+            System.out.write(plain); System.out.flush()
+        }
         "unpair" -> {
             val prefix = args.getOrNull(1)?.replace(":", "")?.lowercase() ?: run { System.err.println("which phone? give a fingerprint prefix"); exitProcess(2) }
             val match = home.paired().filter { it.fingerprint.startsWith(prefix) }
@@ -47,6 +55,6 @@ fun main(args: Array<String>) {
             home.removePaired(match.single().fingerprint)
             println("unpaired ${match.single().name}")
         }
-        else -> { System.err.println("usage: umbra-node serve [--port N] [--home DIR] [--pair] | phones | unpair <prefix>"); exitProcess(2) }
+        else -> { System.err.println("usage: umbra-node serve [--port N] [--home DIR] [--pair] | phones | unpair <prefix> | evidence-decrypt <file>"); exitProcess(2) }
     }
 }

@@ -96,11 +96,17 @@ class AppContainer(val context: Context) {
     val vault = app.umbra.core.control.CredentialVault(control)
 
     /** The commit gate (§11): promotions of a repository's commit to a remote branch, conditional and journaled. */
-    val commits by lazy { app.umbra.core.control.CommitGate(control, app.umbra.agent.integration.guestGit(this)) }
+    val commits by lazy { app.umbra.core.control.CommitGate(control, app.umbra.agent.integration.guestGit(this), rewritePermitted = { repositories.rewritePermitted(it) }) }
+
+    /** The Repository Hub (§2.1): registered and cloned repositories, preflight, policy, project links. */
+    val repositories = app.umbra.core.control.RepositoryHub(control)
 
     /** Paired nodes, their jobs and the placement policy (§10), and the phone's connections to them. */
     val nodes = app.umbra.core.control.NodeRegistry(control)
     val nodeConnections by lazy { app.umbra.agent.nodes.NodeConnections(this, scope) }
+
+    /** Security & Evidence (§13): chain checks, independent anchors, recorded incidents, encrypted export. */
+    val security = app.umbra.core.control.SecurityEvidence(control)
 
     /** The Shared Runtime Service Manager's state (§9): references, admission, breakers, fenced recovery owners. */
     val services = app.umbra.core.control.SharedServices(control).also { s ->

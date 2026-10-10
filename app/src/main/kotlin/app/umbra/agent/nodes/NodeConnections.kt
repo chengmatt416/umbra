@@ -202,6 +202,19 @@ class NodeConnections(private val c: AppContainer, private val scope: CoroutineS
         registry.forgetJob(job)
     }
 
+    /** Leaves [anchor] on the node: a copy of the evidence digest outside this phone's trust boundary (§13.2). */
+    suspend fun anchor(nodeId: String, anchor: app.umbra.core.control.EvidenceAnchor) {
+        val node = registry[nodeId] ?: throw NodeException("no such node")
+        channel(node).request("anchor", buildJsonObject { put("anchor", Rsp.json.encodeToJsonElement(app.umbra.core.control.EvidenceAnchor.serializer(), anchor)) })
+    }
+
+    /** The anchors this phone left on the node, as the node kept them. */
+    suspend fun anchors(nodeId: String): List<app.umbra.core.control.EvidenceAnchor> {
+        val node = registry[nodeId] ?: throw NodeException("no such node")
+        val list = channel(node).request("anchors")["anchors"] as? JsonArray ?: return emptyList()
+        return list.mapNotNull { e -> (e as? kotlinx.serialization.json.JsonObject)?.get("anchor")?.let { runCatching { Rsp.json.decodeFromJsonElement(app.umbra.core.control.EvidenceAnchor.serializer(), it) }.getOrNull() } }
+    }
+
     fun disconnect(nodeId: String) {
         channels.remove(nodeId)?.close()
     }
