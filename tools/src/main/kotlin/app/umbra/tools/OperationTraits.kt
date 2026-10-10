@@ -37,6 +37,23 @@ internal object OperationTraits {
         else -> false
     }
 
+    /**
+     * Can change something outside the agent (screen, apps, files, processes, settings, displays). These are what an
+     * emergency input lockdown fences (§8.2); looking is always allowed.
+     */
+    fun hasSideEffects(op: Operation): Boolean = when (op) {
+        is Operation.Observe, is Operation.Screenshot, is Operation.Find, is Operation.WaitFor, is Operation.Verify,
+        is Operation.SysInfo, is Operation.Logs,
+        -> false
+        is Operation.Clipboard -> op.action != ClipboardAction.GET
+        is Operation.Notifications -> op.action != NotificationAction.LIST
+        is Operation.Packages -> op.action != app.umbra.core.model.action.PackageAction.LIST && op.action != app.umbra.core.model.action.PackageAction.INFO
+        is Operation.File -> op.action != app.umbra.core.model.action.FileAction.READ && op.action != app.umbra.core.model.action.FileAction.LIST && op.action != app.umbra.core.model.action.FileAction.STAT
+        is Operation.Process -> op.action == app.umbra.core.model.action.ProcessAction.KILL
+        is Operation.Display -> op.action != app.umbra.core.model.action.DisplayAction.LIST
+        else -> true
+    }
+
     /** True for operations that never touch a display, so a lease and a UI snapshot are pointless. */
     fun isSystemOnly(op: Operation): Boolean = when (op) {
         is Operation.Shell, is Operation.Packages, is Operation.SysInfo, is Operation.Logs,

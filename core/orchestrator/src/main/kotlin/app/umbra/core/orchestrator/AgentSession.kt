@@ -82,6 +82,8 @@ class SessionDeps(
     val policy: RecoveryLimits = RecoveryLimits(),
     /** The last transcript of each session, for showing it while no omp process runs. */
     val conversations: ConversationCache = ConversationCache.None,
+    /** Non-null while an emergency input lockdown is in force: new managed input is refused (§8.2). */
+    val fence: () -> String? = { null },
 )
 
 /** How hard a session tries to recover on its own before giving up and telling the user. */
@@ -181,6 +183,14 @@ class AgentSession internal constructor(
     }
 
     val isProcessAlive: Boolean get() = process?.client?.isClosed == false
+
+    /** The agent's process and everything it started, as the runner lists them right now. */
+    suspend fun processTree(): List<app.umbra.core.session.ProcessRef> {
+        val transport = process?.transport ?: return emptyList()
+        val pid = try { transport.processId() } catch (_: Exception) { null } ?: return emptyList()
+        val root = deps.environment.processes().firstOrNull { it.pid.toLong() == pid } ?: app.umbra.core.session.ProcessRef(pid.toInt(), "omp", deps.environment.name, null)
+        return listOf(root) + deps.environment.descendants(pid)
+    }
 
     /** Operating-system id of the omp process when it runs as a child of this one (development and tests). */
     val localProcessId: Long? get() = (process?.transport as? app.umbra.runtime.omp.ProcessTransport)?.pid?.takeIf { it > 0 }
@@ -303,7 +313,24 @@ class AgentSession internal constructor(
         // The session's own folders (files, artifacts, logs) exist before anything refers to them.
         runCatching { deps.workspaces.sessionDirs(sessionId) }
         val cwd = workingDirectory(session)
-        val settings = OmpSettings(
+        val settings = ompSettings()
+        val launch = ompLaunch(session, selection, files, cwd)
+
+        val started = OmpProcess.start(
+            launch = launch,
+            settings = settings,
+            providers = selection.providers,
+            files = files,
+            scope = scope,
+            environment = env.environment,
+            secrets = selection.secrets,
+            clientConfig = deps.clientConfig,
+            spawner = env.spawner,
+        )
+        startClient(started, session, env)
+    }
+
+    private fun ompSettings() = OmpSettings(
             approvalMode = when (deps.approvalMode()) {
                 app.umbra.core.safety.ApprovalMode.CAUTIOUS -> OmpApprovalMode.ALWAYS_ASK
                 // The host classifies every call omp asks about, so omp must keep asking: never yolo.
@@ -319,35 +346,52 @@ class AgentSession internal constructor(
                 "ask" to mapOf("notify" to "off"),
             ),
         )
-        val launch = OmpLaunch(
-            executable = env.ompExecutable,
-            workingDirectory = cwd,
-            model = selection.model?.let { "${it.provider}/${it.modelId}" },
-            sessionDir = env.ompSessionDir(sessionId),
-            loadExtensions = false,
-            extraArgs = buildList {
-                addAll(listOf("--append-system-prompt", "${files.ompPath.trimEnd('/')}/$SYSTEM_PROMPT_FILE"))
-                selection.thinkingLevel?.let { addAll(listOf("--thinking", it)) }
-            },
-        )
 
-        val started = OmpProcess.start(
-            launch = launch,
-            settings = settings,
-            providers = selection.providers,
-            files = files,
-            scope = scope,
-            environment = env.environment,
+    private fun ompLaunch(session: Session, selection: ProviderSelection, files: app.umbra.runtime.omp.AgentFiles, cwd: String) = OmpLaunch(
+        executable = deps.environment.ompExecutable,
+        workingDirectory = cwd,
+        model = selection.model?.let { "${it.provider}/${it.modelId}" },
+        sessionDir = deps.environment.ompSessionDir(sessionId),
+        loadExtensions = false,
+        extraArgs = buildList {
+            addAll(listOf("--append-system-prompt", "${files.ompPath.trimEnd('/')}/$SYSTEM_PROMPT_FILE"))
+            selection.thinkingLevel?.let { addAll(listOf("--thinking", it)) }
+        },
+    )
+
+    /**
+     * How to run omp's own terminal UI on this session's conversation (for what only the TUI offers: git UI,
+     * extensions dashboard, agents hub). The RPC process must be released first: two omp processes must never
+     * write one session file.
+     */
+    suspend fun tuiLaunch(): TuiLaunch {
+        val session = deps.store.get(sessionId) ?: error("no such session: $sessionId")
+        val env = deps.environment
+        env.prepare()
+        env.problem()?.let { throw AgentStartException(it) }
+        val selection = deps.providers.resolve(session.model)
+        val files = env.agentFiles(selection.profile)
+        files.write(SYSTEM_PROMPT_FILE, AgentPrompts.appendix(deps.prompts(), emptyList()))
+        if (selection.providers.isNotEmpty()) files.write(OmpProcess.MODELS_FILE, app.umbra.runtime.omp.OmpModelsFile.toYaml(selection.providers))
+        files.write(OmpProcess.OVERLAY_FILE, ompSettings().toYaml())
+        val cwd = workingDirectory(session)
+        val launch = ompLaunch(session, selection, files, cwd).copy(settingsOverlay = "${files.ompPath.trimEnd('/')}/${OmpProcess.OVERLAY_FILE}")
+        return TuiLaunch(
+            command = launch.interactiveCommand(resume = session.ompSessionFile),
+            cwd = cwd,
+            environment = env.environment + mapOf("PI_CODING_AGENT_DIR" to files.ompPath, "PI_NO_TITLE" to "1"),
             secrets = selection.secrets,
-            clientConfig = deps.clientConfig,
-            spawner = env.spawner,
         )
+    }
+
+    private suspend fun startClient(started: OmpProcess.Started, session: Session, env: AgentEnvironment) {
         val client = started.client
         client.uiHandler = OmpApprovalBridge(
             sessionId = sessionId,
             gate = deps.gate,
             context = { actionContext(session) },
             questions = deps.questions,
+            fence = deps.fence,
         )
         // Collect before the handshake: events emitted while nobody collects are not replayed.
         scope.launch(start = CoroutineStart.UNDISPATCHED) { client.events.collect { handle(client, it) } }
@@ -720,6 +764,11 @@ class AgentSession internal constructor(
     }
 
     class AgentStartException(message: String, cause: Throwable? = null) : IllegalStateException(message, cause)
+
+    /** The omp TUI command for a terminal, with the variables and credentials it needs. */
+    data class TuiLaunch(val command: List<String>, val cwd: String, val environment: Map<String, String>, val secrets: Map<String, String>) {
+        override fun toString() = "TuiLaunch(command=$command, cwd=$cwd, secrets=${secrets.keys})"
+    }
 
     companion object {
         const val SYSTEM_PROMPT_FILE = "umbra-system.md"

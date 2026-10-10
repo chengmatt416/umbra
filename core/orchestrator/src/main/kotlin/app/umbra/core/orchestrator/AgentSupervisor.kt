@@ -32,6 +32,9 @@ class AgentSupervisor(
     private val governor: ResourceGovernor? = null,
 ) {
     private val live = ConcurrentHashMap<String, AgentSession>()
+
+    /** Sessions open in the omp TUI: the GUI waits while the TUI's terminal lives (one writer per session file). */
+    private val tuiHolds = ConcurrentHashMap<String, suspend () -> Boolean>()
     private val counted = ConcurrentHashMap.newKeySet<String>()
     private var observers = emptyList<Job>()
 
@@ -124,9 +127,12 @@ class AgentSupervisor(
         try {
             send(session.id, request)
         } catch (e: Exception) {
-            // The session exists but could not start; the user sees why and can retry.
-            deps.service.apply(session.id, SessionCommand.START, "starting")
-            deps.service.apply(session.id, SessionCommand.FAIL, error = e.message ?: e::class.simpleName)
+            // The session exists but could not start; the user sees why and can retry. The start may already have
+            // moved it to running (or not): mark it failed from whichever state it is in, and keep the real error.
+            runCatching {
+                if (deps.store.get(session.id)?.state == SessionState.CREATED) deps.service.apply(session.id, SessionCommand.START, "starting")
+                deps.service.apply(session.id, SessionCommand.FAIL, error = e.message ?: e::class.simpleName)
+            }
             throw e
         }
         return deps.store.get(session.id) ?: session
@@ -153,6 +159,8 @@ class AgentSupervisor(
      */
     suspend fun <T> omp(sessionId: String, block: suspend (app.umbra.runtime.omp.OmpClient) -> T): T {
         deps.store.get(sessionId) ?: throw app.umbra.core.session.SessionNotFoundException(sessionId)
+        checkTui(sessionId)
+        checkFence()
         val session = sessionFor(sessionId)
         if (!session.isProcessAlive) governor?.decision?.value?.let { if (!it.allowNewSessions) throw CapacityException(capacityReason()) }
         return session.withOmp(block)
@@ -167,8 +175,41 @@ class AgentSupervisor(
         AgentSession(id, deps, scope) { ended -> live.remove(ended.sessionId, ended) }
     }
 
+    /** Raised for new managed input during an emergency input lockdown. */
+    class LockdownException(reason: String) : IllegalStateException("Emergency input lockdown is in force ($reason). Lift it in Emergency Control to give the agent new input.")
+
+    private fun checkFence() {
+        deps.fence()?.let { throw LockdownException(it) }
+    }
+
+    /** Raised while a session's conversation is open in the omp TUI. */
+    class OpenInTuiException(sessionId: String) : IllegalStateException("This conversation is open in the omp TUI terminal. Close the TUI (or its terminal) to continue here.")
+
+    private suspend fun checkTui(sessionId: String) {
+        val stillOpen = tuiHolds[sessionId] ?: return
+        if (stillOpen()) throw OpenInTuiException(sessionId)
+        tuiHolds.remove(sessionId)
+        // The TUI may have moved to another conversation file (new, fork, resume): continue with the newest one.
+        deps.store.update(sessionId) { it.copy(ompSessionFile = null) }
+    }
+
+    fun isOpenInTui(sessionId: String): Boolean = tuiHolds.containsKey(sessionId)
+
+    /** Lets the omp TUI take the conversation: releases the agent's process (refused while it works). */
+    suspend fun releaseForTui(sessionId: String, stillOpen: suspend () -> Boolean): AgentSession.TuiLaunch {
+        val state = deps.store.get(sessionId)?.state ?: throw app.umbra.core.session.SessionNotFoundException(sessionId)
+        check(state != SessionState.RUNNING && state != SessionState.WAITING_APPROVAL) { "The agent is working on this session; pause or stop it before opening the TUI." }
+        val session = sessionFor(sessionId)
+        session.releaseProcess()
+        val launch = session.tuiLaunch()
+        tuiHolds[sessionId] = stillOpen
+        return launch
+    }
+
     suspend fun send(sessionId: String, message: String, images: List<ContentBlock.Image> = emptyList(), whileRunning: StreamingBehavior = StreamingBehavior.STEER) {
         val state = deps.store.get(sessionId)?.state ?: throw app.umbra.core.session.SessionNotFoundException(sessionId)
+        checkTui(sessionId)
+        checkFence()
         if (sessionId !in counted) {
             // Every counted session holds one slot of the governor. A new or restarted task has to fit; one that is
             // already running or paused (for instance resumed after the app restarted) is let through.
@@ -190,7 +231,9 @@ class AgentSupervisor(
 
     /** Aborts the running turn and sends [message] instead. Falls back to [send] when nothing is running. */
     suspend fun interrupt(sessionId: String, message: String, images: List<ContentBlock.Image> = emptyList()) {
+        checkTui(sessionId)
         val session = live[sessionId]
+        checkFence()
         if (session != null && session.isProcessAlive) session.interrupt(message, images) else send(sessionId, message, images)
     }
 
@@ -199,6 +242,7 @@ class AgentSupervisor(
     }
 
     suspend fun resume(sessionId: String, note: String? = null) {
+        checkFence()
         val session = live[sessionId]
         if (session != null) session.resume(note) else send(sessionId, note ?: "The user resumed the task. Observe the current state, then continue where you left off.")
     }

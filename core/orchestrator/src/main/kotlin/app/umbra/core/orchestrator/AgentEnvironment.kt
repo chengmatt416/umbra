@@ -46,6 +46,12 @@ interface AgentEnvironment {
 
     /** What omp (process [rootPid]) has started and is still running: tool commands, servers, builds. */
     suspend fun descendants(rootPid: Long): List<app.umbra.core.session.ProcessRef> = emptyList()
+
+    /** Every process the runner can see now, with their start times. */
+    suspend fun processes(): List<app.umbra.core.session.ProcessRef> = emptyList()
+
+    /** Writes a file only the agent's user can read (credentials handed to a terminal program, then deleted). */
+    suspend fun writePrivateFile(path: String, content: String): Unit = throw UnsupportedOperationException("private files are not supported here")
 }
 
 /** The Debian guest started by root. [hostRoot] paths are the ones the app itself can read and write. */
@@ -86,6 +92,8 @@ class GuestEnvironment(
 
     override fun ompSessionDir(sessionId: String) = "${RuntimeLayout.GUEST_HOME}/.umbra/omp-sessions/$sessionId"
 
+    override suspend fun writePrivateFile(path: String, content: String) = runtime.writeFile(path, content, "600")
+
     override suspend fun prepare() {
         runtime.mount()
         afterMount()
@@ -98,6 +106,17 @@ class GuestEnvironment(
 
     override suspend fun cleanup() {
         if (runtime.isInstalled()) runtime.killAll()
+    }
+
+    override suspend fun processes(): List<app.umbra.core.session.ProcessRef> {
+        val out = runtime.exec(listOf("ps", "-e", "-o", "pid=,etimes=,args="), timeoutMs = 10_000)
+        if (!out.ok) return emptyList()
+        val now = System.currentTimeMillis()
+        return out.stdout.lineSequence().mapNotNull { line ->
+            Regex("""^\s*(\d+)\s+(\d+)\s+(.*)$""").find(line)?.let {
+                app.umbra.core.session.ProcessRef(it.groupValues[1].toInt(), it.groupValues[3].substringBefore(' ').substringAfterLast('/'), "linux", now - it.groupValues[2].toLong() * 1000)
+            }
+        }.toList()
     }
 
     override suspend fun descendants(rootPid: Long): List<app.umbra.core.session.ProcessRef> {
@@ -139,11 +158,23 @@ class LocalEnvironment(
 
     override fun ompSessionDir(sessionId: String) = home.resolve(".umbra/omp-sessions/$sessionId").toString()
 
+    override suspend fun writePrivateFile(path: String, content: String) {
+        val file = java.nio.file.Path.of(path)
+        java.nio.file.Files.createDirectories(file.parent)
+        java.nio.file.Files.writeString(file, content)
+        runCatching { java.nio.file.Files.setPosixFilePermissions(file, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")) }
+    }
+
     override suspend fun prepare() = Unit
 
     override suspend fun problem(): String? = null
 
     override suspend fun cleanup() = Unit
+
+    override suspend fun processes(): List<app.umbra.core.session.ProcessRef> =
+        ProcessHandle.allProcesses().toList().map { h ->
+            app.umbra.core.session.ProcessRef(h.pid().toInt(), h.info().command().orElse("?").substringAfterLast('/'), "local", h.info().startInstant().map { it.toEpochMilli() }.orElse(null))
+        }
 
     override suspend fun descendants(rootPid: Long): List<app.umbra.core.session.ProcessRef> {
         val root = ProcessHandle.of(rootPid).orElse(null) ?: return emptyList()

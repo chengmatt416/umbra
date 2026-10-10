@@ -80,6 +80,10 @@ enum class Dest(val route: String, val title: String, val icon: IconSpec, val gr
 
     Workspaces("workspaces", "Workspaces", PIcons.grid, "PRODUCT"),
 
+    Terminals("terminals", "Terminals", PIcons.terminal, "OPERATIONS"),
+
+    Emergency("emergency", "Emergency Control", PIcons.alert, "TRUST & SAFETY"),
+
     Linux("linux", "Linux & add-ons", PIcons.terminal, "SYSTEM"),
     Models("models", "Models & accounts", PIcons.spark, "SYSTEM"),
     Displays("displays", "Displays", PIcons.monitor, "SYSTEM"),
@@ -125,6 +129,7 @@ fun PorcelainApp(openSession: String?, onOpened: () -> Unit) {
     val attention = approvals.size + questions.size
 
     androidx.activity.compose.BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
+    val openEmergency: () -> Unit = { go(Dest.Emergency) }
     ModalNavigationDrawer(
         drawerState = drawer,
         drawerContent = {
@@ -142,6 +147,7 @@ fun PorcelainApp(openSession: String?, onOpened: () -> Unit) {
             modifier = Modifier.background(P.page),
         ) { padding ->
             Box(Modifier.fillMaxSize().background(P.page).padding(padding)) {
+              androidx.compose.runtime.CompositionLocalProvider(LocalOpenEmergency provides openEmergency) {
                 NavHost(nav, startDestination = Dest.Home.route) {
                     composable(Dest.Home.route) {
                         TabPage(onMenu = { scope.launch { drawer.open() } }) {
@@ -156,6 +162,12 @@ fun PorcelainApp(openSession: String?, onOpened: () -> Unit) {
                     }
                     composable(Dest.Inbox.route) {
                         TabPage(onMenu = { scope.launch { drawer.open() } }) { InboxScreen(onOpenSession = ::openSessionNow, onHistory = { go(Dest.ApprovalHistory) }) }
+                    }
+                    composable(Dest.Emergency.route) {
+                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.emergency.EmergencyScreen() }
+                    }
+                    composable(Dest.Terminals.route) {
+                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.terminal.TerminalsScreen() }
                     }
                     composable(Dest.Workspaces.route) { WorkspacesScreen(onBack = { nav.popBackStack() }, onOpen = { nav.navigate("workspace/$it") }) }
                     composable("workspace/{id}") { e -> WorkspaceBrowserScreen(e.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() }) }
@@ -178,6 +190,7 @@ fun PorcelainApp(openSession: String?, onOpened: () -> Unit) {
                         )
                     }
                 }
+              }
             }
         }
     }
@@ -192,8 +205,15 @@ fun TabPage(onMenu: () -> Unit, actions: @Composable () -> Unit = {}, content: @
     }
 }
 
+/** Opens Emergency Control from any app bar. */
+val LocalOpenEmergency = androidx.compose.runtime.staticCompositionLocalOf<() -> Unit> { {} }
+
 @Composable
 fun AppBar(onMenu: () -> Unit, actions: @Composable () -> Unit = {}) {
+    val container = LocalContext.current.container
+    val emergency by container.emergency.state.collectAsStateWithLifecycle()
+    val locked = emergency.level == app.umbra.core.control.EmergencyLevel.LOCKDOWN
+    Column(Modifier.fillMaxWidth()) {
     Row(
         Modifier.fillMaxWidth().statusBarsPadding().padding(start = 18.dp, end = 14.dp, top = 10.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -202,7 +222,17 @@ fun AppBar(onMenu: () -> Unit, actions: @Composable () -> Unit = {}) {
         Text("Umbra", Modifier.padding(start = 10.dp).weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = P.ink)
         actions()
         Spacer(Modifier.width(8.dp))
+        PIconButton(if (locked) PIcons.alert else PIcons.shield, "Emergency Control", LocalOpenEmergency.current, size = 36.dp, tint = if (locked) P.danger else P.accent2)
+        Spacer(Modifier.width(8.dp))
         PIconButton(PIcons.menu, "Open the menu", onMenu, size = 36.dp)
+    }
+    if (locked) {
+        Text(
+            "Input lockdown in force · agents cannot change anything",
+            Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFF4E1DD)).clickable(onClick = LocalOpenEmergency.current).padding(horizontal = 12.dp, vertical = 7.dp),
+            fontSize = 12.sp, color = Color(0xFF97564F), fontWeight = FontWeight.SemiBold,
+        )
+    }
     }
 }
 

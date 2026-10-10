@@ -71,6 +71,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
@@ -90,6 +91,26 @@ class AppContainer(val context: Context) {
     /** The control plane's durable state (architecture spec §1.2): projects, journals, leases, policies, … */
     val control = app.umbra.core.control.ControlStore(File(context.filesDir.canonicalFile, "control").toPath())
     val projects = app.umbra.core.control.ProjectRegistry(control)
+
+    /** Emergency Input Lockdown, persisted across restarts (architecture spec §8.2). */
+    val emergency = app.umbra.core.control.EmergencyControl(control, scope)
+
+    /** Input authority over terminals, the screen and desktops (architecture spec §7); fenced by a lockdown. */
+    val inputLeases = app.umbra.core.control.InputLeases(control) { emergency.lockdownReason() }
+
+    /**
+     * The writer-side fence of every side-effecting Android or desktop action (INV-006): an input lockdown stops all of
+     * them; the user holding a screen (Take Back) stops the ones that would touch it.
+     */
+    private suspend fun inputGate(request: app.umbra.core.model.action.ActionRequest, displayId: Int?, touchesDisplay: Boolean): String? {
+        emergency.lockdownReason()?.let { return "Emergency input lockdown is in force ($it): no side effects until the user lifts it." }
+        if (!touchesDisplay) return null
+        val resource = if (request.target.environment == app.umbra.core.model.action.Environment.LINUX_GUI) "gui:0" else "display:${displayId ?: 0}"
+        val lease = inputLeases.current(resource) ?: return null
+        return if (lease.owner == app.umbra.core.control.Principal.User && lease.state == app.umbra.core.control.LeaseState.ACTIVE) {
+            "The user has taken back this screen ($resource). Wait until they return it, or work on a background display."
+        } else null
+    }
     val ui = app.umbra.agent.data.UiState(context)
     val secrets = SecretStore(context)
 
@@ -179,6 +200,7 @@ class AppContainer(val context: Context) {
         clock = Clock.System,
         // The agent names files the way Linux sees them; tools that act on the phone's file system need the phone's path.
         config = PipelineConfig(pathMapper = { path -> workspaceLayout.toHost(path)?.toString() ?: path }),
+        inputGate = ::inputGate,
     )
 
     private val hosts = ConcurrentHashMap<String, UmbraToolHost>()
@@ -273,6 +295,7 @@ class AppContainer(val context: Context) {
                 hosts.remove(session.id)
             },
             conversations = app.umbra.agent.data.ConversationFiles(java.io.File(context.filesDir, "conversations")),
+            fence = { emergency.lockdownReason() },
         ),
         scope = scope,
         governor = governor,
@@ -302,8 +325,24 @@ class AppContainer(val context: Context) {
     val health = HealthSupervisor(subsystems(this) { sessionStore.list().any { it.state.isActive } })
 
     /** Starts the background machinery. Called once when the process starts, off the main thread. */
+    /** Terminals on tmux in the Linux guest (spec §6.1). */
+    val terminals by lazy {
+        app.umbra.core.orchestrator.terminal.TerminalService(
+            app.umbra.runtime.linux.tmux.GuestTmuxHost(guest.runtime, environment.spawner),
+            control, inputLeases, scope, File(context.filesDir, "terminal-logs").toPath(),
+        )
+    }
+
+    /** omp's own terminal UI on a session's conversation. */
+    val ompTui by lazy { app.umbra.core.orchestrator.terminal.OmpTui(supervisor, terminals, environment) }
+
     fun start() {
         scope.launch {
+            // Terminals outlive the app: once Linux is ready, find the tmux servers and panes again (AC-001).
+            launch {
+                guest.state.first { it == GuestManager.State.Ready }
+                runCatching { terminals.reconcile() }
+            }
             governor.start(scope)
             supervisor.start()
             supervisor.recover()

@@ -208,6 +208,21 @@ data class OmpLaunch(
         maxTime?.let { addAll(listOf("--max-time", it)) }
         addAll(extraArgs)
     }
+
+    /** The same omp, as its interactive terminal UI, continuing the conversation in [resume] when given. */
+    fun interactiveCommand(resume: String? = null): List<String> = buildList {
+        addAll(executable)
+        addAll(listOf("--cwd", workingDirectory))
+        model?.let { addAll(listOf("--model", it)) }
+        settingsOverlay?.let { addAll(listOf("--config", it)) }
+        sessionDir?.let { addAll(listOf("--session-dir", it)) }
+        resume?.let { addAll(listOf("--resume", it)) }
+        if (!loadExtensions) add("--no-extensions")
+        if (!loadSkills) add("--no-skills")
+        if (!loadRules) add("--no-rules")
+        if (!lsp) add("--no-lsp")
+        addAll(extraArgs)
+    }
 }
 
 /** Minimal YAML emitter for settings: nested maps, lists, strings, numbers, booleans, null. */

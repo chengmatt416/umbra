@@ -45,6 +45,11 @@ class ActionPipeline(
     codec: ImageCodec? = null,
     private val clock: Clock = Clock.System,
     private val config: PipelineConfig = PipelineConfig(),
+    /**
+     * Asked before any side-effecting operation: a non-null answer fences it (emergency input lockdown, or the user
+     * holding the screen the operation would act on). This is the writer-side check of INV-006.
+     */
+    private val inputGate: suspend (request: ActionRequest, displayId: Int?, touchesDisplay: Boolean) -> String? = { _, _, _ -> null },
 ) {
     private val verifier = Verifier(backends, logs, clock, codec)
     private val env = PipelineEnv(backends, clock, codec, logs, decisions, verifier, leases, config, ElementTargeting(decisions))
@@ -66,6 +71,11 @@ class ActionPipeline(
                 return fail(request, started, attempts, OpOutcome.unsupported("Command-line Linux work runs through the agent's own bash tool, not through this one."))
             }
             checkPrivilege(request)?.let { return fail(request, started, attempts, it) }
+            if (OperationTraits.hasSideEffects(op)) {
+                inputGate(request, displayId, OperationTraits.mutatesUi(op))?.let { why ->
+                    return fail(request, started, attempts, OpOutcome.fail(ErrorCode.LEASE_UNAVAILABLE, why, status = ActionStatus.NEEDS_USER))
+                }
+            }
             if (request.target.environment == Environment.ANDROID && displayId == 0 && touchesScreen(op)) {
                 screen.ensureUsable()?.let { problem ->
                     return fail(request, started, attempts, OpOutcome.fail(ErrorCode.NOT_ACTIONABLE, problem, status = ActionStatus.NEEDS_USER))

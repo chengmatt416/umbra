@@ -157,3 +157,45 @@ class OmpGuiTest {
         }
     }
 }
+
+class LockdownTest {
+    @TempDir
+    lateinit var dir: Path
+
+    private val ompBinary: File? = listOf(System.getenv("OMP_BIN"), "${System.getProperty("user.home")}/.bun/bin/omp").filterNotNull().map(::File).firstOrNull { it.canExecute() }
+
+    @Test
+    fun aLockdownRefusesNewInputAndOmpsToolCallsAreDenied() {
+        assumeTrue(ompBinary != null, "omp is not installed")
+        var locked: String? = null
+        var lockOnNextTurn = false
+        val model = ScriptedModel { request ->
+            if (request.lastToolResult == null) {
+                // The lockdown starts while the agent is mid-turn, just before it asks to run a command.
+                if (lockOnNextTurn) locked = "test"
+                ScriptedModel.toolCall("bash", """{"command":"touch lockdown-marker"}""")
+            } else {
+                ScriptedModel.text("done: ${request.lastToolResult}")
+            }
+        }
+        model.use {
+            OrchestratorRig(dir, ompBinary!!, it.url, fence = { locked }).use { rig ->
+                runBlocking {
+                    val id = rig.supervisor.launch("first").id
+                    rig.awaitState(id, SessionState.COMPLETED)
+                    assertTrue(rig.workspaceRoot.toFile().walk().any { f -> f.name == "lockdown-marker" }, "before the lockdown the command runs")
+                    rig.workspaceRoot.toFile().walk().filter { f -> f.name == "lockdown-marker" }.forEach { f -> f.delete() }
+
+                    lockOnNextTurn = true
+                    rig.supervisor.send(id, "do it again")
+                    rig.awaitState(id, SessionState.COMPLETED)
+                    assertTrue(rig.workspaceRoot.toFile().walk().none { f -> f.name == "lockdown-marker" }, "during the lockdown omp's command was denied, not run")
+                    assertTrue(model.requests.last().lastToolResult.orEmpty().isNotBlank(), "the agent was told the tool did not run")
+
+                    kotlin.test.assertFailsWith<AgentSupervisor.LockdownException> { rig.supervisor.send(id, "again") }
+                    kotlin.test.assertFailsWith<AgentSupervisor.LockdownException> { rig.supervisor.launch("new task") }
+                }
+            }
+        }
+    }
+}

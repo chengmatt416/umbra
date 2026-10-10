@@ -68,12 +68,15 @@ class OmpApprovalBridge(
     private val gate: SafetyGate,
     private val context: suspend () -> ActionContext,
     private val questions: UserQuestions,
+    /** Non-null during an emergency input lockdown: every tool omp asks about is denied (§8.2). */
+    private val fence: () -> String? = { null },
 ) : UiRequestHandler {
     private val counter = AtomicLong()
 
     override suspend fun handle(request: UiRequest): UiResponse {
         val prompt = (request as? UiRequest.Select)?.takeIf { APPROVE in it.options && DENY in it.options }?.let { OmpApprovalPrompt.parse(it.title) }
             ?: return questions.ask(sessionId, request)
+        if (fence() != null) return UiResponse.Value(DENY)
         val action = ActionRequest(
             id = "omp-${prompt.tool}-${counter.incrementAndGet()}",
             operation = operationFor(prompt),

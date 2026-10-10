@@ -151,7 +151,7 @@ class SessionOps(
     }
 }
 
-private enum class View(val label: String) { Chat("Chat"), Activity("Activity") }
+private enum class View(val label: String) { Chat("Chat"), Terminal("Terminal"), Activity("Activity") }
 
 /**
  * Current: the focused session as omp shows it (ADR 0013) — the conversation with tools, thinking and pictures,
@@ -224,6 +224,16 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                     PIconButton(PIcons.more, "Session actions", { menu = true }, size = 36.dp)
                     DropdownMenu(menu, { menu = false }) {
                         DropdownMenuItem(text = { Text("Conversation…") }, onClick = { menu = false; sheet = Sheet.Session })
+                        DropdownMenuItem(text = { Text("Open in omp TUI") }, onClick = {
+                            menu = false
+                            scope.launch {
+                                try {
+                                    container.ompTui.open(id, conversation.title ?: session.title)
+                                    view = View.Terminal
+                                    info = "The conversation is open in omp's terminal UI. Close that terminal to continue here."
+                                } catch (e: Exception) { error = e.message ?: e::class.simpleName }
+                            }
+                        })
                         if (busy) DropdownMenuItem(text = { Text("Pause") }, onClick = { menu = false; scope.launch { container.supervisor.pause(id) } })
                         if (session.state == SessionState.PAUSED) DropdownMenuItem(text = { Text("Resume") }, onClick = { menu = false; scope.launch { runCatching { container.supervisor.resume(id) }.onFailure { error = it.message } } })
                         if (!session.state.isTerminal) DropdownMenuItem(text = { Text("Stop the task") }, onClick = { menu = false; scope.launch { container.supervisor.stop(id) } })
@@ -252,6 +262,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
             when (view) {
                 View.Chat -> ChatList(session, conversation, mine, myQuestions, ops, onComposer = { composer = it })
                 View.Activity -> ActivityList(id)
+                View.Terminal -> Box(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 8.dp)) { app.umbra.agent.ui.terminal.TerminalsScreen(sessionId = id, embedded = true) }
             }
         }
         if (view == View.Chat) {

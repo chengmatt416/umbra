@@ -51,6 +51,7 @@ class OrchestratorRig(
     approvalMode: ApprovalMode = ApprovalMode.BALANCED,
     recovery: RecoveryLimits = RecoveryLimits(restartBackoffMs = 100, providerRetryBackoffMs = 100, pressureIdleMs = 1_000),
     val governor: app.umbra.core.perf.ResourceGovernor? = null,
+    fence: () -> String? = { null },
 ) : AutoCloseable {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val home: Path = Files.createDirectories(dir.resolve("home"))
@@ -113,6 +114,7 @@ class OrchestratorRig(
         approvalMode = { approvalMode },
         clientConfig = OmpClientConfig(readyTimeoutMs = 60_000, requestTimeoutMs = 30_000),
         policy = recovery,
+        fence = fence,
         conversations = object : ConversationCache {
             override suspend fun load(sessionId: String) = savedConversations[sessionId]
             override suspend fun save(sessionId: String, messages: List<kotlinx.serialization.json.JsonObject>) { savedConversations[sessionId] = messages }

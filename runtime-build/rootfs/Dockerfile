@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-# The base is what an agent needs for everyday coding work. Bigger toolchains (compilers, JDK, Android
+# The base is what an agent needs for everyday coding work, plus tmux: every terminal is a tmux pane (spec §6.1). Bigger toolchains (compilers, JDK, Android
 # build tools, a desktop) are packs installed on demand: `umbra-pack install <name>`.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -18,7 +18,7 @@ RUN apt-get update \
       ca-certificates curl wget git openssh-client \
       python3 python3-pip \
       ripgrep fd-find jq unzip zip xz-utils bzip2 tar zstd \
-      iproute2 locales tzdata nano \
+      iproute2 locales tzdata nano tmux \
  && ln -s /usr/bin/fdfind /usr/local/bin/fd \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
