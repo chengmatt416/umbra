@@ -95,6 +95,9 @@ class AppContainer(val context: Context) {
     /** Resource policy revisions: budgets, Draft → Simulate → Apply (architecture spec §4.2). */
     val policies = app.umbra.core.control.ResourcePolicies(control)
 
+    /** Session-scoped Resume Contracts (architecture spec §8.1). */
+    val contracts = app.umbra.core.control.ResumeContracts(control)
+
     /** Immutable plan revisions per session (architecture spec §4.3). */
     val plans = app.umbra.core.control.PlanRegistry(control)
 
@@ -357,7 +360,9 @@ class AppContainer(val context: Context) {
             }
             governor.start(scope)
             supervisor.start()
+            val interrupted = sessionStore.list().filter { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL }.map { it.id }
             supervisor.recover()
+            launch { resumeUnderContracts(interrupted) }
             guest.refresh()
             laya.refresh()
             launch { startLogMonitor() }
@@ -372,6 +377,36 @@ class AppContainer(val context: Context) {
                     .collect { runCatching { AgentService.start(context) } }
             }
             health.events.collect { event -> tell(event) }
+        }
+    }
+
+    /**
+     * Sessions that were working when the app (or the phone) went away and hold a resume contract continue by
+     * themselves once Linux is ready: each through the normal resume path, so a lockdown, missing permissions or a
+     * full device still stop it, and the agent is told to look again before it acts (§8.1).
+     */
+    private suspend fun resumeUnderContracts(interrupted: List<String>) {
+        if (interrupted.isEmpty()) return
+        val eligible = interrupted.filter { id ->
+            val why = contracts.eligibility(id)
+            if (why != null && contracts[id] != null) contracts.record("contract.not_resumed", id, why)
+            why == null
+        }
+        if (eligible.isEmpty()) return
+        val ready = kotlinx.coroutines.withTimeoutOrNull(10 * 60_000) { guest.state.first { it == GuestManager.State.Ready } }
+        for (id in eligible) {
+            if (ready == null) { contracts.record("contract.not_resumed", id, "the Linux environment did not become ready"); continue }
+            val c = contracts[id] ?: continue
+            val note = "The app or the phone restarted while you were working. You are resuming under this session's resume contract" +
+                (if (c.allowedWork.isNotBlank()) " (allowed: ${c.allowedWork})" else "") +
+                ". Nothing you did before the restart can be assumed to have finished: look at the current state first, then continue."
+            try {
+                AgentService.start(context)
+                supervisor.resume(id, note)
+                contracts.record("contract.resumed", id, "resumed after a restart")
+            } catch (e: Exception) {
+                contracts.record("contract.not_resumed", id, e.message ?: e::class.simpleName.orEmpty())
+            }
         }
     }
 

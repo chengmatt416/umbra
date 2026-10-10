@@ -41,7 +41,11 @@ interface AgentEnvironment {
     /** Why omp cannot start here, or null when it can. */
     suspend fun problem(): String?
 
-    /** Ends processes a previous run of the app left behind. */
+    /**
+     * Ends the agent processes a previous run of the app left behind (their sessions are paused and resume from the
+     * saved conversation). Terminals and other programs the user started keep running: the UI is not the process
+     * (INV-001).
+     */
     suspend fun cleanup()
 
     /** What omp (process [rootPid]) has started and is still running: tool commands, servers, builds. */
@@ -105,7 +109,14 @@ class GuestEnvironment(
     }
 
     override suspend fun cleanup() {
-        if (runtime.isInstalled()) runtime.killAll()
+        if (!runtime.isInstalled() || runtime.status() != RuntimeState.MOUNTED) return
+        val out = runtime.exec(listOf("ps", "-e", "-o", "pid=,args="), timeoutMs = 10_000)
+        if (!out.ok) return
+        // Only omp in RPC mode is an agent process of this app; everything else (tmux, the user's programs) stays.
+        out.stdout.lineSequence()
+            .mapNotNull { Regex("""^\s*(\d+)\s+(.*)$""").find(it) }
+            .filter { m -> m.groupValues[2].contains("--mode rpc-ui") }
+            .forEach { m -> runCatching { runtime.killTree(m.groupValues[1].toLong()) } }
     }
 
     override suspend fun processes(): List<app.umbra.core.session.ProcessRef> {

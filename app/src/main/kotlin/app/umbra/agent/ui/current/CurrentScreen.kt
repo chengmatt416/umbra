@@ -199,6 +199,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
     var view by remember(id) { mutableStateOf(View.Chat) }
     var sheet by remember(id) { mutableStateOf(Sheet.None) }
     var menu by remember { mutableStateOf(false) }
+    var contractDialog by remember { mutableStateOf(false) }
 
     // omp asks the client to open a sign-in page or prefill the composer.
     LaunchedEffect(id) {
@@ -229,6 +230,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                     PIconButton(PIcons.more, "Session actions", { menu = true }, size = 36.dp)
                     DropdownMenu(menu, { menu = false }) {
                         DropdownMenuItem(text = { Text("Conversation…") }, onClick = { menu = false; sheet = Sheet.Session })
+                        DropdownMenuItem(text = { Text("Resume contract…") }, onClick = { menu = false; contractDialog = true })
                         DropdownMenuItem(text = { Text("Open in omp TUI") }, onClick = {
                             menu = false
                             scope.launch {
@@ -296,6 +298,44 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
         }
     }
     OmpSheet(sheet, conversation, ops, onClose = { sheet = Sheet.None }, onOpen = { sheet = it }, onComposer = { composer = it })
+    if (contractDialog) ResumeContractDialog(id, onDismiss = { contractDialog = false })
+}
+
+/** Lets one session continue by itself after the app or the phone restarts (architecture spec §8.1). */
+@Composable
+private fun ResumeContractDialog(sessionId: String, onDismiss: () -> Unit) {
+    val container = LocalContext.current.container
+    val existing = container.contracts[sessionId]
+    var resume by remember { mutableStateOf(existing?.resumeAfterRestart ?: true) }
+    var duration by remember { mutableStateOf(if (existing?.expiresAtMs == null) "complete" else "custom") }
+    var allowed by remember { mutableStateOf(existing?.allowedWork.orEmpty()) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Resume contract") },
+        text = {
+            Column {
+                Text("If the app or the phone restarts while this session works, it may continue by itself once Linux is ready. It gains no new permissions, and a lockdown still holds it.", fontSize = 13.sp, color = P.sub)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp)) {
+                    Text("Resume after a restart", Modifier.weight(1f), fontSize = 14.sp, color = P.ink)
+                    androidx.compose.material3.Switch(resume, { resume = it })
+                }
+                Text("For how long", Modifier.padding(top = 8.dp), fontSize = 12.sp, color = P.muted)
+                Segmented(listOf("complete" to "Until done", "day" to "24 hours", "week" to "7 days"), duration, { duration = it })
+                androidx.compose.material3.OutlinedTextField(allowed, { allowed = it }, Modifier.fillMaxWidth().padding(top = 8.dp), placeholder = { Text("Allowed work, e.g. builds and tests only") })
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                val now = System.currentTimeMillis()
+                val expires = when (duration) { "day" -> now + 86_400_000L; "week" -> now + 7 * 86_400_000L; "custom" -> existing?.expiresAtMs; else -> null }
+                container.contracts.set(sessionId, resume, expires, allowed)
+                onDismiss()
+            }) { Text("Save") }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = { container.contracts.revoke(sessionId); onDismiss() }) { Text(if (existing != null) "Remove" else "Cancel") }
+        },
+    )
 }
 
 @Composable

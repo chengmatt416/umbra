@@ -14,6 +14,7 @@ import app.umbra.runtime.omp.UiResponse
 import app.umbra.tools.ControlHandler
 import java.io.File
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -127,6 +128,24 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
         "session.resume" -> { container.supervisor.resume(str(args, "id")); buildJsonObject { put("ok", true) } }
         "session.stop" -> { container.supervisor.stop(str(args, "id")); buildJsonObject { put("ok", true) } }
         "session.get" -> container.sessionStore.get(str(args, "id"))?.let(::sessionJson) ?: error("no such session")
+        "contract.set" -> {
+            container.contracts.set(str(args, "id"), (args["resume"] as? JsonPrimitive)?.content != "false", null, (args["allowed"] as? JsonPrimitive)?.content.orEmpty())
+            buildJsonObject { put("ok", true) }
+        }
+        "contract.log" -> JsonArray(container.contracts.recent.value.map { e -> buildJsonObject { put("kind", e.kind); put("data", e.data.toString()) } })
+        "terminal.open" -> {
+            val t = container.terminals.open(str(args, "title"), (args["cwd"] as? JsonPrimitive)?.content ?: "/home/agent")
+            buildJsonObject { put("id", t.id); put("epoch", t.serverEpoch) }
+        }
+        "terminal.send" -> buildJsonObject { put("result", container.terminals.sendText(str(args, "id"), str(args, "text"), app.umbra.core.control.Principal.User).toString()) }
+        "terminal.screen" -> {
+            val screen = kotlinx.coroutines.withTimeoutOrNull(10_000) { container.terminals.screen(str(args, "id")).first { it != null } }
+            buildJsonObject { put("text", screen?.plainText.orEmpty()); put("dead", screen?.dead ?: false) }
+        }
+        "terminal.list" -> {
+            container.terminals.reconcile()
+            JsonArray(container.terminals.terminals.value.map { t -> buildJsonObject { put("id", t.record.id); put("status", t.status.name); put("epoch", t.record.serverEpoch) } })
+        }
         "session.list" -> JsonArray(container.sessionStore.list().map(::sessionJson))
         "session.events" -> {
             val after = (args["after"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
