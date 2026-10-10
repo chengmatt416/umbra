@@ -464,7 +464,8 @@ class OmpClient(
             arguments = frame.obj("arguments") ?: JsonObject(emptyMap()),
         )
         val handler = hostToolHandler
-        val job = handlers.launch {
+        // Registered before it starts: a cancel omp sends at once must find it (and the count must include it).
+        val job = handlers.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             val payload = try {
                 if (handler == null || call.toolName !in hostToolNames) {
                     HostToolPayload.error("Unknown host tool '${call.toolName}'")
@@ -480,6 +481,7 @@ class OmpClient(
         }
         hostToolJobs[id] = job
         job.invokeOnCompletion { hostToolJobs.remove(id) }
+        job.start()
     }
 
     private fun hostToolFrame(type: String, id: String, payload: HostToolPayload, partialKey: Boolean = false): JsonObject = buildJsonObject {
