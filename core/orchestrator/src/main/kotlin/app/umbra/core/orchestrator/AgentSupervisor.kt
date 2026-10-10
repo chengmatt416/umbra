@@ -217,6 +217,11 @@ class AgentSupervisor(
             // command) needs no new process, so it is admitted like a running one.
             val alreadyHere = state == SessionState.PAUSED || state == SessionState.RUNNING || state == SessionState.WAITING_APPROVAL ||
                 live[sessionId]?.isProcessAlive == true
+            if (!alreadyHere) {
+                // The resource policy's maximum for the session's project (the device's own limit comes next).
+                val session = deps.store.get(sessionId)
+                deps.admission(session?.projectId, runningByProject())?.let { throw CapacityException(it) }
+            }
             val took = governor?.tryStartSession() ?: false
             if (!took && !alreadyHere && governor != null) throw CapacityException(capacityReason())
             if (took) counted.add(sessionId)
@@ -305,6 +310,10 @@ class AgentSupervisor(
         } catch (_: IllegalTransitionException) {
         }
     }
+
+    /** Sessions that hold an agent slot now, by project (null = independent). */
+    suspend fun runningByProject(): Map<String?, Int> =
+        deps.store.list().filter { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL }.groupingBy { it.projectId }.eachCount()
 
     private fun capacityReason(): String {
         val decision = governor?.decision?.value

@@ -92,6 +92,9 @@ class AppContainer(val context: Context) {
     val control = app.umbra.core.control.ControlStore(File(context.filesDir.canonicalFile, "control").toPath())
     val projects = app.umbra.core.control.ProjectRegistry(control)
 
+    /** Resource policy revisions: budgets, Draft → Simulate → Apply (architecture spec §4.2). */
+    val policies = app.umbra.core.control.ResourcePolicies(control)
+
     /** Immutable plan revisions per session (architecture spec §4.3). */
     val plans = app.umbra.core.control.PlanRegistry(control)
 
@@ -301,6 +304,7 @@ class AppContainer(val context: Context) {
             },
             conversations = app.umbra.agent.data.ConversationFiles(java.io.File(context.filesDir, "conversations")),
             fence = { emergency.lockdownReason() },
+            admission = { project, running -> policies.admit(project, running) },
             onTodos = { id, phases ->
                 plans.observe(id, phases.map { p -> app.umbra.core.control.PlanPhase(p.name, p.tasks.map { app.umbra.core.control.PlanTask(it.content, it.status) }) }, "agent")
             },

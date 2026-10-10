@@ -231,3 +231,34 @@ class PlanRevisionTest {
         }
     }
 }
+
+class AdmissionTest {
+    @TempDir
+    lateinit var dir: Path
+
+    private val ompBinary: File? = listOf(System.getenv("OMP_BIN"), "${System.getProperty("user.home")}/.bun/bin/omp").filterNotNull().map(::File).firstOrNull { it.canExecute() }
+
+    @Test
+    fun aProjectAtItsMaximumWaitsWhileAnotherProjectStillStarts() {
+        assumeTrue(ompBinary != null, "omp is not installed")
+        val policies = app.umbra.core.control.ResourcePolicies(app.umbra.core.control.ControlStore(dir.resolve("policy")))
+        policies.saveDraft(app.umbra.core.control.ResourcePolicy(slots = 4, budgets = mapOf("p1" to app.umbra.core.control.Budget(1, 1))))
+        policies.publish(policies.simulate(policies.draft()!!.policy, emptyMap(), 4, setOf("p1")))
+        val model = ScriptedModel { request -> ScriptedModel.text("done", delayMs = if (request.lastUserText?.contains("slow") == true) 6_000 else 0) }
+        model.use {
+            OrchestratorRig(dir, ompBinary!!, it.url, admission = { p, r -> policies.admit(p, r) }).use { rig ->
+                runBlocking {
+                    val first = rig.supervisor.launch("slow work", projectId = "p1")
+                    rig.awaitState(first.id, SessionState.RUNNING)
+                    val refused = kotlin.test.assertFailsWith<CapacityException> { rig.supervisor.launch("more work", projectId = "p1") }
+                    assertTrue("maximum 1" in refused.message.orEmpty(), refused.message)
+                    val other = rig.supervisor.launch("independent work")
+                    rig.awaitState(other.id, SessionState.COMPLETED)
+                    rig.awaitState(first.id, SessionState.COMPLETED)
+                    val again = rig.supervisor.launch("more work after", projectId = "p1")
+                    rig.awaitState(again.id, SessionState.COMPLETED)
+                }
+            }
+        }
+    }
+}

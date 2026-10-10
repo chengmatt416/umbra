@@ -52,6 +52,7 @@ class OrchestratorRig(
     recovery: RecoveryLimits = RecoveryLimits(restartBackoffMs = 100, providerRetryBackoffMs = 100, pressureIdleMs = 1_000),
     val governor: app.umbra.core.perf.ResourceGovernor? = null,
     fence: () -> String? = { null },
+    admission: (String?, Map<String?, Int>) -> String? = { _, _ -> null },
 ) : AutoCloseable {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val home: Path = Files.createDirectories(dir.resolve("home"))
@@ -118,6 +119,7 @@ class OrchestratorRig(
         clientConfig = OmpClientConfig(readyTimeoutMs = 60_000, requestTimeoutMs = 30_000),
         policy = recovery,
         fence = fence,
+        admission = admission,
         onTodos = { id, phases ->
             plans.observe(id, phases.map { p -> app.umbra.core.control.PlanPhase(p.name, p.tasks.map { app.umbra.core.control.PlanTask(it.content, it.status) }) }, "agent")
         },

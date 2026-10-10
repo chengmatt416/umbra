@@ -84,6 +84,11 @@ class SessionDeps(
     val conversations: ConversationCache = ConversationCache.None,
     /** Non-null while an emergency input lockdown is in force: new managed input is refused (§8.2). */
     val fence: () -> String? = { null },
+    /**
+     * Resource-policy admission (§4.2): given a session's project and the sessions running per project, null admits
+     * it; otherwise the reason it must wait.
+     */
+    val admission: (projectId: String?, running: Map<String?, Int>) -> String? = { _, _ -> null },
     /** The agent's todo phases as omp last reported them (plan revisions, §4.3). */
     val onTodos: suspend (sessionId: String, phases: List<app.umbra.runtime.omp.OmpTodoPhase>) -> Unit = { _, _ -> },
 )
