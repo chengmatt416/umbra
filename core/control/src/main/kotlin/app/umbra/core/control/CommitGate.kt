@@ -118,7 +118,13 @@ data class TargetFence(val id: String, val resource: String, val epoch: Long)
  * a single-use capability of the current fence epoch, never rewrites history unless the user allowed exactly that,
  * and a write whose outcome is unknown is settled by reading the remote, never by sending it again blindly.
  */
-class CommitGate(private val store: ControlStore, private val git: GitPort, private val capabilityTtlMs: Long = 10 * 60_000) {
+class CommitGate(
+    private val store: ControlStore,
+    private val git: GitPort,
+    private val capabilityTtlMs: Long = 10 * 60_000,
+    /** The repository's integration policy (the Repository Hub): may its remote history be rewritten at all? */
+    private val rewritePermitted: (repo: String) -> Boolean = { true },
+) {
     private val promotions = store.docs("promotions", Promotion.serializer(), Promotion::id)
     private val fences = store.docs("commit-fences", TargetFence.serializer(), TargetFence::id)
     private val journal = store.journal("promotions")
@@ -169,6 +175,9 @@ class CommitGate(private val store: ControlStore, private val git: GitPort, priv
         val ff = p.evidence?.fastForward ?: false
         if (!ff && !allowRewrite) {
             return save(p.copy(state = PromotionState.REFUSED, problems = p.problems + "not a fast-forward: publishing would rewrite the remote's history, which was not allowed"), "promotion.refused")
+        }
+        if (!ff && !rewritePermitted(p.repo)) {
+            return save(p.copy(state = PromotionState.REFUSED, problems = p.problems + "not a fast-forward, and this repository's integration policy is fast-forward only"), "promotion.refused")
         }
         // PREPARE: the intent is durable before anything is sent.
         val epoch = fence(p.resource)

@@ -10,6 +10,12 @@ data class GitRun(val exit: Int, val stdout: String, val stderr: String)
 class CommandGit(private val run: suspend (args: List<String>) -> GitRun) : GitPort {
     private suspend fun git(repo: String, vararg args: String) = run(listOf("-C", repo) + args)
 
+    /** Any read-only question about [repo] (the Repository Hub's preflight). */
+    suspend fun ask(repo: String, vararg args: String): GitRun = git(repo, *args)
+
+    /** `git clone` of [url] into [dest]; the `--` keeps a URL that starts with a dash from being read as an option. */
+    suspend fun clone(url: String, dest: String): GitRun = run(listOf("clone", "--origin", "origin", "--", url, dest))
+
     private suspend fun ok(repo: String, vararg args: String): String {
         val r = git(repo, *args)
         if (r.exit != 0) throw IllegalStateException("git ${args.first()} failed (${r.exit}): ${r.stderr.trim().take(300)}")
