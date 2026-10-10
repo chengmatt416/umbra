@@ -69,28 +69,58 @@ class TarReaderTest {
         assertEquals("pax", File(out, name).readText())
     }
 
-    @Test
-    fun nothingCanBeWrittenOutsideTheFolder() {
-        val src = File(dir, "evil").apply { mkdirs() }
-        Files.createSymbolicLink(File(src, "escape").toPath(), dir.toPath()) // a link pointing out of the archive's folder
-        val archive = tar(src)
-        // Append an entry that goes through the link: build it by hand.
-        val evil = File(dir, "evil.tar")
-        evil.writeBytes(archive.readBytes().copyOfRange(0, archive.length().toInt() - 1024) + header("escape/outside.txt", 3) + "bad".toByteArray() + ByteArray(509) + ByteArray(1024))
-        assertFailsWith<IOException> { evil.inputStream().use { TarReader.extract(it, File(dir, "evil-out")) } }
-        assertTrue(!File(dir, "outside.txt").exists(), "nothing landed outside")
+    // ---- archives built by hand, so the checks do not depend on which tar made them ----
+
+    private fun entry(name: String, type: Char, data: ByteArray = ByteArray(0), link: String = "", mode: String = "0000644"): ByteArray {
+        val h = header(name, data.size, type, link, mode)
+        val pad = (512 - data.size % 512) % 512
+        return h + data + ByteArray(pad)
     }
 
-    /** A minimal ustar header for a regular file. */
-    private fun header(name: String, size: Int): ByteArray {
+    private fun archive(vararg entries: ByteArray): File = File(dir, "hand-${System.nanoTime()}.tar").apply {
+        writeBytes(entries.fold(ByteArray(0)) { a, b -> a + b } + ByteArray(1024))
+    }
+
+    @Test
+    fun nothingCanBeWrittenOutsideTheFolderThroughALink() {
+        val outside = File(dir, "outside").apply { mkdirs() }
+        val evil = archive(entry("escape", '2', link = outside.path), entry("escape/planted.txt", '0', "bad".toByteArray()))
+        assertFailsWith<IOException> { evil.inputStream().use { TarReader.extract(it, File(dir, "evil-out")) } }
+        assertTrue(!File(outside, "planted.txt").exists(), "nothing landed outside")
+    }
+
+    @Test
+    fun aHardLinkCannotCopyAFileFromOutsideIn() {
+        val secret = File(dir, "secret.txt").apply { writeText("private") }
+        val dotdot = archive(entry("copy.txt", '1', link = "../secret.txt"))
+        assertFailsWith<IOException> { dotdot.inputStream().use { TarReader.extract(it, File(dir, "out-a")) } }
+        val viaLink = archive(entry("up", '2', link = dir.path), entry("copy.txt", '1', link = "up/secret.txt"))
+        assertFailsWith<IOException> { viaLink.inputStream().use { TarReader.extract(it, File(dir, "out-b")) } }
+        assertTrue(!File(dir, "out-a/copy.txt").exists() && !File(dir, "out-b/copy.txt").exists())
+        assertEquals("private", secret.readText())
+    }
+
+    @Test
+    fun aFolderReplacedByALinkDoesNotPassItsModeThrough() {
+        val outside = File(dir, "victim").apply { mkdirs() }
+        TarReader.setMode(outside, "700".toInt(8))
+        // A world-writable folder entry, then the same name as a link to a folder outside.
+        val evil = archive(entry("shared", '5', mode = "0000777"), entry("shared", '2', link = outside.path))
+        runCatching { evil.inputStream().use { TarReader.extract(it, File(dir, "out-c")) } }
+        assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(outside.toPath())), "the outside folder kept its own mode")
+    }
+
+    /** A minimal ustar header: a regular file ('0'), hard link ('1'), symbolic link ('2') or folder ('5'). */
+    private fun header(name: String, size: Int, type: Char = '0', link: String = "", mode: String = "0000644"): ByteArray {
         val h = ByteArray(512)
         name.toByteArray().copyInto(h, 0)
-        "0000644\u0000".toByteArray().copyInto(h, 100)
+        "$mode\u0000".toByteArray().copyInto(h, 100)
         "0000000\u0000".toByteArray().copyInto(h, 108)
         "0000000\u0000".toByteArray().copyInto(h, 116)
         String.format("%011o\u0000", size).toByteArray().copyInto(h, 124)
         "00000000000\u0000".toByteArray().copyInto(h, 136)
-        h[156] = '0'.code.toByte()
+        h[156] = type.code.toByte()
+        link.toByteArray().copyInto(h, 157)
         "ustar\u000000".toByteArray().copyInto(h, 257)
         "        ".toByteArray().copyInto(h, 148)
         val sum = h.sumOf { it.toInt() and 0xFF }

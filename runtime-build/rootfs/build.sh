@@ -24,7 +24,7 @@ trap 'rm -rf "$DOCKER_CONFIG"' EXIT
 BASE=umbra-debian-base:trixie
 if ! docker image inspect "$BASE" >/dev/null 2>&1; then
   BASE_TAR="$OUT/debian-trixie-slim-arm64.tar.gz"
-  [ -s "$BASE_TAR" ] || curl -fL -o "$BASE_TAR" \
+  [ -s "$BASE_TAR" ] || curl -fL --retry 5 --retry-all-errors --retry-delay 3 -o "$BASE_TAR" \
     "https://raw.githubusercontent.com/debuerreotype/docker-debian-artifacts/dist-arm64v8/trixie/slim/oci/blobs/rootfs.tar.gz"
   docker import --platform linux/arm64 --change 'CMD ["bash"]' "$BASE_TAR" "$BASE"
 fi
@@ -58,9 +58,9 @@ docker run --rm --platform linux/arm64 -v "$PWD/$REPO_DIR:/repo" "$IMAGE" bash -
   cd /repo && apt-ftparchive packages . > Packages
 "
 eval "$(grep -E '^(R8_VERSION|R8_SHA256|PLATFORM_ZIP|PLATFORM_SHA1)=' guest/packs/android.post)"
-curl -fsSL --retry 5 -o "$REPO_DIR/extras/r8-$R8_VERSION.jar" "https://dl.google.com/dl/android/maven2/com/android/tools/r8/$R8_VERSION/r8-$R8_VERSION.jar"
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o "$REPO_DIR/extras/r8-$R8_VERSION.jar" "https://dl.google.com/dl/android/maven2/com/android/tools/r8/$R8_VERSION/r8-$R8_VERSION.jar"
 echo "$R8_SHA256  $REPO_DIR/extras/r8-$R8_VERSION.jar" | shasum -a 256 -c -
-curl -fsSL --retry 5 -o "$REPO_DIR/extras/$PLATFORM_ZIP" "https://dl.google.com/android/repository/$PLATFORM_ZIP"
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o "$REPO_DIR/extras/$PLATFORM_ZIP" "https://dl.google.com/android/repository/$PLATFORM_ZIP"
 echo "$PLATFORM_SHA1  $REPO_DIR/extras/$PLATFORM_ZIP" | shasum -a 1 -c -
 
 # Proof that it is complete: a container without any network installs every pack from it alone.

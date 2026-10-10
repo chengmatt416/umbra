@@ -178,7 +178,7 @@ class TarReader(private val input: InputStream) {
                 val target = File(root, name)
                 val parent = target.parentFile ?: root
                 parent.mkdirs()
-                if (!parent.canonicalPath.let { it == root.path || it.startsWith(root.path + File.separator) }) {
+                if (!inside(root, parent.canonicalFile)) {
                     throw IOException("the archive reaches outside its folder through a link: ${e.name}")
                 }
                 val path = target.toPath()
@@ -200,8 +200,12 @@ class TarReader(private val input: InputStream) {
                         Files.createSymbolicLink(path, Paths.get(e.linkName))
                     }
                     Type.HARDLINK -> {
-                        // A copy: hard links between app files are not allowed everywhere on Android.
-                        val source = File(root, e.linkName.removePrefix("./").trimStart('/'))
+                        // A copy: hard links between app files are not allowed everywhere on Android. The source must
+                        // be inside the folder too, or the archive could read files from elsewhere into it.
+                        val link = e.linkName.removePrefix("./").trimStart('/')
+                        if (link.split('/').any { it == ".." }) throw IOException("the archive links to a path outside its folder: ${e.linkName}")
+                        val source = File(root, link)
+                        if (!inside(root, source.canonicalFile)) throw IOException("the archive links outside its folder through a link: ${e.linkName}")
                         Files.deleteIfExists(path)
                         Files.copy(source.toPath(), path)
                     }
@@ -209,9 +213,15 @@ class TarReader(private val input: InputStream) {
                 }
                 count++
             }
-            for ((folder, mode) in folders.asReversed()) setMode(folder, mode or 0b111_000_000)
+            // A folder a later entry replaced (with a link, for instance) keeps no mode from the archive: changing the
+            // mode through a link would change something outside the folder.
+            for ((folder, mode) in folders.asReversed()) {
+                if (Files.isDirectory(folder.toPath(), LinkOption.NOFOLLOW_LINKS) && inside(root, folder.canonicalFile)) setMode(folder, mode or 0b111_000_000)
+            }
             return count
         }
+
+        private fun inside(root: File, f: File): Boolean = f.path == root.path || f.path.startsWith(root.path + File.separator)
 
         fun setMode(file: File, mode: Int) {
             val perms = HashSet<PosixFilePermission>()

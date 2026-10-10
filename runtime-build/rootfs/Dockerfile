@@ -23,7 +23,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 # Bun: omp is a Bun program (needs >= 1.3.14), and the official glibc build is the one that runs here.
-RUN curl -fsSL "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-aarch64.zip" -o /tmp/bun.zip \
+RUN curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-aarch64.zip" -o /tmp/bun.zip \
  && unzip -q /tmp/bun.zip -d /tmp \
  && install -m 0755 /tmp/bun-linux-aarch64/bun /usr/local/bin/bun \
  && ln -s bun /usr/local/bin/bunx \
