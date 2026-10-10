@@ -125,6 +125,11 @@ class SessionOps(
 
     fun stats(onStats: (OmpSessionStats) -> Unit) = launch("Reading statistics", then = onStats) { it.sessionStats() }
 
+    /** The user changed the plan: that is a new plan revision with the user as its source (§4.3). */
+    fun planEditedByUser(phases: List<app.umbra.runtime.omp.OmpTodoPhase>) {
+        container.plans.observe(sessionId, phases.map { p -> app.umbra.core.control.PlanPhase(p.name, p.tasks.map { app.umbra.core.control.PlanTask(it.content, it.status) }) }, "user")
+    }
+
     /** Exports the conversation into the session's artifacts folder and opens it. */
     fun exportHtml() = scope.launch {
         val dirs = try { container.workspaces.sessionDirs(sessionId) } catch (e: Exception) { onError("Export: ${e.message}"); return@launch }

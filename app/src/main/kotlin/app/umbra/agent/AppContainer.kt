@@ -92,6 +92,9 @@ class AppContainer(val context: Context) {
     val control = app.umbra.core.control.ControlStore(File(context.filesDir.canonicalFile, "control").toPath())
     val projects = app.umbra.core.control.ProjectRegistry(control)
 
+    /** Immutable plan revisions per session (architecture spec §4.3). */
+    val plans = app.umbra.core.control.PlanRegistry(control)
+
     /** Emergency Input Lockdown, persisted across restarts (architecture spec §8.2). */
     val emergency = app.umbra.core.control.EmergencyControl(control, scope)
 
@@ -186,7 +189,9 @@ class AppContainer(val context: Context) {
     val laya = LayaSidecar(this, scope)
     val decisions = DecisionRouter(primary = laya.engine)
     val journal = ActionJournal()
-    val leases = DisplayLeaseManager()
+    val leases = DisplayLeaseManager(onBlocked = { session, display, holder ->
+        inputLeases.recordBlocked("display:$display", app.umbra.core.control.Principal.agent(session), app.umbra.core.control.Principal.agent(holder))
+    })
     val logMonitor = LogMonitor(ShellLogs(shellUser), journal, scope)
 
     val pipeline = ActionPipeline(
@@ -296,6 +301,9 @@ class AppContainer(val context: Context) {
             },
             conversations = app.umbra.agent.data.ConversationFiles(java.io.File(context.filesDir, "conversations")),
             fence = { emergency.lockdownReason() },
+            onTodos = { id, phases ->
+                plans.observe(id, phases.map { p -> app.umbra.core.control.PlanPhase(p.name, p.tasks.map { app.umbra.core.control.PlanTask(it.content, it.status) }) }, "agent")
+            },
         ),
         scope = scope,
         governor = governor,

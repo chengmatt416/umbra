@@ -18,6 +18,8 @@ class DisplayLeaseManager(
     private val clock: Clock = Clock.System,
     private val idleTtlMs: Long = 120_000,
     private val pollMs: Long = 100,
+    /** Told when a session had to give up waiting for a display another session holds (the wait graph, §4.1). */
+    private val onBlocked: (sessionId: String, displayId: Int, holder: String) -> Unit = { _, _, _ -> },
 ) {
     private val leases = ConcurrentHashMap<Int, Lease>()
 
@@ -38,6 +40,7 @@ class DisplayLeaseManager(
             tryAcquire(sessionId, displayId)?.let { return it }
             val holder = holder(displayId)
             if (clock.nowMs() >= deadline) {
+                runCatching { onBlocked(sessionId, displayId, holder ?: "?") }
                 throw LeaseUnavailableException(
                     displayId, holder ?: "?",
                     "Display $displayId is being controlled by session $holder. Use another display (display create) or wait for it to finish.",

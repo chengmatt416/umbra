@@ -60,6 +60,9 @@ class OrchestratorRig(
     val questions = QuestionBroker()
     val artifacts = CopyOnWriteArrayList<String>()
 
+    /** Plan revisions, fed the way the app feeds them (§4.3). */
+    val plans = app.umbra.core.control.PlanRegistry(app.umbra.core.control.ControlStore(dir.resolve("control")))
+
     /** Transcripts the sessions saved, as the app's file cache would hold them. */
     val savedConversations = java.util.concurrent.ConcurrentHashMap<String, List<kotlinx.serialization.json.JsonObject>>()
 
@@ -115,6 +118,9 @@ class OrchestratorRig(
         clientConfig = OmpClientConfig(readyTimeoutMs = 60_000, requestTimeoutMs = 30_000),
         policy = recovery,
         fence = fence,
+        onTodos = { id, phases ->
+            plans.observe(id, phases.map { p -> app.umbra.core.control.PlanPhase(p.name, p.tasks.map { app.umbra.core.control.PlanTask(it.content, it.status) }) }, "agent")
+        },
         conversations = object : ConversationCache {
             override suspend fun load(sessionId: String) = savedConversations[sessionId]
             override suspend fun save(sessionId: String, messages: List<kotlinx.serialization.json.JsonObject>) { savedConversations[sessionId] = messages }

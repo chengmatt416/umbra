@@ -84,6 +84,8 @@ class SessionDeps(
     val conversations: ConversationCache = ConversationCache.None,
     /** Non-null while an emergency input lockdown is in force: new managed input is refused (§8.2). */
     val fence: () -> String? = { null },
+    /** The agent's todo phases as omp last reported them (plan revisions, §4.3). */
+    val onTodos: suspend (sessionId: String, phases: List<app.umbra.runtime.omp.OmpTodoPhase>) -> Unit = { _, _ -> },
 )
 
 /** How hard a session tries to recover on its own before giving up and telling the user. */
@@ -141,6 +143,9 @@ class AgentSession internal constructor(
 
     @Volatile private var turnActive = false
 
+    /** A prompt sent while idle whose turn has not started yet: a late "settled" from the previous turn is not about it. */
+    @Volatile private var pendingPromptId: String? = null
+
     @Volatile private var intentionalClose = false
 
     /** GUI commands in flight, and when the process was last used: an idle release never cuts one off. */
@@ -173,6 +178,7 @@ class AgentSession internal constructor(
                 try {
                     val state = app.umbra.runtime.omp.OmpSessionState.from(client.getState())
                     conversationFlow.update { ConversationReducer.withSession(it, state).copy(live = true) }
+                    runCatching { deps.onTodos(sessionId, state.todos) }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
@@ -203,11 +209,19 @@ class AgentSession internal constructor(
             check(!stopping.get()) { "this session has been released" }
             idleJob?.cancel()
             lastUsedMs = deps.clock.nowMs()
-            prepareState()
-            ensureProcess()
-            recorder.userMessage(message, images.size)
-            val client = process!!.client
-            client.prompt(message, images, if (turnActive) whileRunning else null)
+            // Marked before the state moves to running, so a late "settled" of the previous turn cannot finish it.
+            val idle = !turnActive
+            if (idle) pendingPromptId = SENDING
+            try {
+                prepareState()
+                ensureProcess()
+                recorder.userMessage(message, images.size)
+                val handle = process!!.client.prompt(message, images, if (turnActive) whileRunning else null)
+                if (idle && pendingPromptId == SENDING) pendingPromptId = handle.id
+            } catch (e: Throwable) {
+                if (pendingPromptId == SENDING) pendingPromptId = null
+                throw e
+            }
         }
     }
 
@@ -219,7 +233,7 @@ class AgentSession internal constructor(
             prepareState()
             ensureProcess()
             recorder.userMessage(message, images.size)
-            process!!.client.abortAndPrompt(message, images)
+            pendingPromptId = process!!.client.abortAndPrompt(message, images).id
         }
     }
 
@@ -248,7 +262,7 @@ class AgentSession internal constructor(
             ensureProcess()
             val text = note?.takeIf { it.isNotBlank() }?.let { "The user resumed the task: $it" }
                 ?: "The user resumed the task. Observe the current state, then continue where you left off."
-            process!!.client.prompt(text)
+            pendingPromptId = process!!.client.prompt(text).id
         }
     }
 
@@ -487,6 +501,7 @@ class AgentSession internal constructor(
         when (event) {
             OmpEvent.AgentStart -> {
                 turnActive = true
+                pendingPromptId = null
                 mutableLive.tryEmit(LiveUpdate.TurnStarted)
                 markRunning()
             }
@@ -542,6 +557,8 @@ class AgentSession internal constructor(
     }
 
     private suspend fun onPromptResult(result: PromptResult) {
+        // The pending prompt is answered (it may never have started a turn, e.g. a command omp handled locally).
+        if (result.id == pendingPromptId) pendingPromptId = null
         when (result.status) {
             PromptStatus.COMPLETED -> {
                 providerRetries = 0
@@ -572,13 +589,15 @@ class AgentSession internal constructor(
     }
 
     private suspend fun settle() {
-        process?.client?.let { refreshConversation(it, save = true) }
+        // The state is decided first, with nothing suspending in between: omp reports a settled turn twice (its prompt
+        // result and `session_settled`), and a follow-up sent between the two must not be marked finished.
         val state = deps.store.get(sessionId)?.state
-        if (state == SessionState.RUNNING) {
+        if (state == SessionState.RUNNING && !turnActive && pendingPromptId == null) {
             try { deps.service.apply(sessionId, SessionCommand.COMPLETE, "the agent finished") } catch (_: IllegalTransitionException) { }
             finished()
             scheduleIdleRelease()
         }
+        process?.client?.let { client -> scope.launch { refreshConversation(client, save = true) } }
     }
 
     private suspend fun finished() {
@@ -683,6 +702,7 @@ class AgentSession internal constructor(
                 val withTranscript = ConversationReducer.withSession(ConversationReducer.withMessages(current, messages), state)
                 withTranscript.copy(live = true, commands = available ?: withTranscript.commands)
             }
+            runCatching { deps.onTodos(sessionId, state.todos) }
             // Branch, fork, switch and new move omp to another file; a restarted process continues there.
             state.sessionFile?.let { f -> if (deps.store.get(sessionId)?.ompSessionFile != f) deps.store.update(sessionId) { it.copy(ompSessionFile = f) } }
             if (save) runCatching { deps.conversations.save(sessionId, messages) }
@@ -772,6 +792,7 @@ class AgentSession internal constructor(
 
     companion object {
         const val SYSTEM_PROMPT_FILE = "umbra-system.md"
+        private const val SENDING = "(sending)"
         private const val PROCESS_POLL_MS = 10_000L
     }
 }

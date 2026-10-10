@@ -137,6 +137,11 @@ class InputLeases(private val store: ControlStore, private val lockdown: () -> S
         return put(cur.copy(state = LeaseState.UNCERTAIN, reason = why), "reconcile", null, why)
     }
 
+    /** Records that [waiter] could not get [resourceId] because [holder] has it (an edge of the wait graph). */
+    fun recordBlocked(resourceId: String, waiter: Principal, holder: Principal) {
+        timeline.append("blocked", buildJsonObject { put("resource", resourceId); put("by", waiter.toString()); put("holder", holder.toString()) })
+    }
+
     /** Removes the record of a resource that no longer exists (a closed terminal). */
     @Synchronized
     fun forget(resourceId: String) {

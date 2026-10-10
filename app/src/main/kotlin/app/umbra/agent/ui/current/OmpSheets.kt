@@ -314,7 +314,9 @@ private fun TodosSheet(conversation: ConversationState, ops: SessionOps) {
     Gap(12.dp)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         PButton("Add a task", { adding = true }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.plus)
-        PButton("Save", { ops.launch("Saving todos") { it.setTodos(phases) } }, tiny = true, enabled = phases != conversation.session?.todos.orEmpty())
+        PButton("Save", {
+            ops.launch("Saving todos", then = { _: List<OmpTodoPhase> -> ops.planEditedByUser(phases) }) { it.setTodos(phases) }
+        }, tiny = true, enabled = phases != conversation.session?.todos.orEmpty())
     }
     if (adding) TextDialog("New task", "", "Add", onDismiss = { adding = false }) { text ->
         adding = false

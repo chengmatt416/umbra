@@ -199,3 +199,35 @@ class LockdownTest {
         }
     }
 }
+
+class PlanRevisionTest {
+    @TempDir
+    lateinit var dir: Path
+
+    private val ompBinary: File? = listOf(System.getenv("OMP_BIN"), "${System.getProperty("user.home")}/.bun/bin/omp").filterNotNull().map(::File).firstOrNull { it.canExecute() }
+
+    @Test
+    fun theAgentsTodoListBecomesAPlanRevisionAndItsProgressDoesNot() {
+        assumeTrue(ompBinary != null, "omp is not installed")
+        val steps = listOf(
+            ScriptedModel.toolCall("todo", """{"op":"init","list":[{"phase":"Fix","items":["find the crash","patch it"]},{"phase":"Verify","items":["run the tests"]}]}""", id = "c1"),
+            ScriptedModel.toolCall("todo", """{"op":"start","task":"find the crash"}""", id = "c2"),
+            ScriptedModel.text("Planned and started."),
+        )
+        val model = ScriptedModel { request -> steps[minOf(request.body["messages"].toString().split("\"role\":\"tool\"").size - 1, steps.size - 1)] }
+        model.use {
+            OrchestratorRig(dir, ompBinary!!, it.url).use { rig ->
+                runBlocking {
+                    val id = rig.supervisor.launch("plan the fix").id
+                    rig.awaitState(id, SessionState.COMPLETED)
+                    val history = withTimeout(20_000) { while (rig.plans.history(id).isEmpty()) kotlinx.coroutines.delay(100); rig.plans.history(id) }
+                    assertEquals(1, history.size, "init made one revision; starting a task is progress: $history")
+                    assertEquals(listOf("Fix", "Verify"), history.single().phases.map { it.name })
+                    assertEquals("agent", history.single().source)
+                    val progress = rig.plans.progressOf(id)!!
+                    assertEquals("in_progress", progress.phases[0].tasks.first { it.content == "find the crash" }.status)
+                }
+            }
+        }
+    }
+}
