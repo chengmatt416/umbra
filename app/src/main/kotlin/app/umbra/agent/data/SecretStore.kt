@@ -2,12 +2,17 @@ package app.umbra.agent.data
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import javax.crypto.SecretKeyFactory
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import javax.crypto.spec.GCMParameterSpec
 
 /**
@@ -18,6 +23,28 @@ import javax.crypto.spec.GCMParameterSpec
  */
 class SecretStore(context: Context) {
     private val prefs = context.getSharedPreferences("secrets", Context.MODE_PRIVATE)
+    private val version = MutableStateFlow(0)
+
+    /** Grows whenever a secret is added, replaced or removed (the vault's account follows it). */
+    val changes: StateFlow<Int> = version.asStateFlow()
+
+    /** How the key that protects every secret is held, as the keystore reports it. */
+    data class Custody(val alias: String, val algorithm: String, val keySize: Int, val securityLevel: String, val hardwareBacked: Boolean, val userAuthentication: Boolean)
+
+    fun custody(): Custody {
+        val key = key()
+        val info = SecretKeyFactory.getInstance(key.algorithm, PROVIDER).getKeySpec(key, KeyInfo::class.java) as KeyInfo
+        val level = when (info.securityLevel) {
+            KeyProperties.SECURITY_LEVEL_STRONGBOX -> "StrongBox (a separate secure chip)"
+            KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT -> "Trusted execution environment"
+            KeyProperties.SECURITY_LEVEL_SOFTWARE -> "Software (no secure hardware on this device)"
+            KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE -> "Secure hardware (kind not reported)"
+            else -> "Not reported"
+        }
+        val hardware = info.securityLevel == KeyProperties.SECURITY_LEVEL_STRONGBOX || info.securityLevel == KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT ||
+            info.securityLevel == KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE
+        return Custody(ALIAS, "AES-GCM", info.keySize, level, hardware, info.isUserAuthenticationRequired)
+    }
 
     fun names(): Set<String> = prefs.all.keys.toSet()
 
@@ -36,10 +63,12 @@ class SecretStore(context: Context) {
     fun put(name: String, value: String) {
         require(NAME.matches(name)) { "invalid secret name '$name'" }
         if (value.isEmpty()) remove(name) else prefs.edit().putString(name, encrypt(value)).apply()
+        version.value++
     }
 
     fun remove(name: String) {
         prefs.edit().remove(name).apply()
+        version.value++
     }
 
     private fun key(): SecretKey {

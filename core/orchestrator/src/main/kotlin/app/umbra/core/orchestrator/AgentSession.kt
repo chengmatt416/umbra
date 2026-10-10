@@ -95,6 +95,8 @@ class SessionDeps(
      * staged reattachment.
      */
     val serviceAdmission: (sessionId: String?) -> String? = { null },
+    /** Secrets ([names]) were handed to a process of [sessionId] for [purpose]: the vault records it (§12.1). */
+    val exposed: (sessionId: String, names: Set<String>, purpose: String) -> Unit = { _, _, _ -> },
     /** The agent's todo phases as omp last reported them (plan revisions, §4.3). */
     val onTodos: suspend (sessionId: String, phases: List<app.umbra.runtime.omp.OmpTodoPhase>) -> Unit = { _, _ -> },
 )
@@ -332,6 +334,7 @@ class AgentSession internal constructor(
         recorder.notice("info", "Starting the agent. The first start can take a minute or two.", "umbra")
 
         val selection = deps.providers.resolve(session.model)
+        if (selection.secrets.isNotEmpty()) runCatching { deps.exposed(sessionId, selection.secrets.keys, "the agent's omp process (its model calls)") }
         val files = env.agentFiles(selection.profile)
         files.write(SYSTEM_PROMPT_FILE, AgentPrompts.appendix(deps.prompts(), toolHost.toolNames))
 
@@ -395,6 +398,7 @@ class AgentSession internal constructor(
         env.prepare()
         env.problem()?.let { throw AgentStartException(it) }
         val selection = deps.providers.resolve(session.model)
+        if (selection.secrets.isNotEmpty()) runCatching { deps.exposed(sessionId, selection.secrets.keys, "omp's terminal UI in a terminal") }
         val files = env.agentFiles(selection.profile)
         files.write(SYSTEM_PROMPT_FILE, AgentPrompts.appendix(deps.prompts(), emptyList()))
         if (selection.providers.isNotEmpty()) files.write(OmpProcess.MODELS_FILE, app.umbra.runtime.omp.OmpModelsFile.toYaml(selection.providers))

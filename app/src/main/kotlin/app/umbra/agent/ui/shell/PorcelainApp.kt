@@ -86,6 +86,7 @@ enum class Dest(val route: String, val title: String, val icon: IconSpec, val gr
     Services("services", "Shared Services", PIcons.recycle, "OPERATIONS"),
     Terminals("terminals", "Terminals", PIcons.terminal, "OPERATIONS"),
 
+    Vault("vault", "Credential Vault", PIcons.key, "TRUST & SAFETY"),
     Emergency("emergency", "Emergency Control", PIcons.alert, "TRUST & SAFETY"),
 
     Linux("linux", "Linux & add-ons", PIcons.terminal, "SYSTEM"),
@@ -172,6 +173,9 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                     }
                     composable(Dest.Runtime.route) {
                         TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.runtime.RuntimeScreen(onOpenSession = ::openSessionNow) }
+                    }
+                    composable(Dest.Vault.route) {
+                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.vault.CredentialVaultScreen() }
                     }
                     composable(Dest.Services.route) {
                         TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.services.SharedServicesScreen(onOpenSession = ::openSessionNow) }

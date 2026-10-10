@@ -75,6 +75,9 @@ class UiState(context: Context) {
         chip.imagePath?.let { File(it).delete() }
     }
 
+    /** Whether Umbra's own screen is in front: the Capsule then stays collapsed, the app shows the same things. */
+    val appVisible = MutableStateFlow(false)
+
     /** Where a Capsule composer's message goes: a session id, or null for new work. Not persisted. */
     val composerTarget = MutableStateFlow<String?>(null)
 

@@ -32,6 +32,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        container.ui.appVisible.value = true
+    }
+
+    override fun onStop() {
+        container.ui.appVisible.value = false
+        super.onStop()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         requestedSession = intent.getStringExtra(EXTRA_SESSION)

@@ -145,7 +145,7 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     val failed = sessions.filter { it.state == SessionState.FAILED && it.id !in dismissed && System.currentTimeMillis() - it.updatedAtMs < 10 * 60_000 }.maxByOrNull { it.updatedAtMs }
     val needsYou = approvals.isNotEmpty() || questions.isNotEmpty()
     val atRest = current == null && !needsYou && !locked && failed == null
-    LaunchedEffect(failed?.id) { if (failed != null) capsule.expanded.value = true }
+    LaunchedEffect(failed?.id) { if (failed != null && !container.ui.appVisible.value) capsule.expanded.value = true }
 
     val label = when {
         locked -> "Lockdown · input held"

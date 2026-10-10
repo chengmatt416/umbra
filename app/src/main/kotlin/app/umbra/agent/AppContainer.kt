@@ -92,6 +92,9 @@ class AppContainer(val context: Context) {
     /** The control plane's durable state (architecture spec §1.2): projects, journals, leases, policies, … */
     val control = app.umbra.core.control.ControlStore(File(context.filesDir.canonicalFile, "control").toPath())
 
+    /** The credential vault's account (§12): scopes, rotation, revocation and every exposure, never values. */
+    val vault = app.umbra.core.control.CredentialVault(control)
+
     /** The Shared Runtime Service Manager's state (§9): references, admission, breakers, fenced recovery owners. */
     val services = app.umbra.core.control.SharedServices(control).also { s ->
         listOf(ServiceMonitor.LINUX, ServiceMonitor.HELPER, ServiceMonitor.ROOT_HELPER, ServiceMonitor.X_DESKTOP, ServiceMonitor.LAYA).forEach(s::declare)
@@ -296,7 +299,7 @@ class AppContainer(val context: Context) {
             service = sessionService,
             workspaces = workspaces,
             environment = environment,
-            providers = AppProviderResolver(settings, secrets),
+            providers = AppProviderResolver(settings, secrets) { name, provider -> vault.admits(name, provider) },
             toolHosts = ::toolHost,
             gate = gate,
             approvals = approvals,
@@ -319,6 +322,7 @@ class AppContainer(val context: Context) {
             fence = { emergency.lockdownReason() },
             admission = { project, running -> policies.admit(project, running) },
             serviceAdmission = { sessionId -> services.admitConsumer(ServiceMonitor.LINUX, count = sessionId != null) },
+            exposed = { sessionId, names, purpose -> vault.recordExposure(names, "session $sessionId", purpose) },
             onTodos = { id, phases ->
                 plans.observe(id, phases.map { p -> app.umbra.core.control.PlanPhase(p.name, p.tasks.map { app.umbra.core.control.PlanTask(it.content, it.status) }) }, "agent")
             },
@@ -380,6 +384,13 @@ class AppContainer(val context: Context) {
             launch { startLogMonitor() }
             health.start(scope)
             serviceMonitor.start(scope)
+            // The vault's account follows what the secret store holds and what the providers call each key.
+            launch {
+                kotlinx.coroutines.flow.combine(settings.flow, secrets.changes) { prefs, _ -> prefs }.collect { prefs ->
+                    val labels = prefs.providers.mapNotNull { p -> p.apiKeyEnv?.let { it to (p.label to p.id) } }.toMap()
+                    vault.reconcile(secrets.names().associateWith { labels[it] ?: (it to null) })
+                }
+            }
             launch { while (true) { runCatching { capabilities.refresh() }; kotlinx.coroutines.delay(60_000) } }
             // The capsule lives in the foreground service: it is there whenever the user has it on.
             launch {

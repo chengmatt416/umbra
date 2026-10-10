@@ -95,11 +95,14 @@ class Capsule(private val context: Context, private val container: AppContainer)
                 var seen = emptySet<String>()
                 container.approvals.pending.collect { list ->
                     val ids = list.map { it.id }.toSet()
-                    if ((ids - seen).isNotEmpty() && capsuleWindow != null) expanded.value = true
+                    // Inside Umbra the Inbox shows it; the peek is for when the user is in another app.
+                    if ((ids - seen).isNotEmpty() && capsuleWindow != null && !container.ui.appVisible.value) expanded.value = true
                     seen = ids
                 }
             }
             launch { expanded.collect { place() } }
+            // Opening Umbra folds the capsule away from its own screen.
+            launch { container.ui.appVisible.collect { visible -> if (visible) expanded.value = false } }
         }
     }
 

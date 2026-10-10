@@ -100,15 +100,24 @@ class AppSettings(context: Context) {
 }
 
 /** Turns the user's provider settings and stored keys into what an agent session starts with. */
-class AppProviderResolver(private val settings: AppSettings, private val secrets: SecretStore) : ProviderResolver {
+class AppProviderResolver(
+    private val settings: AppSettings,
+    private val secrets: SecretStore,
+    /** Whether a key may reach a session whose model belongs to the given provider (the vault's scopes, §12.1). */
+    private val admits: (keyName: String, sessionProvider: String?) -> Boolean = { _, _ -> true },
+) : ProviderResolver {
     override suspend fun resolve(sessionModel: ModelRef?): ProviderSelection {
         val prefs = settings.value
         if (prefs.providers.isEmpty()) throw NoProviderException("No model provider is set up yet. Add one in Settings → Models.")
+        val sessionProvider = (sessionModel ?: prefs.defaultModel)?.provider
         val keys = LinkedHashMap<String, String>()
         val custom = ArrayList<OmpProvider>()
         for (p in prefs.providers) {
             val env = p.apiKeyEnv
-            if (env != null) secrets.get(env)?.let { keys[env] = it }
+            val admitted = env == null || admits(env, sessionProvider)
+            if (env != null && admitted) secrets.get(env)?.let { keys[env] = it }
+            // A custom provider whose key this session may not have is left out (omp would refuse it without one).
+            if (p.custom && !admitted) continue
             if (p.custom) {
                 custom += OmpProvider(
                     id = p.id,
@@ -122,8 +131,10 @@ class AppProviderResolver(private val settings: AppSettings, private val secrets
         }
         val model = sessionModel ?: prefs.defaultModel
         if (model == null) throw NoProviderException("No model is chosen yet. Pick a default model in Settings → Models.")
-        if (prefs.providers.none { it.id == model.provider }) {
-            throw NoProviderException("The provider '${model.provider}' of the chosen model is not set up.")
+        val own = prefs.providers.firstOrNull { it.id == model.provider }
+            ?: throw NoProviderException("The provider '${model.provider}' of the chosen model is not set up.")
+        own.apiKeyEnv?.let { env ->
+            if (!admits(env, model.provider)) throw NoProviderException("The key of ${own.label} is held back from agents in the Credential Vault. Change its scope there to use this model.")
         }
         return ProviderSelection(profile = "default", providers = custom, secrets = keys, model = model, thinkingLevel = prefs.thinkingLevel)
     }

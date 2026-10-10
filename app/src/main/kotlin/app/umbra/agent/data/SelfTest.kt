@@ -102,9 +102,11 @@ class SelfTest(private val container: AppContainer) {
             val prefs = container.settings.value
             val model = prefs.defaultModel ?: throw Skip("no model is chosen")
             if (!container.guest.ensureReady()) throw Skip("the Linux environment is not installed")
+            // Only the chosen model's provider key, and recorded: the least a test call needs (§12.1).
             val secrets = LinkedHashMap<String, String>()
-            prefs.providers.forEach { p -> p.apiKeyEnv?.let { env -> container.secrets.get(env)?.let { secrets[env] = it } } }
+            prefs.providers.filter { it.id == model.provider }.forEach { p -> p.apiKeyEnv?.let { env -> container.secrets.get(env)?.let { secrets[env] = it } } }
             if (secrets.isEmpty() && prefs.providers.none { it.keyless }) throw Skip("no API key is saved")
+            if (secrets.isNotEmpty()) container.vault.recordExposure(secrets.keys, "the app's omp (diagnostics)", "one test call to the model")
             val reply = ModelProbe(container).ask(model.provider + "/" + model.modelId, secrets)
             "${model.provider}/${model.modelId}: “${reply.take(60)}”"
         },
