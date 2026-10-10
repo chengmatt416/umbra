@@ -21,7 +21,13 @@ its own work, and asks before anything risky.
   privileges and cannot change its own system files or read the app's private data; the limits of that
   are in [ADR 0010](docs/adr/0010-what-the-agent-can-reach.md).
 * **Resumable.** Tasks are persistent sessions: pause, resume, stop, follow up, restart after the app or
-  the agent crashes.
+  the agent crashes; terminals live in tmux and survive the app; a session may resume by itself after a
+  restart only under a resume contract you gave it.
+* **Porcelain in Motion.** A camera-anchored Capsule over any app (the task, approvals, a composer, and
+  Snapshot selection: circle part of the screen and send it with its text), and the Power Studio:
+  planning and agents, resources, runners, shared services, terminals, emergency lockdown, a credential
+  vault, a commit gate that publishes only what you authorize and reads it back, and your own computers as
+  execution nodes ([`umbra-node`](#your-computers-as-nodes)).
 
 Free software, GPL-3.0-or-later. Sideload or F-Droid; there is no Play Store build.
 
@@ -30,8 +36,8 @@ Free software, GPL-3.0-or-later. Sideload or F-Droid; there is no Play Store bui
 | | |
 | --- | --- |
 | Android | **16** (API 36) |
-| Root | needed for the Linux environment and the privileged helper. Magisk/KernelSU with the mount namespace mode set to *Global* or *Requester*. Without root, the Android tools still work (the helper can be started once per boot over `adb`). |
-| Storage | about 2 GB for the Linux environment |
+| Root | optional. With root (Magisk/KernelSU, mount namespace *Global* or *Requester*) the Linux environment runs in a chroot kept apart from the app ([ADR 0010](docs/adr/0010-what-the-agent-can-reach.md)); without root it runs under proot ([ADR 0012](docs/adr/0012-proot-without-root.md)). The privileged helper can be started with root, Shizuku, or once per boot over `adb`. |
+| Storage | about 2 GB for the Linux environment (carried inside the release APK: [ADR 0011](docs/adr/0011-linux-inside-the-apk.md)) |
 | A model | an API key for a provider above |
 
 ## Get started
@@ -40,8 +46,23 @@ Free software, GPL-3.0-or-later. Sideload or F-Droid; there is no Play Store bui
 2. **Set up** walks through what it needs: the accessibility service, the Linux environment, a model.
 3. Tap **New task** and say what you want. Watch it work, answer questions, approve what it asks.
 
-The Linux environment is a Debian archive built by `runtime-build/rootfs/build.sh` (or downloaded from a
-release); the app unpacks it as root and mounts it. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+The Linux environment is a Debian archive built by `runtime-build/rootfs/build.sh` and carried inside the
+release APK, so setting it up needs no network; a file or a URL also work. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+## Your computers as nodes
+
+`umbra-node` runs jobs for the phone on a computer you own (macOS or Linux, Java 21):
+
+```bash
+./gradlew :node-runner:installDist
+node-runner/build/install/umbra-node/bin/umbra-node serve --pair
+```
+
+It prints a one-time code; on the phone, **Distributed Nodes → Pair a node** with the computer's address and the code.
+Both sides pin each other's certificate; a new node gets no work until you raise its trust. A paired phone can run
+commands as that computer's user in the node's jobs folder, only with the files a job's manifest lists, each job
+for no longer than its lease ([ADR 0018](docs/adr/0018-distributed-nodes.md)). `umbra-node phones` and
+`umbra-node unpair <prefix>` manage the phones it trusts.
 
 ## What is verified
 
