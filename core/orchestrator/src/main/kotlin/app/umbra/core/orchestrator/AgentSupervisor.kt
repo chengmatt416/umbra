@@ -127,6 +127,7 @@ class AgentSupervisor(
         // (send checks again, and takes the slot.)
         checkFence()
         deps.admission(projectId, runningByProject())?.let { throw CapacityException(it) }
+        deps.serviceAdmission(null)?.let { throw CapacityException(it) }
         governor?.decision?.value?.let { if (!it.allowNewSessions) throw CapacityException(capacityReason()) }
         val session = create(request, title, workspaceId, model, projectId = projectId)
         try {
@@ -226,6 +227,7 @@ class AgentSupervisor(
                 // The resource policy's maximum for the session's project (the device's own limit comes next).
                 val session = deps.store.get(sessionId)
                 deps.admission(session?.projectId, runningByProject())?.let { throw CapacityException(it) }
+                deps.serviceAdmission(sessionId)?.let { throw CapacityException(it) }
             }
             val took = governor?.tryStartSession() ?: false
             if (!took && !alreadyHere && governor != null) throw CapacityException(capacityReason())

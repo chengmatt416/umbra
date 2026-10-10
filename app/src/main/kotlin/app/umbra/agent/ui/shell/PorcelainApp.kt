@@ -83,6 +83,7 @@ enum class Dest(val route: String, val title: String, val icon: IconSpec, val gr
     Planning("planning", "Planning & Agents", PIcons.workflow, "OPERATIONS"),
     Resources("resources", "Resource Manager", PIcons.sliders, "OPERATIONS"),
     Runtime("runtime", "Runners & Continuity", PIcons.server, "OPERATIONS"),
+    Services("services", "Shared Services", PIcons.recycle, "OPERATIONS"),
     Terminals("terminals", "Terminals", PIcons.terminal, "OPERATIONS"),
 
     Emergency("emergency", "Emergency Control", PIcons.alert, "TRUST & SAFETY"),
@@ -171,6 +172,9 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                     }
                     composable(Dest.Runtime.route) {
                         TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.runtime.RuntimeScreen(onOpenSession = ::openSessionNow) }
+                    }
+                    composable(Dest.Services.route) {
+                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.services.SharedServicesScreen(onOpenSession = ::openSessionNow) }
                     }
                     composable(Dest.Resources.route) {
                         TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.resources.ResourceScreen() }

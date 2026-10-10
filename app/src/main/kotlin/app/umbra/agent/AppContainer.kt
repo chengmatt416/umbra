@@ -1,6 +1,7 @@
 package app.umbra.agent
 
 import android.content.Context
+import app.umbra.agent.services.ServiceMonitor
 import android.hardware.display.DisplayManager
 import android.os.Build
 import app.umbra.agent.data.AndroidResourceSampler
@@ -90,6 +91,12 @@ class AppContainer(val context: Context) {
 
     /** The control plane's durable state (architecture spec §1.2): projects, journals, leases, policies, … */
     val control = app.umbra.core.control.ControlStore(File(context.filesDir.canonicalFile, "control").toPath())
+
+    /** The Shared Runtime Service Manager's state (§9): references, admission, breakers, fenced recovery owners. */
+    val services = app.umbra.core.control.SharedServices(control).also { s ->
+        listOf(ServiceMonitor.LINUX, ServiceMonitor.HELPER, ServiceMonitor.ROOT_HELPER, ServiceMonitor.X_DESKTOP, ServiceMonitor.LAYA).forEach(s::declare)
+    }
+    val serviceMonitor by lazy { ServiceMonitor(this) }
     val projects = app.umbra.core.control.ProjectRegistry(control)
 
     /** Resource policy revisions: budgets, Draft → Simulate → Apply (architecture spec §4.2). */
@@ -311,6 +318,7 @@ class AppContainer(val context: Context) {
             conversations = app.umbra.agent.data.ConversationFiles(java.io.File(context.filesDir, "conversations")),
             fence = { emergency.lockdownReason() },
             admission = { project, running -> policies.admit(project, running) },
+            serviceAdmission = { sessionId -> services.admitConsumer(ServiceMonitor.LINUX, count = sessionId != null) },
             onTodos = { id, phases ->
                 plans.observe(id, phases.map { p -> app.umbra.core.control.PlanPhase(p.name, p.tasks.map { app.umbra.core.control.PlanTask(it.content, it.status) }) }, "agent")
             },
@@ -340,7 +348,7 @@ class AppContainer(val context: Context) {
     val capabilities = capabilityDetector(this)
 
     /** Watches what the agent depends on and repairs it while a task needs it (spec §30). */
-    val health = HealthSupervisor(subsystems(this) { sessionStore.list().any { it.state.isActive } })
+    val health = HealthSupervisor(subsystems(this) { sessionStore.list().any { it.state.isActive } }, gate = services, owner = "health-supervisor")
 
     /** Starts the background machinery. Called once when the process starts, off the main thread. */
     /** Terminals on tmux in the Linux guest (spec §6.1). */
@@ -348,6 +356,7 @@ class AppContainer(val context: Context) {
         app.umbra.core.orchestrator.terminal.TerminalService(
             app.umbra.runtime.linux.tmux.GuestTmuxHost(guest.runtime, environment.spawner),
             control, inputLeases, scope, File(context.filesDir, "terminal-logs").toPath(),
+            admit = { group -> services.admitConsumer(ServiceMonitor.tmux(group)) ?: services.admitConsumer(ServiceMonitor.LINUX) },
         )
     }
 
@@ -370,6 +379,7 @@ class AppContainer(val context: Context) {
             laya.refresh()
             launch { startLogMonitor() }
             health.start(scope)
+            serviceMonitor.start(scope)
             launch { while (true) { runCatching { capabilities.refresh() }; kotlinx.coroutines.delay(60_000) } }
             // The capsule lives in the foreground service: it is there whenever the user has it on.
             launch {

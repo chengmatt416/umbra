@@ -89,6 +89,12 @@ class SessionDeps(
      * it; otherwise the reason it must wait.
      */
     val admission: (projectId: String?, running: Map<String?, Int>) -> String? = { _, _ -> null },
+    /**
+     * Shared-service admission (§9): may a session start using the services it needs (the Linux environment)? Null
+     * admits. [sessionId] is null for the check before a session exists; with an id the session is counted toward a
+     * staged reattachment.
+     */
+    val serviceAdmission: (sessionId: String?) -> String? = { null },
     /** The agent's todo phases as omp last reported them (plan revisions, §4.3). */
     val onTodos: suspend (sessionId: String, phases: List<app.umbra.runtime.omp.OmpTodoPhase>) -> Unit = { _, _ -> },
 )

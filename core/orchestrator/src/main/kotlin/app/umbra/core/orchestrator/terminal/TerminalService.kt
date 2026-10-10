@@ -99,6 +99,8 @@ class TerminalService(
     /** Size a pane keeps while no foreground view owns its input (agents work headless). */
     private val stableCols: Int = 120,
     private val stableRows: Int = 36,
+    /** Shared-service admission (§9) of a group's tmux server: null admits a new terminal, otherwise why not. */
+    private val admit: (group: String) -> String? = { null },
 ) {
     private val docs = store.docs("terminals", TerminalRecord.serializer(), TerminalRecord::id)
     private val groups = ConcurrentHashMap<String, Group>()
@@ -151,6 +153,32 @@ class TerminalService(
     private fun socketOf(group: String): String {
         require(group.matches(Regex("[a-z0-9-]{1,32}"))) { "bad terminal group: $group" }
         return "umbra-$group"
+    }
+
+    /** What one look at a group's tmux server found, by level (§9). Nothing is started or changed by looking. */
+    data class GroupProbe(
+        val group: String,
+        /** Sessions the server listed: null when it did not answer (no server, or no transport to it). */
+        val sessions: List<String>?,
+        val serverPid: Int?,
+        /** Umbra's own control clients attached to the group's terminals, and whether they are open. */
+        val controlClients: Int,
+        val openControlClients: Int,
+        /** A harmless round trip (`display-message -p`) returned what it was given. */
+        val roundTrip: Boolean,
+        val epoch: String?,
+    )
+
+    /** The groups Umbra has terminals in, and the ones whose servers it has met. */
+    fun groupNames(): Set<String> = docs.list().map { it.group }.toSet() + groups.keys
+
+    suspend fun probeGroup(name: String): GroupProbe {
+        val socket = socketOf(name)
+        val sessions = runCatching { host.run(listOf("-L", socket, "list-sessions", "-F", "#{session_name}")).lines().map { it.trim() }.filter { it.isNotEmpty() } }.getOrNull()
+        val pid = if (sessions == null) null else runCatching { host.run(listOf("-L", socket, "display-message", "-p", "#{pid}")).trim().toInt() }.getOrNull()
+        val echo = sessions != null && runCatching { host.run(listOf("-L", socket, "display-message", "-p", "umbra-probe")).trim() == "umbra-probe" }.getOrDefault(false)
+        val mine = docs.list().filter { it.group == name }.mapNotNull { clients[it.id] }
+        return GroupProbe(name, sessions, pid, mine.size, mine.count { it.control.isOpen.value }, echo, groups[name]?.epoch)
     }
 
     /** Starts (or finds) the group's tmux server. */
@@ -211,6 +239,7 @@ class TerminalService(
         purpose: String = "shell",
         owner: Principal = Principal.User,
     ): TerminalRecord {
+        admit(group)?.let { throw IllegalStateException(it) }
         val g = group(group)
         val id = newId("term", store.clock.nowMs())
         val out = host.run(

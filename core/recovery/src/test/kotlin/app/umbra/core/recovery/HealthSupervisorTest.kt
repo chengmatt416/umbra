@@ -345,4 +345,39 @@ class HealthSupervisorTest {
         assertEquals(1, s.totalRestarts)
         assertIs<Health.Healthy>(s.health)
     }
+
+    @Test
+    fun aGateHoldsRecoveryBackAndLearnsHowAttemptsWent() = runTest {
+        val sub = Fake("linux").apply { health = Health.Failed("not mounted") }
+        sub.now = { currentTime }
+        val outcomes = mutableListOf<Pair<Long, Boolean>>()
+        val observed = mutableListOf<Boolean>()
+        var refusal: String? = "no consumer needs it"
+        val gate = object : RecoveryGate {
+            var epoch = 0L
+            override fun admit(subsystem: String, owner: String): RecoveryPermit =
+                refusal?.let { RecoveryPermit.Refused(it) } ?: RecoveryPermit.Granted(subsystem, ++epoch)
+            override fun finished(permit: RecoveryPermit.Granted, ok: Boolean, reason: String?) { outcomes += permit.epoch to ok }
+            override fun observed(subsystem: String, healthy: Boolean) { observed += healthy }
+        }
+        val sup = HealthSupervisor(listOf(sub), policy, Clock { currentTime }, Random(1), gate)
+        val events = mutableListOf<RecoveryEvent>()
+        val collector = launch { sup.events.collect { events += it } }
+        runCurrent()
+        sup.checkNow()
+        sup.checkNow()
+        runCurrent()
+        assertEquals(0, sub.restarts, "held back: no restart")
+        assertEquals("no consumer needs it", sup.state("linux").heldBy)
+        assertEquals(1, events.count { it is RecoveryEvent.Held }, "the reason is said once, not on every probe")
+
+        refusal = null
+        sub.onRestart = { it.health = Health.Healthy }
+        sup.checkNow()
+        assertEquals(1, sub.restarts)
+        assertEquals(listOf(1L to true), outcomes)
+        assertEquals(null, sup.state("linux").heldBy)
+        assertEquals(listOf(false, false, false), observed, "every probe reaches the gate")
+        collector.cancel()
+    }
 }

@@ -60,6 +60,8 @@ data class SubsystemState(
     val needsUser: String? = null,
     /** The dependency this subsystem's recovery is currently waiting on, if any. */
     val waitingFor: String? = null,
+    /** Why the recovery gate holds this subsystem's recovery back (draining, no consumer, budget, another owner). */
+    val heldBy: String? = null,
     val totalRestarts: Int = 0,
     val lastProbeAtMs: Long? = null,
 )
@@ -77,4 +79,36 @@ sealed interface RecoveryEvent {
     data class CircuitHalfOpen(override val subsystem: String, override val atMs: Long) : RecoveryEvent
     data class NeedsUser(override val subsystem: String, override val atMs: Long, val action: String) : RecoveryEvent
     data class Skipped(override val subsystem: String, override val atMs: Long, val because: String) : RecoveryEvent
+    data class Held(override val subsystem: String, override val atMs: Long, val because: String) : RecoveryEvent
+}
+
+/**
+ * Decides, outside the supervisor and persisted, whether a recovery may start now (architecture spec §9: one fenced
+ * recovery owner per service, a restart budget and circuit breaker that survive a restart of the app, recovery only
+ * while something needs the service), and learns how each attempt and probe went.
+ */
+interface RecoveryGate {
+    fun admit(subsystem: String, owner: String): RecoveryPermit
+
+    /** The attempt [permit] allowed ended; an outcome for a permit that is no longer current is ignored. */
+    fun finished(permit: RecoveryPermit.Granted, ok: Boolean, reason: String?)
+
+    /** A probe's verdict, for the breaker's stability count. */
+    fun observed(subsystem: String, healthy: Boolean)
+
+    companion object {
+        /** Lets every attempt through: the supervisor's own backoff and breaker are all there is. */
+        val OPEN = object : RecoveryGate {
+            override fun admit(subsystem: String, owner: String) = RecoveryPermit.Granted(subsystem, 0)
+            override fun finished(permit: RecoveryPermit.Granted, ok: Boolean, reason: String?) = Unit
+            override fun observed(subsystem: String, healthy: Boolean) = Unit
+        }
+    }
+}
+
+sealed interface RecoveryPermit {
+    /** [epoch] fences the attempt: only its outcome counts, and only while no newer owner took over. */
+    data class Granted(val subsystem: String, val epoch: Long) : RecoveryPermit
+
+    data class Refused(val reason: String) : RecoveryPermit
 }

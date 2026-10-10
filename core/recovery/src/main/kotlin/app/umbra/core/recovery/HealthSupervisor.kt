@@ -30,6 +30,10 @@ class HealthSupervisor(
     private val policy: RecoveryPolicy = RecoveryPolicy(),
     private val clock: Clock = Clock.System,
     private val random: Random = Random.Default,
+    /** Persisted policy for shared services (architecture spec §9); everything is let through without one. */
+    private val gate: RecoveryGate = RecoveryGate.OPEN,
+    /** Who this supervisor is, as the recovery owner it registers with [gate]. */
+    private val owner: String = "health-supervisor",
 ) {
     private val byId: Map<String, Subsystem> = subsystems.associateBy { it.id }
     private val locks: Map<String, Mutex> = subsystems.associate { it.id to Mutex() }
@@ -88,6 +92,7 @@ class HealthSupervisor(
 
         val health = probe(sub)
         update(sub.id) { it.copy(health = health, lastProbeAtMs = clock.nowMs()) }
+        gate.observed(sub.id, health.isHealthy)
 
         when (health) {
             Health.Healthy -> {
@@ -97,7 +102,7 @@ class HealthSupervisor(
                 update(sub.id) {
                     it.copy(
                         consecutiveFailures = 0, circuit = CircuitState.CLOSED, nextAttemptAtMs = null,
-                        circuitOpenUntilMs = null, needsUser = null, waitingFor = null,
+                        circuitOpenUntilMs = null, needsUser = null, waitingFor = null, heldBy = null,
                     )
                 }
             }
@@ -140,6 +145,19 @@ class HealthSupervisor(
             return
         }
 
+        val permit = when (val p = gate.admit(sub.id, owner)) {
+            is RecoveryPermit.Granted -> p
+            is RecoveryPermit.Refused -> {
+                // Say it once per reason, not on every probe.
+                if (before.heldBy != p.reason) {
+                    update(sub.id) { it.copy(heldBy = p.reason) }
+                    emit(RecoveryEvent.Held(sub.id, now, p.reason))
+                }
+                return
+            }
+        }
+        if (before.heldBy != null) update(sub.id) { it.copy(heldBy = null) }
+
         emit(RecoveryEvent.RestartStarted(sub.id, now, attempt))
         val result = try {
             withTimeoutOrNull(policy.restartTimeoutMs) { sub.restart() }
@@ -154,6 +172,7 @@ class HealthSupervisor(
         when (result) {
             RestartResult.Restarted -> {
                 val after = probe(sub)
+                gate.finished(permit, after.isHealthy, if (after.isHealthy) null else describe(after))
                 if (after.isHealthy) {
                     emit(RecoveryEvent.Recovered(sub.id, clock.nowMs(), attempt))
                     update(sub.id) {
@@ -163,8 +182,12 @@ class HealthSupervisor(
                     restartFailed(sub, attempt, "restarted but still unhealthy: ${describe(after)}")
                 }
             }
-            is RestartResult.Failed -> restartFailed(sub, attempt, result.reason)
+            is RestartResult.Failed -> {
+                gate.finished(permit, false, result.reason)
+                restartFailed(sub, attempt, result.reason)
+            }
             is RestartResult.NeedsUser -> {
+                gate.finished(permit, false, result.action)
                 update(sub.id) { it.copy(needsUser = result.action, consecutiveFailures = attempt) }
                 emit(RecoveryEvent.NeedsUser(sub.id, clock.nowMs(), result.action))
             }
