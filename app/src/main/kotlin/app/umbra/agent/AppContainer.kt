@@ -95,6 +95,9 @@ class AppContainer(val context: Context) {
     /** The credential vault's account (§12): scopes, rotation, revocation and every exposure, never values. */
     val vault = app.umbra.core.control.CredentialVault(control)
 
+    /** The commit gate (§11): promotions of a repository's commit to a remote branch, conditional and journaled. */
+    val commits by lazy { app.umbra.core.control.CommitGate(control, app.umbra.agent.integration.guestGit(this)) }
+
     /** The Shared Runtime Service Manager's state (§9): references, admission, breakers, fenced recovery owners. */
     val services = app.umbra.core.control.SharedServices(control).also { s ->
         listOf(ServiceMonitor.LINUX, ServiceMonitor.HELPER, ServiceMonitor.ROOT_HELPER, ServiceMonitor.X_DESKTOP, ServiceMonitor.LAYA).forEach(s::declare)
@@ -384,6 +387,11 @@ class AppContainer(val context: Context) {
             launch { startLogMonitor() }
             health.start(scope)
             serviceMonitor.start(scope)
+            // A write the app died in the middle of is settled by reading the remote once Linux is ready (§11).
+            launch {
+                guest.state.first { it == GuestManager.State.Ready }
+                runCatching { commits.recover() }
+            }
             // The vault's account follows what the secret store holds and what the providers call each key.
             launch {
                 kotlinx.coroutines.flow.combine(settings.flow, secrets.changes) { prefs, _ -> prefs }.collect { prefs ->

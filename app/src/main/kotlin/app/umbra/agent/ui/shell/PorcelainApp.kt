@@ -79,6 +79,7 @@ enum class Dest(val route: String, val title: String, val icon: IconSpec, val gr
     Inbox("inbox", "Inbox", PIcons.shield, tab = true),
 
     Workspaces("workspaces", "Workspaces", PIcons.grid, "PRODUCT"),
+    Commit("commit", "Commit & Integration", PIcons.git, "PRODUCT"),
 
     Planning("planning", "Planning & Agents", PIcons.workflow, "OPERATIONS"),
     Resources("resources", "Resource Manager", PIcons.sliders, "OPERATIONS"),
@@ -173,6 +174,9 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                     }
                     composable(Dest.Runtime.route) {
                         TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.runtime.RuntimeScreen(onOpenSession = ::openSessionNow) }
+                    }
+                    composable(Dest.Commit.route) {
+                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.integration.CommitScreen(onOpenVault = { go(Dest.Vault) }) }
                     }
                     composable(Dest.Vault.route) {
                         TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.vault.CredentialVaultScreen() }
