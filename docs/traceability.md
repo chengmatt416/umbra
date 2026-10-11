@@ -49,3 +49,38 @@
 | 32 | User control | pause/resume/stop/delete/duplicate in UI and notification; Settings → *Access and data* (stop all, revoke helpers, screen control off, delete history); `AppSettings` (modes, instructions), approval history | omp (`AgentSessionTest`, incl. stop-all and delete-all), emulator (the four controls pressed by hand, each checked on the device) |
 | 33 | Production acceptance | `fixtures/crashy-login`, `scripts/acceptance-crashy-login.sh`, `scripts/ondevice-scripted-acceptance.py` | the whole loop (build in Linux, install from the workspace, crash found in the log, fix, rebuild, reinstall, sign in) runs with a scripted model; the real model's run needs your key |
 | 34 | Summary | — | — |
+
+## Architecture spec acceptance criteria (AC-001 … AC-022)
+
+The Architecture & Implementation Specification v0.1 (embedded in the Porcelain prototype) lists 22 acceptance
+scenarios. Status is stated as it is: **met** (built and verified as the scenario asks), **partly** (the core of it,
+with the gap named), **not built**.
+
+| AC | Scenario | Status | Where, and how it is verified |
+| --- | --- | --- | --- |
+| 001 | The UI is killed during a tmux shell: the pane is re-validated, the job is not started twice | met | `TerminalService` (registry by terminal id → server epoch → pane); `TerminalServiceTest.aRestartedUiReattachesTheSamePane…` |
+| 002 | The tmux server is killed: no pretending the shell lives; new server epoch; reconcile | met | same test ("a killed server is reported lost"), the terminal's status and epoch on screen |
+| 003 | Two views and a resize: a view without input does not change the PTY size | met | `TerminalService.viewSize`; `TerminalServiceTest.onlyTheInputOwnersViewResizesThePane` |
+| 004 | The user takes a terminal at once: the old owner's input is refused; the screen says its command may still run | met | `InputLeases` generations fenced at the dispatcher; `TerminalServiceTest.takingControlFencesTheAgentImmediately…`; the terminal says taking control "does not stop a command that is already running" |
+| 005 | Android display taken back: related input fenced, dependent phases blocked, an independent build continues | partly | screen-touching actions are refused at dispatch while the user holds the screen (`AppContainer.inputGate`), other tools go on; plan phases are not marked blocked by themselves |
+| 006 | App restart during an emergency lockdown: it persists; a runner reconnecting does not lift it | met | `EmergencyControl`; `LeasesAndEmergencyTest.aLockdownFencesEveryLease…SurvivesARestart…` |
+| 007 | A Gradle daemon shared by A and B: halting A cancels A's work, the daemon serving B stays | partly | shared services are held by references (`SharedServices`), so releasing A's leaves the service to B; there is no staged Execution Halt controller |
+| 008 | PID reuse during a halt: identity mismatch refuses the signal, marked uncertain | not built | no Execution Halt controller |
+| 009 | Root cgroups absent: degrade explicitly to Tier 1, never claim Tier 2 | not built | containment tiers belong to the Execution Halt controller |
+| 010 | A service crash loop: breaker and restart budget survive a control-plane restart | met | `SharedServicesTest.theRestartBudgetOpensAPersistedBreaker…`; emulator (helper recovered through the gate) |
+| 011 | A service restarts with 20 clients waiting: staged admission, bounded queue, unknown operations not resent | met | `SharedServicesTest.afterARecoveryNewWorkIsLetInInStages`; unknown outcomes settled by reading back (`CommitGate`) |
+| 012 | A remote node disconnects with a valid offline lease: only its approved job continues; after expiry nothing new | met | node-enforced leases (`Jobs.enforceLeases`); `NodeEndToEndTest.theNodeEndsAJobWhenItsLeaseRunsOut…`; emulator (lease ran out offline) |
+| 013 | Split brain between nodes A and B: B cannot get around the commit gate to overwrite a shared ref | met | nodes never push; every publish is a leased, read-back write (`CommitGateTest.aRemoteThatMovedAfterValidationIsNotOverwritten`) |
+| 014 | The network drops after a git push: the remote ref is read before anything is sent again | met | `CommitGateTest.aWriteWhoseReportIsLostIsSettledByReadingTheRemote`, recovery at start-up |
+| 015 | The agent tries to read a high-privilege token: it cannot; brokered actions only on authorized resources | met | git credential broker (ADR 0022); `GitBrokerTest`; emulator (an agent-side scan across a brokered push finds nothing) |
+| 016 | A compromised credential broker: trust external revocation, isolate its permissions, unrelated work goes on | partly | each credential is scoped and revoked on its own (model sessions keep running when a git credential is revoked); revocation at the issuer is the user's act, which the screens point to; no issuer is called |
+| 017 | An offline compromised node: the screen says revocation pending, never confirmed stopped | met | node revocation (ADR 0018); `NodeRegistryTest`, `NodeEndToEndTest`; emulator (pending offline, acknowledged later) |
+| 018 | A vault restore: independent recovery material and an integrity check; secrets come back without commit authority | met | vault recovery (ADR 0023); `VaultBackupTest`; emulator (restore refused to publish until granted) |
+| 019 | The local event chain is rewritten: without an anchor no claim of tamper-proofness; with one it is detected | met | `SecurityEvidence`; `SecurityEvidenceTest.anAnchorCatchesHistoryRewritten…`; the screen marks a local chain "Not proof alone" |
+| 020 | Evidence egress denied: no raw logs leave; only a minimal digest, after opt-in | met | anchors carry digests and journal heads only; the export is an encrypted file the user saves (ADR 0020) |
+| 021 | A policy draft is simulated: the draft changes nothing running; apply writes a revision and shows converging | met | `ResourcePolicyTest.aDraftChangesNothingUntilPublished…`; Resource Manager shows Effective / Converging |
+| 022 | 100 logical agents on a constrained phone: admission bounds real processes; fairness and queue visible | met | admission queue (ADR 0021); `AdmissionOrderTest` (100 agents), `AdmissionTest`; emulator under real memory pressure |
+
+Not built, and why: the Execution Halt controller (AC-007's halt, AC-008, AC-009) needs process signalling with
+identity checks and cgroup containment; it is outside what this build does. The existing controls remain: Emergency
+input lockdown, Stop everything, stopping a session, taking back a terminal or the screen, node job leases.
