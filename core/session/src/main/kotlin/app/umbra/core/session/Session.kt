@@ -87,6 +87,11 @@ data class Session(
     val projectId: String? = null,
     /** Projects whose context this session may read; linking is not moving (§2.1). */
     val linkedContextIds: List<String> = emptyList(),
+    /**
+     * Set while the session waits for admission (architecture spec AC-022): a logical agent with no process yet,
+     * started in fair order when the phone, its project's budget and the shared services let one more run.
+     */
+    val queuedAtMs: Long? = null,
 )
 
 @Serializable

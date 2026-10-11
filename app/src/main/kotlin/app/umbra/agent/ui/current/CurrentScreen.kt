@@ -250,7 +250,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                 }
             }
             Row(Modifier.fillMaxWidth().padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Tag(stateText(session.state), sessionTone(session.state))
+                Tag(stateText(session), sessionTone(session))
                 PButton(conversation.session?.model?.name ?: session.model?.modelId ?: "Model", { sheet = Sheet.Model }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.spark)
                 conversation.session?.thinkingLevel?.let { PButton("Thinking: $it", { sheet = Sheet.Model }, style = ButtonStyle.Ghost, tiny = true) }
                 conversation.session?.contextUsage?.let { Tag("Context ${"%.0f".format(it.percent)}%", if (it.percent > 85) Tone.Warn else Tone.Neutral) }
@@ -264,6 +264,14 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
         }
         error?.let { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { Callout(it, Tone.Danger) } }
         info?.let { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { Callout(it, Tone.Good) } }
+        if (session.state == SessionState.CREATED && session.queuedAtMs != null) {
+            var why by remember(id) { mutableStateOf<String?>(null) }
+            LaunchedEffect(id) { while (true) { why = runCatching { container.supervisor.waitingReason(session.projectId) }.getOrNull(); kotlinx.coroutines.delay(2_000) } }
+            Column(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) {
+                Callout("Queued: it has no agent process yet and starts by itself when a slot frees, in fair order." + (why?.let { " Waiting because: $it" } ?: ""), Tone.Warn)
+                PButton("Take it out of the queue", { scope.launch { container.supervisor.dequeue(id) } }, Modifier.padding(top = 6.dp), style = ButtonStyle.Ghost, tiny = true)
+            }
+        }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (view) {

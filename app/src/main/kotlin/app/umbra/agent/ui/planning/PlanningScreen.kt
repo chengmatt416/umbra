@@ -107,7 +107,7 @@ fun PlanningScreen(onOpenSession: (String) -> Unit) {
                     Kicker(current?.let { "Plan revision ${it.number}" } ?: "No plan yet")
                     Text(session.title, Modifier.padding(top = 4.dp), fontSize = 18.sp, color = P.ink)
                 }
-                Tag(stateText(session.state), Tone.Neutral)
+                Tag(stateText(session), Tone.Neutral)
             }
             Gap(8.dp)
             Segmented(PlanView.entries.map { it to it.label }, view, { view = it })

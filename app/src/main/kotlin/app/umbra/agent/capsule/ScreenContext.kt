@@ -144,7 +144,7 @@ class ScreenContext(private val context: Context, private val container: AppCont
             sessionId
         } else {
             AgentService.start(context)
-            container.supervisor.launch(message, title = AgentSupervisor.titleOf(text), projectId = projectId, images = images).id
+            container.supervisor.submit(message, title = AgentSupervisor.titleOf(text), projectId = projectId, images = images).id
         }
         container.ui.saveDraft("")
         container.ui.clearSent(chips)

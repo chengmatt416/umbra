@@ -62,6 +62,11 @@ fun stateText(state: SessionState) = when (state) {
     SessionState.FAILED -> "Failed"
 }
 
+/** A queued session (waiting for admission, AC-022) says so; otherwise its state. */
+fun stateText(session: Session): String = if (session.queuedAtMs != null && session.state == SessionState.CREATED) "Queued" else stateText(session.state)
+
+fun sessionTone(session: Session): Tone = if (session.queuedAtMs != null && session.state == SessionState.CREATED) Tone.Warn else sessionTone(session.state)
+
 fun sessionTone(state: SessionState) = when (state) {
     SessionState.RUNNING, SessionState.COMPLETED -> Tone.Good
     SessionState.WAITING_APPROVAL, SessionState.PAUSED -> Tone.Warn
@@ -168,14 +173,14 @@ private fun SessionRow(s: Session, projects: List<Project>, onOpen: (String) -> 
         PObject(
             s.title,
             buildString {
-                append(stateText(s.state))
+                append(stateText(s))
                 append(" · ")
                 append(DateUtils.getRelativeTimeSpanString(s.updatedAtMs, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS))
                 if (links.isNotEmpty()) append(" · linked: ").append(links.joinToString())
             },
             if (s.state == SessionState.RUNNING) PIcons.activity else PIcons.bot,
             Modifier.combinedClickable(onClick = { onOpen(s.id) }, onLongClick = { menu = true }),
-            trailing = { Tag(stateText(s.state), sessionTone(s.state)) },
+            trailing = { Tag(stateText(s), sessionTone(s)) },
         )
         DropdownMenu(menu, { menu = false }) {
             DropdownMenuItem(text = { Text("Open") }, onClick = { menu = false; onOpen(s.id) })

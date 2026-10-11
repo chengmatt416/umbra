@@ -62,6 +62,7 @@ class AgentSupervisor(
             scope.launch { mirrorApprovals() },
             scope.launch { releaseCapacity() },
             scope.launch { relieveMemoryPressure() },
+            scope.launch { admitQueued() },
         )
     }
 
@@ -142,6 +143,76 @@ class AgentSupervisor(
             throw e
         }
         return deps.store.get(session.id) ?: session
+    }
+
+    /**
+     * Starts the request now when the phone, the project's budget and the shared services admit it and nothing is
+     * waiting ahead of it; otherwise keeps it as a queued logical agent, a session with no process yet, admitted in
+     * fair order ([AdmissionOrder]) when a slot frees (architecture spec AC-022). The number of agent processes stays
+     * what the phone can take. Refused outright: during a lockdown, when [QUEUE_LIMIT] requests already wait, and a
+     * request with pictures that cannot start now (pictures are not kept for later).
+     */
+    suspend fun submit(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList()): Session {
+        checkFence()
+        val problem = waitingReason(projectId)
+        if (problem == null && (images.isNotEmpty() || queued().isEmpty())) return launch(request, title, workspaceId, model, projectId, images)
+        if (images.isNotEmpty()) throw CapacityException("$problem A request with a picture is not queued; send it again when a slot is free.")
+        if (queued().size >= QUEUE_LIMIT) throw CapacityException("${problem ?: "Requests are waiting."} The queue is full ($QUEUE_LIMIT waiting); stop or wait for some.")
+        val session = create(request, title, workspaceId, model, projectId = projectId)
+        val waiting = deps.store.update(session.id) { it.copy(queuedAtMs = deps.clock.nowMs()) } ?: session
+        wake.trySend(Unit)
+        return waiting
+    }
+
+    /** Sessions waiting for admission, longest-waiting first. */
+    suspend fun queued(): List<Session> =
+        deps.store.list().filter { it.state == SessionState.CREATED && it.queuedAtMs != null }.sortedBy { it.queuedAtMs }
+
+    /** Why a new session of [projectId] cannot start now, or null when it can. */
+    suspend fun waitingReason(projectId: String?): String? {
+        deps.fence()?.let { return "Emergency input lockdown is in force ($it)." }
+        deps.admission(projectId, runningByProject())?.let { return it }
+        deps.serviceAdmission(null)?.let { return it }
+        val g = governor ?: return null
+        return if (!g.canStartSession()) capacityReason() else null
+    }
+
+    /** Takes a queued request out of the queue: it is stopped before it ever ran. */
+    suspend fun dequeue(sessionId: String) {
+        deps.store.update(sessionId) { it.copy(queuedAtMs = null) }
+        tryApply(sessionId, SessionCommand.STOP, "taken out of the queue by the user")
+    }
+
+    private val wake = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+
+    /** Admits queued sessions when something changed (a session ended, pressure eased) and every two seconds. */
+    private suspend fun admitQueued() {
+        while (true) {
+            kotlinx.coroutines.withTimeoutOrNull(2_000) { wake.receive() }
+            runCatching { admitWaiting() }
+        }
+    }
+
+    private suspend fun admitWaiting() {
+        while (deps.fence() == null) {
+            if (deps.serviceAdmission(null) != null) return
+            if (governor != null && !governor.canStartSession()) return
+            val running = runningByProject()
+            val next = AdmissionOrder.next(queued(), running) { p, r -> deps.admission(p, r) == null } ?: return
+            deps.store.update(next.id) { it.copy(queuedAtMs = null) }
+            try {
+                send(next.id, next.request)
+            } catch (e: CapacityException) {
+                // Lost the slot in between: back in its place, tried again on the next change.
+                deps.store.update(next.id) { it.copy(queuedAtMs = next.queuedAtMs) }
+                return
+            } catch (e: Exception) {
+                runCatching {
+                    if (deps.store.get(next.id)?.state == SessionState.CREATED) deps.service.apply(next.id, SessionCommand.START, "admitted from the queue")
+                    deps.service.apply(next.id, SessionCommand.FAIL, error = e.message ?: e::class.simpleName)
+                }
+            }
+        }
     }
 
     fun liveSession(id: String): AgentSession? = live[id]
@@ -233,6 +304,8 @@ class AgentSupervisor(
             if (!took && !alreadyHere && governor != null) throw CapacityException(capacityReason())
             if (took) counted.add(sessionId)
         }
+        // Started by hand while it waited in the queue: it is not queued any more.
+        if (state == SessionState.CREATED) deps.store.update(sessionId) { if (it.queuedAtMs != null) it.copy(queuedAtMs = null) else it }
         try {
             sessionFor(sessionId).send(message, images, whileRunning)
         } catch (e: Exception) {
@@ -306,9 +379,12 @@ class AgentSupervisor(
         for (session in deps.store.list()) delete(session.id)
     }
 
-    /** Stops every session that is working, waiting or paused. */
+    /** Stops every session that is working, waiting or paused, and empties the admission queue. */
     suspend fun stopAll() {
-        for (session in deps.store.list()) if (!session.state.isTerminal && session.state != SessionState.CREATED) stop(session.id)
+        for (session in deps.store.list()) {
+            if (session.state == SessionState.CREATED && session.queuedAtMs != null) dequeue(session.id)
+            else if (!session.state.isTerminal && session.state != SessionState.CREATED) stop(session.id)
+        }
     }
 
     private suspend fun tryApply(sessionId: String, command: SessionCommand, reason: String) {
@@ -349,14 +425,20 @@ class AgentSupervisor(
         }
     }
 
-    /** A session that is done holds no slot, so another can start. */
+    /** A session that is done holds no slot, so another can start (a queued one, if any waits). */
     private suspend fun releaseCapacity() {
         deps.store.changes.collect { change ->
-            if (change is StoreChange.SessionChanged && change.session.state.isTerminal && counted.remove(change.session.id)) governor?.endSession()
+            if (change is StoreChange.SessionChanged && change.session.state.isTerminal) {
+                if (counted.remove(change.session.id)) governor?.endSession()
+                wake.trySend(Unit)
+            }
         }
     }
 
     companion object {
+        /** At most this many requests wait for admission; beyond it a request is refused, not held. */
+        const val QUEUE_LIMIT = 256
+
         fun titleOf(request: String): String {
             val line = request.trim().lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
             return if (line.length <= 60) line.ifEmpty { "New task" } else line.take(57).trimEnd() + "…"

@@ -181,7 +181,7 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
             CapDot(working = current?.state == SessionState.RUNNING, attention = needsYou || locked || failed != null)
             Box(Modifier.width(8.dp))
             Text(
-                if (expanded) (current?.let { "${it.title} · ${stateText(it.state).lowercase()}" } ?: "Smart Composer") else label,
+                if (expanded) (current?.let { "${it.title} · ${stateText(it).lowercase()}" } ?: "Smart Composer") else label,
                 Modifier.then(if (expanded) Modifier.weight(1f) else Modifier.widthIn(max = around?.let { a -> with(density) { a.labelMaxPx.toDp() } }?.coerceAtMost(180.dp) ?: 180.dp)),
                 fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Label, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
@@ -225,7 +225,7 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
             }
 
             SectionTitle("Session · previous / current / next")
-            TrailRow("Previous", trail.previous?.let { "${it.title} · ${stateText(it.state).lowercase()}" }, false)
+            TrailRow("Previous", trail.previous?.let { "${it.title} · ${stateText(it).lowercase()}" }, false)
             TrailRow("Current", current?.title, true)
             TrailRow("Next", trail.next?.title ?: "Nothing queued", false)
             SectionGap()

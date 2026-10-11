@@ -175,7 +175,7 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: ()
             PCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Active task", Modifier.weight(1f), fontSize = 12.sp, color = P.sub)
-                    Tag(stateText(s.state), sessionTone(s.state))
+                    Tag(stateText(s), sessionTone(s))
                 }
                 Text(s.title, Modifier.padding(top = 8.dp), fontSize = 16.sp, color = P.ink)
                 val step = s.plan.firstOrNull { it.status == "active" } ?: s.plan.lastOrNull { it.status == "done" }
@@ -193,7 +193,7 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: ()
             Eyebrow("Recent")
             recent.forEach { s ->
                 Gap(8.dp)
-                PObject(s.title, stateText(s.state), PIcons.bot, onClick = { onOpenSession(s.id) })
+                PObject(s.title, stateText(s), PIcons.bot, onClick = { onOpenSession(s.id) })
             }
         }
         Gap(28.dp)

@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -49,6 +50,7 @@ import app.umbra.core.control.ResourcePolicy
 import app.umbra.core.control.Simulation
 import app.umbra.core.perf.PressureLevel
 import app.umbra.core.session.SessionState
+import kotlinx.coroutines.launch
 
 /**
  * Resource Manager (architecture spec §4.2): the device's measured capacity, the budget board (guaranteed, maximum,
@@ -93,6 +95,9 @@ fun ResourceScreen() {
             Gap(6.dp)
             Subtle("Measured, not promised: when the phone runs short, new agents wait and finished ones release their processes first.")
         }
+        Gap(12.dp)
+
+        AdmissionCard(sessions, running, decision.maxConcurrentSessions, ::nameOf)
         Gap(12.dp)
 
         PCard {
@@ -182,4 +187,53 @@ fun ResourceScreen() {
         Gap(28.dp)
     }
     LaunchedEffect(Unit) { runCatching { container.governor.refreshNow() } }
+}
+
+/**
+ * Admission (AC-022): how many agents run against how many may, and the queue of logical agents waiting for a slot,
+ * in the order they would start if nothing running finished, with each owner's share. A queued request has no
+ * process; it can be taken out of the queue.
+ */
+@Composable
+private fun AdmissionCard(sessions: List<app.umbra.core.session.Session>, running: Map<String?, Int>, slots: Int, nameOf: (String) -> String) {
+    val container = LocalContext.current.container
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val queued = sessions.filter { it.state == SessionState.CREATED && it.queuedAtMs != null }
+    val order = remember(queued, running) { app.umbra.core.orchestrator.AdmissionOrder.forecast(queued, running) }
+    var reason by remember { mutableStateOf<String?>(null) }
+    androidx.compose.runtime.LaunchedEffect(queued.size, running) {
+        while (true) {
+            reason = runCatching { container.supervisor.waitingReason(order.firstOrNull()?.projectId) }.getOrNull()
+            kotlinx.coroutines.delay(2_000)
+        }
+    }
+    fun owner(p: String?) = nameOf(p ?: ResourcePolicy.INDEPENDENT)
+    PCard {
+        Row {
+            Column(Modifier.weight(1f)) {
+                Kicker("Admission")
+                Text("${running.values.sum()} running · ${queued.size} queued", Modifier.padding(top = 4.dp), fontSize = 18.sp, color = P.ink)
+            }
+            Tag("$slots slot(s)", Tone.Neutral)
+        }
+        val owners = (running.keys + queued.map { it.projectId }).distinct()
+        owners.forEach { p ->
+            PSetting(owner(p), "${running[p] ?: 0} running · ${queued.count { it.projectId == p }} waiting" +
+                (queued.filter { it.projectId == p }.minOfOrNull { it.queuedAtMs!! }?.let { " · oldest waiting since ${android.text.format.DateUtils.getRelativeTimeSpanString(it)}" } ?: ""), divider = false) {}
+        }
+        if (queued.isEmpty()) Subtle("Nothing waits. A request the phone cannot run now waits here as a logical agent, without a process, and starts by itself.", Modifier.padding(top = 6.dp))
+        else {
+            reason?.let { Subtle("Waiting because: $it", Modifier.padding(top = 6.dp)) }
+            Subtle("Next to start, if nothing running finishes first (the owner with the fewest running goes first, then the longest-waiting):", Modifier.padding(top = 6.dp))
+            order.take(8).forEachIndexed { i, s ->
+                Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${i + 1}. ${s.title}", Modifier.weight(1f), fontSize = 13.sp, color = P.ink, maxLines = 1)
+                    Text(owner(s.projectId), fontSize = 11.sp, color = P.sub, maxLines = 1)
+                    PButton("Remove", { scope.launch { container.supervisor.dequeue(s.id) } }, Modifier.padding(start = 6.dp), style = ButtonStyle.Ghost, tiny = true)
+                }
+            }
+            if (order.size > 8) Subtle("…and ${order.size - 8} more.", Modifier.padding(top = 4.dp))
+        }
+        Subtle("At most ${app.umbra.core.orchestrator.AgentSupervisor.QUEUE_LIMIT} wait; beyond that a request is refused, so the queue cannot grow without bound. Success here is the queue draining, not the phone surviving a flood.", Modifier.padding(top = 6.dp))
+    }
 }

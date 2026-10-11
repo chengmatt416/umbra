@@ -129,6 +129,12 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             buildJsonObject { put("id", ws.id); put("host_path", File(container.guest.layout.workspaces, "projects/${ws.id}").path) }
         }
         "session.create" -> sessionJson(container.supervisor.launch(str(args, "request"), workspaceId = (args["workspace"] as? JsonPrimitive)?.content))
+        "session.submit" -> sessionJson(container.supervisor.submit(str(args, "request"), projectId = (args["project"] as? JsonPrimitive)?.content))
+        "session.queue" -> buildJsonObject {
+            put("queued", kotlinx.serialization.json.JsonArray(container.supervisor.queued().map { kotlinx.serialization.json.JsonPrimitive(it.id) }))
+            put("reason", container.supervisor.waitingReason(null) ?: "")
+            put("slots", container.governor.decision.value.maxConcurrentSessions)
+        }
         "session.send" -> { container.supervisor.send(str(args, "id"), str(args, "text")); buildJsonObject { put("ok", true) } }
         "session.pause" -> { container.supervisor.pause(str(args, "id")); buildJsonObject { put("ok", true) } }
         "session.resume" -> { container.supervisor.resume(str(args, "id")); buildJsonObject { put("ok", true) } }
@@ -197,5 +203,6 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
     private fun sessionJson(s: Session): JsonObject = buildJsonObject {
         put("id", s.id); put("title", s.title); put("state", s.state.name); put("error", s.lastError ?: ""); put("workspace", s.workspaceId ?: "")
         put("plan", s.plan.size); put("omp_session_file", s.ompSessionFile ?: "")
+        put("queued", s.queuedAtMs != null); put("project", s.projectId ?: "")
     }
 }

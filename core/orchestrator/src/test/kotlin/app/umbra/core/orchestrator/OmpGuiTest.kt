@@ -263,4 +263,41 @@ class AdmissionTest {
             }
         }
     }
+
+    @Test
+    fun requestsBeyondTheSlotsWaitAndAreAdmittedFairly() {
+        assumeTrue(ompBinary != null, "omp is not installed")
+        val governor = app.umbra.core.perf.ResourceGovernor(
+            { app.umbra.core.perf.ResourceSample(timestampMs = System.currentTimeMillis(), memAvailMb = 8_000, memTotalMb = 8_000) },
+            app.umbra.core.perf.ThrottlePolicy(app.umbra.core.perf.ThrottleConfig(normalSessions = 2)),
+        )
+        // Slow enough that the first two are still working while the others are submitted (each start waits for omp).
+        val model = ScriptedModel { ScriptedModel.text("done", delayMs = 8_000) }
+        model.use {
+            OrchestratorRig(dir, ompBinary!!, it.url, governor = governor).use { rig ->
+                runBlocking {
+                    val p1 = (1..4).map { n -> rig.supervisor.submit("p1 task $n", projectId = "p1") }
+                    val independent = (1..2).map { n -> rig.supervisor.submit("independent task $n") }
+                    assertEquals(4, rig.supervisor.queued().size, "two start, four wait as logical agents")
+                    assertTrue(rig.supervisor.waitingReason(null).orEmpty().contains("as many agent sessions"))
+                    val firstRun = HashMap<String, Long>()
+                    var peak = 0
+                    withTimeout(180_000) {
+                        while (true) {
+                            val all = rig.store.list()
+                            val running = all.filter { s -> s.state == SessionState.RUNNING || s.state == SessionState.WAITING_APPROVAL }
+                            peak = maxOf(peak, running.size)
+                            running.forEach { s -> firstRun.putIfAbsent(s.id, System.nanoTime()) }
+                            if (all.all { s -> s.state == SessionState.COMPLETED }) break
+                            kotlinx.coroutines.delay(50)
+                        }
+                    }
+                    assertTrue(peak <= 2, "never more than two agent processes at once (saw $peak)")
+                    assertTrue(rig.store.list().all { s -> s.queuedAtMs == null })
+                    // Fair: the first independent request starts before the third of the busy project, which queued earlier.
+                    assertTrue(firstRun.getValue(independent[0].id) < firstRun.getValue(p1[2].id), "the independent request was not starved")
+                }
+            }
+        }
+    }
 }
