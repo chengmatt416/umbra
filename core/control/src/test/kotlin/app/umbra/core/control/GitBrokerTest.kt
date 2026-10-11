@@ -155,8 +155,8 @@ class GitBrokerTest {
         assertEquals(head, sha)
         assertEquals(head, git(r.work, listOf("rev-parse", "refs/remotes/umbra-broker/main")))
         assertTrue(tmp.listFiles()!!.none { it.name.startsWith("umbra-broker-out.") }, "the fetch folder is gone")
-        // Read-only: it cannot publish.
-        assertFailsWith<GitCredentialException> { broker(store, credentials).pushWithLease(r.work.path, r.url, head, "refs/heads/main", head) }
+        // Read-only: it cannot publish, and nothing is sent.
+        assertFailsWith<WriteNotSent> { broker(store, credentials).pushWithLease(r.work.path, r.url, head, "refs/heads/main", head) }
     }
 
     @Test

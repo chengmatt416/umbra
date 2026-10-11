@@ -24,7 +24,7 @@ model, so a key that reaches a session can be read by what runs in that session.
    not copied; it is never hidden.
 4. **Custody is reported, not claimed**: the protecting key's algorithm and size, and the security level the keystore
    reports (software on the emulator, TEE or StrongBox on phones). No attestation chain is verified, and the screen
-   says so. The key cannot be exported, so there is no backup tier: recovery is "none", stated plainly.
+   says so. The key cannot be exported; recovery is a backup sealed under a recovery code of its own (ADR 0023).
 5. **Rotate, revoke and node trust are separate acts.** Rotating overwrites Umbra's copy; revoking deletes it, and the
    screen says the credential stays valid at its issuer until revoked there. No node trust exists to revoke.
 6. The cloud/signing broker is shown as not set up, with what that means; nothing pretends to broker it. Git

@@ -199,29 +199,42 @@ class SecurityEvidence(private val store: ControlStore) {
     }
 }
 
-/** The evidence file format: a header line, then salt, nonce and AES-256-GCM ciphertext, base64. */
+/** The evidence file format ([PassphraseSeal] under [HEADER]). */
 object Evidence {
     const val HEADER = "UMBRA-EVIDENCE-1"
+
+    fun seal(plain: ByteArray, passphrase: CharArray): ByteArray = PassphraseSeal.seal(HEADER, plain, passphrase)
+
+    /** Throws when the passphrase is wrong or the file was changed (GCM authenticates it). */
+    fun open(sealed: ByteArray, passphrase: CharArray): ByteArray = PassphraseSeal.open(HEADER, sealed, passphrase)
+}
+
+/**
+ * A file sealed under a passphrase: a header line naming the format, then salt, nonce and AES-256-GCM ciphertext,
+ * base64, one per line. The key is PBKDF2-HMAC-SHA256 (210 000 rounds) of the passphrase; the header is
+ * authenticated with the content, so a file of one format never opens as another.
+ */
+object PassphraseSeal {
     private const val ROUNDS = 210_000
 
     private fun key(passphrase: CharArray, salt: ByteArray) =
         SecretKeySpec(SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(PBEKeySpec(passphrase, salt, ROUNDS, 256)).encoded, "AES")
 
-    fun seal(plain: ByteArray, passphrase: CharArray): ByteArray {
+    fun seal(header: String, plain: ByteArray, passphrase: CharArray): ByteArray {
         val rnd = SecureRandom()
         val salt = ByteArray(16).also(rnd::nextBytes)
         val iv = ByteArray(12).also(rnd::nextBytes)
-        val c = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key(passphrase, salt), GCMParameterSpec(128, iv)); updateAAD(HEADER.toByteArray()) }
+        val c = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key(passphrase, salt), GCMParameterSpec(128, iv)); updateAAD(header.toByteArray()) }
         val b64 = Base64.getEncoder()
-        return "$HEADER\n${b64.encodeToString(salt)}\n${b64.encodeToString(iv)}\n${b64.encodeToString(c.doFinal(plain))}\n".toByteArray()
+        return "$header\n${b64.encodeToString(salt)}\n${b64.encodeToString(iv)}\n${b64.encodeToString(c.doFinal(plain))}\n".toByteArray()
     }
 
-    /** Throws when the passphrase is wrong or the file was changed (GCM authenticates it). */
-    fun open(sealed: ByteArray, passphrase: CharArray): ByteArray {
+    /** Throws when the passphrase is wrong, the file was changed, or it is not a [header] file. */
+    fun open(header: String, sealed: ByteArray, passphrase: CharArray): ByteArray {
         val lines = String(sealed).trim().lines()
-        require(lines.size == 4 && lines[0] == HEADER) { "not an Umbra evidence file" }
+        require(lines.size == 4 && lines[0] == header) { "not a ${header.lowercase()} file" }
         val b64 = Base64.getDecoder()
-        val c = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key(passphrase, b64.decode(lines[1])), GCMParameterSpec(128, b64.decode(lines[2]))); updateAAD(HEADER.toByteArray()) }
+        val c = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key(passphrase, b64.decode(lines[1])), GCMParameterSpec(128, b64.decode(lines[2]))); updateAAD(header.toByteArray()) }
         return c.doFinal(b64.decode(lines[3]))
     }
 }

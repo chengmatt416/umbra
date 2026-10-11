@@ -35,15 +35,16 @@ class BrokeredGit(
 
     override suspend fun pushWithLease(repo: String, remote: String, commit: String, ref: String, expectedOld: String?) {
         val c = credentials.forRemote(remote) ?: return local.pushWithLease(repo, remote, commit, ref, expectedOld)
-        val t = ready(c, GitOperation.PUBLISH)
-        val dir = agent(listOf("mktemp", "-d", "$agentTemp/umbra-candidate.XXXXXX")).let { if (it.exit != 0) throw IllegalStateException("no folder for the candidate: ${it.stderr.trim()}"); it.stdout.trim() }
+        // Everything up to the root command sends nothing: a refusal here is reported as such, not as an unknown outcome.
+        val t = try { ready(c, GitOperation.PUBLISH) } catch (e: GitCredentialException) { throw WriteNotSent(e.message ?: "the broker refused") }
+        val dir = agent(listOf("mktemp", "-d", "$agentTemp/umbra-candidate.XXXXXX")).let { if (it.exit != 0) throw WriteNotSent("no folder for the candidate: ${it.stderr.trim()}"); it.stdout.trim() }
         val bundle = "$dir/candidate.bundle"
         try {
             // The agent's git writes the candidate (and only what the remote lacks) into a bundle: data, not a request.
-            check(local.ask(repo, "update-ref", BUNDLE_REF, commit).exit == 0) { "could not mark the candidate in $repo" }
+            if (local.ask(repo, "update-ref", BUNDLE_REF, commit).exit != 0) throw WriteNotSent("could not mark the candidate in $repo")
             val base = expectedOld?.takeIf { local.resolve(repo, it) != null }?.let { listOf("^$it") }.orEmpty()
             val made = local.ask(repo, *(listOf("bundle", "create", "-q", bundle, BUNDLE_REF) + base).toTypedArray())
-            check(made.exit == 0) { "could not bundle the candidate: ${made.stderr.trim().take(300)}" }
+            if (made.exit != 0) throw WriteNotSent("could not bundle the candidate: ${made.stderr.trim().take(300)}")
             val r = run(c, GitBrokerScript.push(c, ref, commit, expectedOld, bundle, BUNDLE_REF), t)
             val said = clean(r.stdout + "\n" + r.stderr, t)
             when {

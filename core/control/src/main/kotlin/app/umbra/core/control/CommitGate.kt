@@ -40,6 +40,9 @@ interface GitPort {
 /** The remote's ref was not where the push expected it: nothing was written. */
 class LeaseRejected(message: String) : Exception(message)
 
+/** The write was refused before anything was sent (by the credential broker, for instance): nothing was written. */
+class WriteNotSent(message: String) : Exception(message)
+
 @Serializable
 enum class PromotionState {
     /** Checked, waiting for the user's authorization. */
@@ -208,6 +211,8 @@ class CommitGate(
             git.pushWithLease(p.repo, p.remote, p.candidate, p.ref, p.expectedOld)
         } catch (e: LeaseRejected) {
             return save(p.copy(state = PromotionState.REJECTED, note = "the remote refused the conditional write: ${e.message}"), "promotion.rejected")
+        } catch (e: WriteNotSent) {
+            return save(p.copy(state = PromotionState.REJECTED, note = "nothing was sent: ${e.message}"), "promotion.rejected")
         } catch (e: kotlinx.coroutines.CancellationException) {
             save(p.copy(state = PromotionState.OUTCOME_UNKNOWN, note = "interrupted while writing"), "promotion.outcome_unknown")
             throw e

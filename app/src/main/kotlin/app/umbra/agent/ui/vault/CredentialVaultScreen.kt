@@ -105,7 +105,7 @@ fun CredentialVaultScreen() {
                     onFailure = { Callout("The keystore did not answer: ${it.message}", Tone.Warn) },
                 )
             }
-            Subtle("Each secret is AES-GCM encrypted under this key. The key cannot be exported, so nothing can be backed up by exporting it.", Modifier.padding(top = 6.dp))
+            Subtle("Each secret is AES-GCM encrypted under this key. The key cannot be exported; a recovery backup (below) is sealed under a code of its own instead.", Modifier.padding(top = 6.dp))
         }
         Gap(12.dp)
 
@@ -133,6 +133,9 @@ fun CredentialVaultScreen() {
         Gap(12.dp)
 
         GitCredentialsCard { message = it }
+        Gap(12.dp)
+
+        RecoveryCard { message = it }
         Gap(12.dp)
 
         PCard {
@@ -193,7 +196,7 @@ fun CredentialVaultScreen() {
             PSetting("Model keys and the agent", "omp needs its provider key to call the model, so the key is in omp's environment, where the agent's own commands may be able to read it. Scopes narrow which sessions get which key; each hand-over is recorded.") { Tag("Recorded", Tone.Warn) }
             PSetting("Git credentials", "Given to no agent: root uses a token for its one URL, in a staging repository, reading the candidate from a bundle; without root they are not used at all") { Tag("Brokered", Tone.Good) }
             PSetting("Revoke · rotate · node trust", "Separate acts. Revoking here deletes Umbra's copy only; the key stays valid at its issuer until revoked there.") { Tag("Independent", Tone.Neutral) }
-            PSetting("Recovery", "None: Umbra keeps no copy of a credential off this phone. A lost phone means creating new keys at each issuer and revoking the old ones there.", divider = false) { Tag("No backup", Tone.Neutral) }
+            PSetting("Recovery", "Only what you saved: a backup file sealed under a recovery code that is never stored. Without both, a lost phone means new keys at each issuer and revoking the old ones there.", divider = false) { Tag("Code-sealed", Tone.Neutral) }
         }
         Gap(28.dp)
     }

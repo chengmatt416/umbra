@@ -63,7 +63,8 @@ class GitCredentials(private val store: ControlStore) {
     }
 
     @Synchronized
-    fun add(label: String, url: String, username: String, operations: Set<GitOperation>, caCertificate: String?, by: String = "user"): GitCredential {
+    /** Adds a credential; one [restored] from a backup cannot publish until the user grants it again (AC-018). */
+    fun add(label: String, url: String, username: String, operations: Set<GitOperation>, caCertificate: String?, by: String = "user", restored: Boolean = false): GitCredential {
         val u = normalize(url)
         if (docs.list().any { it.url == u }) throw GitCredentialException("a credential for $u is already held; rotate it instead")
         require(username.matches(Regex("[A-Za-z0-9._@+-]{1,100}"))) { "“$username” is not a user name git can send" }
@@ -71,8 +72,11 @@ class GitCredentials(private val store: ControlStore) {
         val ca = caCertificate?.trim()?.takeIf { it.isNotEmpty() }
         require(ca == null || (ca.startsWith("-----BEGIN CERTIFICATE-----") && ca.endsWith("-----END CERTIFICATE-----"))) { "the CA certificate must be one PEM certificate" }
         val now = store.clock.nowMs()
-        val c = docs.put(GitCredential("git-" + ControlStore.sha256("$u|$now").take(12), label.ifBlank { u.substringAfter("://") }, u, username, operations, ca, now))
-        journal.append("git.credential_added", buildJsonObject { put("id", c.id); put("url", u); put("operations", operations.joinToString { it.name.lowercase() }); put("by", by) })
+        val c = docs.put(GitCredential("git-" + ControlStore.sha256("$u|$now").take(12), label.ifBlank { u.substringAfter("://") }, u, username, operations, ca, now, publishSuspended = restored))
+        journal.append(if (restored) "git.credential_restored" else "git.credential_added", buildJsonObject {
+            put("id", c.id); put("url", u); put("operations", operations.joinToString { it.name.lowercase() }); put("by", by)
+            if (restored) put("publishing", "suspended until granted again")
+        })
         return c
     }
 

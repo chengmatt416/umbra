@@ -96,6 +96,16 @@ class CredentialVault(private val store: ControlStore) {
         events.append("credential.revoked_locally", buildJsonObject { put("name", name); put("by", by) })
     }
 
+    /** A secret came back from a recovery backup, with the scope it had. */
+    @Synchronized
+    fun restored(name: String, label: String, provider: String?, scope: CredentialScope) {
+        records.put(records[name]?.copy(scope = scope) ?: CredentialRecord(name, label, provider, store.clock.nowMs(), scope = scope))
+        events.append("credential.restored", buildJsonObject { put("name", name); put("scope", scope.name.lowercase()) })
+    }
+
+    /** Everything a recovery backup carries about the stored secrets: label, provider and scope (values come from the store). */
+    fun accountOf(name: String): Triple<String, String?, CredentialScope>? = records[name]?.let { Triple(it.label, it.provider, it.scope) }
+
     /** May [name] reach a session whose model belongs to [sessionProvider]? Unknown names are not the vault's to refuse. */
     fun admits(name: String, sessionProvider: String?): Boolean {
         val r = records[name] ?: return true
