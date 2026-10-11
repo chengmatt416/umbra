@@ -17,7 +17,12 @@ The chroot runtime needs root. The product must also work on a phone without roo
    keeps running under proot even when root appears. One unpacked for root runs under proot only if its files are the
    app's own (checked by owner, not by permission bits: SELinux labels on root's files refuse execution even when the
    bits look open); otherwise the user is told that root is not answering, rather than shown a proot execve error.
-4. `ProotRuntime.secure()` does nothing: in this mode the agent's programs are the app's own processes and nothing
+4. **Long-lived servers are started in the foreground.** Every command runs under proot with `--kill-on-exit`, so a
+   server that daemonizes from a short command dies with it. A terminal group's tmux server is therefore started as
+   its own long-lived process (`tmux -L <group> -D`, which also keeps it without sessions) and every other command
+   talks to it through its socket. Under proot such servers live with the app's process: unlike the chroot's, they do
+   not outlive it.
+5. `ProotRuntime.secure()` does nothing: in this mode the agent's programs are the app's own processes and nothing
    separates them from the app. The set-up screen says so ("not kept apart from the app the way the root mode is").
 
 ## Consequences

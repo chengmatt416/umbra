@@ -8,12 +8,43 @@ import app.umbra.runtime.omp.SpawnSpec
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** tmux in the Linux guest, as the agent's user (the same trust boundary as the agent: spec §6.1 is explicit that a
  *  tmux socket is not a sandbox). `-u` forces UTF-8 whatever the locale. */
 class GuestTmuxHost(private val runtime: LinuxRuntime, private val spawner: OmpSpawner) : TmuxHost {
     private val env = mapOf("LANG" to "C.UTF-8", "LC_ALL" to "C.UTF-8", "TERM" to "xterm-256color", "HOME" to "/home/agent")
+    private val servers = java.util.concurrent.ConcurrentHashMap<String, OmpTransport>()
+    private val serverLock = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Under proot every command runs with --kill-on-exit: a server tmux daemonizes from a short command dies with it.
+     * There the group's server is started in the foreground (`-D`, which also keeps it when it has no session) as a
+     * long-lived process of its own, and every other command talks to it through its socket.
+     */
+    override suspend fun ensureServer(socket: String) {
+        if (runtime.mode != app.umbra.runtime.linux.LinuxMode.PROOT) return
+        serverLock.withLock {
+            if (answers(socket)) return
+            // A handle whose server no longer answers is dropped; the new server replaces it.
+            servers.remove(socket)
+            servers[socket] = spawner.spawn(SpawnSpec(command = listOf("tmux", "-u", "-L", socket, "-D"), environment = env, workingDirectory = "/"))
+            val deadline = System.currentTimeMillis() + 10_000
+            while (System.currentTimeMillis() < deadline) {
+                if (answers(socket)) return
+                kotlinx.coroutines.delay(200)
+            }
+            throw TmuxCommandException("-L $socket -D", listOf("the tmux server did not start"))
+        }
+    }
+
+    /** True when a server listens on [socket] (with or without sessions). */
+    private suspend fun answers(socket: String): Boolean {
+        val r = runtime.exec(listOf("tmux", "-u", "-L", socket, "list-sessions"), env = env, cwd = "/", timeoutMs = 10_000)
+        val said = (r.stderr + r.stdout).lowercase()
+        return r.exitCode == 0 || !("no server running" in said || "error connecting" in said || "no such file" in said)
+    }
 
     override suspend fun run(args: List<String>, timeoutMs: Long): String {
         val r = runtime.exec(listOf("tmux", "-u") + args, env = env, cwd = "/", timeoutMs = timeoutMs)

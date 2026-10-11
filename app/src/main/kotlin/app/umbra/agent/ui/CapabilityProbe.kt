@@ -56,7 +56,7 @@ class CapabilityProbe(private val container: AppContainer) {
 
         val root = container.rootShell.isAvailable()
         rows += if (root) CapabilityRow("root", "Root", CapabilityStatus.OK, "Root access works.", false)
-        else CapabilityRow("root", "Root", CapabilityStatus.MISSING, "No root access. The Linux environment needs root; the Android tools still work.", false)
+        else CapabilityRow("root", "Root", CapabilityStatus.MISSING, "No root access. Linux runs without it, under proot (slower, and not kept apart from the app as with root); the Android tools still work.", false)
 
         val helperUp = container.helper.client.isUp()
         val shizuku = container.shizuku.state()

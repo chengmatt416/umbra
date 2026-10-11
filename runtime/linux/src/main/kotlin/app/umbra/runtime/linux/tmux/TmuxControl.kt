@@ -128,4 +128,7 @@ interface TmuxHost {
 
     /** The machine's boot id: with the server pid and start time it identifies a tmux server instance. */
     suspend fun bootId(): String
+
+    /** Makes sure a server listens on [socket] where servers cannot daemonize; elsewhere tmux starts its own. */
+    suspend fun ensureServer(socket: String) = Unit
 }

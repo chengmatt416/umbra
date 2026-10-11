@@ -188,6 +188,7 @@ class TerminalService(
             groups.remove(name)
         }
         val socket = socketOf(name)
+        host.ensureServer(socket)
         val exists = runCatching { host.run(listOf("-L", socket, "has-session", "-t", "umbra")) }.isSuccess
         // The server starts with tmux's defaults; each terminal's session gets its options when it is created.
         if (!exists) host.run(listOf("-L", socket, "new-session", "-d", "-s", "umbra", "-n", "anchor", "--", "tail", "-f", "/dev/null"))
