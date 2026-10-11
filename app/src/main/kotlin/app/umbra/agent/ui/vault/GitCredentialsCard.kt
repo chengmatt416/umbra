@@ -49,7 +49,10 @@ fun GitCredentialsCard(onMessage: (String) -> Unit) {
     val container = LocalContext.current.container
     val credentials by container.gitCredentials.all.collectAsStateWithLifecycle()
     val journal by container.gitCredentials.recent.collectAsStateWithLifecycle()
+    val brokerState by container.gitCredentials.stateFlow.collectAsStateWithLifecycle()
+    val suspended = brokerState["state"]?.takeIf { it.suspended }
     var adding by remember { mutableStateOf(false) }
+    var suspending by remember { mutableStateOf(false) }
     var rotating by remember { mutableStateOf<GitCredential?>(null) }
     var revoking by remember { mutableStateOf<GitCredential?>(null) }
     val unavailable = brokerUnavailable(container)
@@ -60,6 +63,12 @@ fun GitCredentialsCard(onMessage: (String) -> Unit) {
             PButton("Add…", { adding = true }, style = ButtonStyle.Alt, tiny = true)
         }
         unavailable?.let { Callout(it, Tone.Warn, Modifier.padding(top = 6.dp)) }
+        if (suspended != null) {
+            Callout("Suspended ${suspended.sinceMs?.let { DateUtils.getRelativeTimeSpanString(it) } ?: ""}${suspended.reason?.let { ": $it" } ?: ""}. No credential is read or published with until you resume it; model keys and sessions go on. Revoke the tokens at their issuer if they may have leaked.", Tone.Warn, Modifier.padding(top = 6.dp))
+            PButton("Resume the broker", { container.gitCredentials.resumeBroker(); onMessage("The git broker is in use again.") }, Modifier.padding(top = 6.dp), style = ButtonStyle.Alt, tiny = true)
+        } else if (credentials.isNotEmpty()) {
+            PButton("Suspend the broker…", { suspending = true }, Modifier.padding(top = 6.dp), style = ButtonStyle.Ghost, tiny = true)
+        }
         if (credentials.isEmpty()) Subtle("None. A token added here is used only by root, for the one repository URL it is bound to; the agent never holds it.", Modifier.padding(top = 6.dp))
         credentials.values.sortedBy { it.createdAtMs }.forEach { c ->
             Gap(10.dp)
@@ -143,6 +152,27 @@ fun GitCredentialsCard(onMessage: (String) -> Unit) {
                 }) { Text("Add") }
             },
             dismissButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } },
+        )
+    }
+    if (suspending) {
+        var reason by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { suspending = false },
+            title = { Text("Suspend the git broker?") },
+            text = {
+                Column {
+                    Text("Every git credential stops being used at once, and stays so across restarts until you resume it. Model keys and sessions are not touched. A token that may have leaked must still be revoked at its issuer.", fontSize = 13.sp)
+                    OutlinedTextField(reason, { reason = it }, Modifier.padding(top = 8.dp), label = { Text("Why (kept in the journal)") }, singleLine = true)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    container.gitCredentials.suspendBroker(reason)
+                    suspending = false
+                    onMessage("The git broker is suspended: no credential is used until you resume it.")
+                }) { Text("Suspend") }
+            },
+            dismissButton = { TextButton(onClick = { suspending = false }) { Text("Cancel") } },
         )
     }
     rotating?.let { c ->

@@ -175,6 +175,14 @@ class GitBrokerTest {
         assertFailsWith<GitCredentialException> { credentials.authorize(c.id, GitOperation.PUBLISH) }
         assertEquals(c.id, credentials.authorize(c.id, GitOperation.READ).id)
 
+        // Suspending the broker stops every use at once and survives a restart, until the user resumes it.
+        credentials.suspendBroker("the phone may be compromised")
+        assertFailsWith<GitCredentialException> { GitCredentials(ControlStore(dir.resolve("control"))).authorize(c.id, GitOperation.READ) }
+        val suspended = BrokeredGit(agentGit, credentials, { token }, root = { _, _, _ -> error("nothing may run") }, agent = { error("nothing may run") })
+        assertTrue("suspended" in assertFailsWith<GitCredentialException> { runBlocking { suspended.lsRemote("/nowhere", "https://github.com/o/r", "refs/heads/main") } }.message.orEmpty())
+        credentials.resumeBroker()
+        assertEquals(c.id, credentials.authorize(c.id, GitOperation.READ).id)
+
         // Without root (proot) root is the agent's own user: the broker refuses before anything runs.
         val noRoot = BrokeredGit(agentGit, credentials, { token }, root = { _, _, _ -> error("nothing may run") }, agent = { error("nothing may run") },
             unavailable = { "Brokered git needs root" })

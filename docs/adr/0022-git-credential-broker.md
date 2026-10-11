@@ -32,7 +32,11 @@ where the agent cannot look, that is in root's processes inside the environment 
 4. **The commit gate is unchanged.** `BrokeredGit` is its `GitPort`: a remote that is a credential's URL is read and
    written through the broker; any other remote goes to the checkout's own git as before. Promotions, leases,
    read-back and recovery work the same either way.
-5. **Without root the broker refuses.** Under proot root is the agent's own user, so a token in "root's" process would
+5. **The broker can be suspended as a whole** (AC-016): when the user no longer trusts it, one act stops every
+   brokered use at once, persisted across restarts and journaled, until they resume it. Model keys and sessions are
+   not touched. Revoking the tokens at their issuer stays the user's act, and the vault says so; nothing suspends or
+   revokes by itself.
+6. **Without root the broker refuses.** Under proot root is the agent's own user, so a token in "root's" process would
    be readable; the vault and the commit screen say so and nothing is run.
 
 ## Consequences
@@ -45,9 +49,10 @@ where the agent cannot look, that is in root's processes inside the environment 
   push by itself; the gate publishes through the broker and reads it back, the hook never runs, staging folders,
   bundles and temporary refs are gone, and the token is in no file of the control store; a moved remote is not
   overwritten; a wrong token fails without being shown; a read-only credential cannot publish; without root nothing
-  runs. On the emulator against the same kind of server on the Mac (10.0.2.2): the agent's own ls-remote is refused
+  runs; a suspended broker refuses every use and survives a restart until resumed. On the emulator against the same kind of server on the Mac (10.0.2.2): the agent's own ls-remote is refused
   for want of credentials; Fetch through the broker gives the checkout the remote's main; the agent's commit is
   proposed, authorized and published through the broker and read back; an agent-side scanner reading every
   `/proc/*/environ` and command line it can see, and `/tmp`, `/home`, `/workspace`, for 90 seconds across the push,
   found no token and no root process (the same scanner finds a planted token at once); the token is in none of the
-  app's control files.
+  app's control files; with the broker suspended a fetch is refused with the reason while a model session completes,
+  and after resuming the fetch works again.

@@ -44,13 +44,38 @@ data class GitCredential(
 
 class GitCredentialException(message: String) : Exception(message)
 
+/** The broker as a whole: suspended by the user when it may not be trusted (AC-016), until they resume it. */
+@Serializable
+data class GitBrokerState(val id: String = "state", val suspended: Boolean = false, val reason: String? = null, val sinceMs: Long? = null)
+
 /** The broker's account of its git credentials, and every use of one in a hash-chained journal. */
 class GitCredentials(private val store: ControlStore) {
     private val docs = store.docs("git-credentials", GitCredential.serializer(), GitCredential::id)
     private val journal = store.journal("git-broker")
+    private val state = store.docs("git-broker-state", GitBrokerState.serializer(), GitBrokerState::id)
 
     val all: StateFlow<Map<String, GitCredential>> = docs.all
     val recent = journal.recent
+    val stateFlow: StateFlow<Map<String, GitBrokerState>> = state.all
+
+    /** Why nothing may be brokered now, or null. */
+    fun suspension(): String? = state["state"]?.takeIf { it.suspended }?.let { "the git broker is suspended (${it.reason ?: "by the user"}): no credential is used until it is resumed" }
+
+    /**
+     * Suspends every brokered use at once and persistently (AC-016: isolate what a broker that may be compromised
+     * can do). Model keys and sessions are not touched. Revoking the tokens at their issuer stays the user's act.
+     */
+    @Synchronized
+    fun suspendBroker(reason: String, by: String = "user") {
+        state.put(GitBrokerState(suspended = true, reason = reason.ifBlank { null }, sinceMs = store.clock.nowMs()))
+        journal.append("git.broker_suspended", buildJsonObject { put("reason", reason); put("by", by); put("credentials", docs.list().size) })
+    }
+
+    @Synchronized
+    fun resumeBroker(by: String = "user") {
+        state.put(GitBrokerState(suspended = false))
+        journal.append("git.broker_resumed", buildJsonObject { put("by", by) })
+    }
 
     operator fun get(id: String): GitCredential? = docs[id]
 
@@ -110,6 +135,7 @@ class GitCredentials(private val store: ControlStore) {
 
     /** Throws unless [id] may be used for [operation] now. */
     fun authorize(id: String, operation: GitOperation): GitCredential {
+        suspension()?.let { throw GitCredentialException(it) }
         val c = docs[id] ?: throw GitCredentialException("no credential $id")
         if (operation !in c.operations) throw GitCredentialException("“${c.label}” is not allowed to ${operation.label.lowercase()} (${c.url})")
         if (operation == GitOperation.PUBLISH && c.publishSuspended) throw GitCredentialException("“${c.label}” came back from a backup: grant it publishing again before it is used to publish")

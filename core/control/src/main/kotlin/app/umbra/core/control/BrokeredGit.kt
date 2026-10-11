@@ -90,6 +90,7 @@ class BrokeredGit(
 
     private fun ready(c: GitCredential, operation: GitOperation?): String {
         unavailable()?.let { throw GitCredentialException(it) }
+        credentials.suspension()?.let { throw GitCredentialException(it) }
         if (operation != null) credentials.authorize(c.id, operation)
         return token(c.id)?.takeIf { it.isNotBlank() } ?: throw GitCredentialException("the token for “${c.label}” is not in the vault any more")
     }
