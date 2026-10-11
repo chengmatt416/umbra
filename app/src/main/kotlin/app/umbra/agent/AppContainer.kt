@@ -96,7 +96,10 @@ class AppContainer(val context: Context) {
     val vault = app.umbra.core.control.CredentialVault(control)
 
     /** The commit gate (§11): promotions of a repository's commit to a remote branch, conditional and journaled. */
-    val commits by lazy { app.umbra.core.control.CommitGate(control, app.umbra.agent.integration.guestGit(this), rewritePermitted = { repositories.rewritePermitted(it) }) }
+    /** Git credentials the broker holds (AC-015): records here, values in [gitSecrets]. */
+    val gitCredentials = app.umbra.core.control.GitCredentials(control)
+    val gitBroker by lazy { app.umbra.agent.integration.brokeredGit(this) }
+    val commits by lazy { app.umbra.core.control.CommitGate(control, gitBroker, rewritePermitted = { repositories.rewritePermitted(it) }) }
 
     /** The Repository Hub (§2.1): registered and cloned repositories, preflight, policy, project links. */
     val repositories = app.umbra.core.control.RepositoryHub(control)
@@ -148,6 +151,9 @@ class AppContainer(val context: Context) {
     /** The Material Capsule and Snapshot selection (§3.1); shown by the foreground service while the user has it on. */
     val capsule by lazy { app.umbra.agent.capsule.Capsule(context, this) }
     val secrets = SecretStore(context)
+
+    /** Git tokens, in a store of their own: nothing that hands provider keys to sessions ever lists them. */
+    val gitSecrets = SecretStore(context, "git-secrets")
 
     // ---- privileged helper (shell user): started by root, Shizuku or adb; see HelperController ----
     val helper = HelperController(context)

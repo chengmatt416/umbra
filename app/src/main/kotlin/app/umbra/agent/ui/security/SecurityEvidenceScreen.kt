@@ -106,7 +106,7 @@ fun SecurityEvidenceScreen(onGo: (String) -> Unit) {
             digest = container.security.combinedDigest(c)
             // No stored secret value may appear in any journal: checked, not assumed.
             val texts = File(container.control.root.toFile(), "journals").listFiles().orEmpty().filter { it.name.endsWith(".jsonl") }.map { it.readText() }
-            val values = container.secrets.names().mapNotNull { container.secrets.get(it) }.filter { it.length >= 6 }
+            val values = (container.secrets.names().mapNotNull { container.secrets.get(it) } + container.gitSecrets.names().mapNotNull { container.gitSecrets.get(it) }).filter { it.length >= 6 }
             val found = values.count { v -> texts.any { v in it } }
             secretScan = if (found == 0) "No stored secret value appears in any of ${texts.size} journals (${values.size} secret(s) checked)." else "$found secret value(s) found in a journal: rotate them."
         }

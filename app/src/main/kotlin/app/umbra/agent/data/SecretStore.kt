@@ -21,8 +21,8 @@ import javax.crypto.spec.GCMParameterSpec
  * session timeline or a command line; the only place its value goes is the environment of the
  * process that needs it (spec §28).
  */
-class SecretStore(context: Context) {
-    private val prefs = context.getSharedPreferences("secrets", Context.MODE_PRIVATE)
+class SecretStore(context: Context, file: String = "secrets") {
+    private val prefs = context.getSharedPreferences(file, Context.MODE_PRIVATE)
     private val version = MutableStateFlow(0)
 
     /** Grows whenever a secret is added, replaced or removed (the vault's account follows it). */

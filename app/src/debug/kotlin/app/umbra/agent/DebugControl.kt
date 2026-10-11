@@ -96,6 +96,13 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             val out = container.guest.runtime.exec(argv, timeoutMs = (args["timeout_ms"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 120_000)
             buildJsonObject { put("exit", out.exitCode); put("stdout", out.stdout); put("stderr", out.stderr) }
         }
+        "git.credential.add" -> {
+            // Development only: a test token for a local test server, entered the way the vault's dialog stores it.
+            val c = container.gitCredentials.add(str(args, "label"), str(args, "url"), str(args, "user"),
+                setOf(app.umbra.core.control.GitOperation.READ, app.umbra.core.control.GitOperation.PUBLISH), (args["ca"] as? JsonPrimitive)?.content)
+            container.gitSecrets.put(app.umbra.agent.integration.gitSecretName(c.id), str(args, "token"))
+            buildJsonObject { put("id", c.id); put("url", c.url) }
+        }
         "guest.exec_root" -> {
             val argv = (args["argv"] as JsonArray).map { (it as JsonPrimitive).content }
             val out = container.guest.runtime.exec(argv, asRoot = true, timeoutMs = (args["timeout_ms"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 120_000, maxOutputBytes = 1024 * 1024)

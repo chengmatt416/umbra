@@ -28,8 +28,9 @@ settled by checking before any retry, no unauthorized force push, and scoped sin
    A write whose answer was lost is OUTCOME_UNKNOWN and settled the same way. At start-up, a write the app died in is
    settled by reading the remote (checkpointed forward recovery); a prepared intent never sent is abandoned.
 6. Every transition is in a hash-chained promotion journal; the screen checks the chain.
-7. Validation reads the candidate commit itself; no staging worktree is created. The push uses the repository's own
-   git credentials in Linux, with no terminal prompt; Umbra brokers no git credential yet (ADR 0016 says so).
+7. Validation reads the candidate commit itself; no staging worktree is created. A remote that is the URL of a
+   brokered credential is read and written by root in a staging repository (ADR 0022); any other remote is pushed
+   with the repository's own git credentials in Linux, with no terminal prompt.
 
 ## Consequences
 

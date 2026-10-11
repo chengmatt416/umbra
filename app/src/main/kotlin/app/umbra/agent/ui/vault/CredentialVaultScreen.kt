@@ -114,11 +114,25 @@ fun CredentialVaultScreen() {
             Gap(6.dp)
             PObject("Local Identity Broker", "Android Keystore · this phone · ${records.size} credential(s)", PIcons.phone, trailing = { Tag("Active", Tone.Good) })
             Gap(6.dp)
-            PObject("Git Credential Broker", "Not set up: Umbra holds no git credential; the agent uses the workspace's own git configuration", PIcons.git, trailing = { Tag("Not set up", Tone.Neutral) })
+            val git by container.gitCredentials.all.collectAsStateWithLifecycle()
+            val noRoot = app.umbra.agent.integration.brokerUnavailable(container)
+            PObject(
+                "Git Credential Broker",
+                when {
+                    git.isEmpty() -> "Not set up: no git credential held; other remotes use the workspace's own git configuration"
+                    noRoot != null -> "${git.size} credential(s) held, unusable here: brokering needs root"
+                    else -> "${git.size} credential(s), each bound to one URL, used only by root in a staging repository"
+                },
+                PIcons.git,
+                trailing = { Tag(if (git.isEmpty()) "Not set up" else if (noRoot != null) "Needs root" else "Active", if (git.isNotEmpty() && noRoot == null) Tone.Good else Tone.Neutral) },
+            )
             Gap(6.dp)
             PObject("Cloud / Signing Broker", "Not set up: no deployment or signing material is held", PIcons.key, trailing = { Tag("Not set up", Tone.Neutral) })
             Subtle("No secret is copied to another device: no node is paired with this phone.", Modifier.padding(top = 8.dp))
         }
+        Gap(12.dp)
+
+        GitCredentialsCard { message = it }
         Gap(12.dp)
 
         PCard {
@@ -177,7 +191,7 @@ fun CredentialVaultScreen() {
         PCard(style = CardStyle.Soft) {
             Kicker("Vault safety")
             PSetting("Model keys and the agent", "omp needs its provider key to call the model, so the key is in omp's environment, where the agent's own commands may be able to read it. Scopes narrow which sessions get which key; each hand-over is recorded.") { Tag("Recorded", Tone.Warn) }
-            PSetting("Git and other credentials", "Not held: no raw token or SSH key is given to the agent by Umbra") { Tag("None", Tone.Good) }
+            PSetting("Git credentials", "Given to no agent: root uses a token for its one URL, in a staging repository, reading the candidate from a bundle; without root they are not used at all") { Tag("Brokered", Tone.Good) }
             PSetting("Revoke · rotate · node trust", "Separate acts. Revoking here deletes Umbra's copy only; the key stays valid at its issuer until revoked there.") { Tag("Independent", Tone.Neutral) }
             PSetting("Recovery", "None: Umbra keeps no copy of a credential off this phone. A lost phone means creating new keys at each issuer and revoking the old ones there.", divider = false) { Tag("No backup", Tone.Neutral) }
         }

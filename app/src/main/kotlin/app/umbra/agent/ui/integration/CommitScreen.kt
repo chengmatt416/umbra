@@ -66,6 +66,7 @@ fun CommitScreen(onOpenVault: () -> Unit) {
     val promotions by container.commits.all.collectAsStateWithLifecycle()
     val journal by container.commits.recent.collectAsStateWithLifecycle()
     val guest by container.guest.state.collectAsStateWithLifecycle()
+    val gitCredentials by container.gitCredentials.all.collectAsStateWithLifecycle()
     var repos by remember { mutableStateOf<List<Repository>?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -109,6 +110,23 @@ fun CommitScreen(onOpenVault: () -> Unit) {
                         }, style = ButtonStyle.Alt, tiny = true, enabled = busy == null && r.branch != null)
                     }
                 }
+                // Through the broker: the remote is the credential's URL, whatever the checkout's own configuration says.
+                gitCredentials.values.forEach { c ->
+                    Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        PButton("Propose via ${c.label}", {
+                            act("Validating through the broker") {
+                                val p = container.commits.propose(r.path, c.url, r.branch)
+                                if (p.state == PromotionState.VALIDATED) "Validated against ${c.url} through the broker: review it below, then authorize." else "Refused: ${p.problems.joinToString("; ")}"
+                            }
+                        }, style = ButtonStyle.Alt, tiny = true, enabled = busy == null && r.branch != null && app.umbra.core.control.GitOperation.PUBLISH in c.operations)
+                        PButton("Fetch", {
+                            act("Fetching through the broker") {
+                                val sha = container.gitBroker.fetchThroughBroker(r.path, c.id, r.branch ?: "main")
+                                "${c.url}'s ${r.branch ?: "main"} (${sha.take(12)}) is now refs/remotes/umbra-broker/${r.branch ?: "main"} in ${r.path}; the checkout never held the token."
+                            }
+                        }, style = ButtonStyle.Ghost, tiny = true, enabled = busy == null && app.umbra.core.control.GitOperation.READ in c.operations)
+                    }
+                }
             }
             Subtle("Validation reads the candidate commit itself (its tree is what is published); no separate staging worktree is made.", Modifier.padding(top = 10.dp))
         }
@@ -126,7 +144,7 @@ fun CommitScreen(onOpenVault: () -> Unit) {
             PSetting("Execution authority", "Agents may compute a candidate: commit in their workspace") { Tag("Granted", Tone.Good) }
             PSetting("Promotion authorization", "Only you, here, for one promotion; a candidate is not a push") { Tag("Separate", Tone.Neutral) }
             PSetting("Resource commit gate", "The write is conditional on the remote ref, of the current fence epoch, with a single-use capability, and read back") { Tag("Enforced", Tone.Good) }
-            PSetting("Credential custody", "The push uses the repository's own git credentials in Linux; Umbra holds and brokers none (yet)", divider = false) {
+            PSetting("Credential custody", if (gitCredentials.isEmpty()) "The push uses the repository's own git credentials in Linux; add a brokered credential in the vault to publish without the agent holding one" else "Through a brokered credential: root publishes with its token in a staging repository; the agent never holds it. Other remotes use the checkout's own credentials", divider = false) {
                 PButton("Vault", onOpenVault, style = ButtonStyle.Ghost, tiny = true)
             }
             Subtle("External side effects are not exactly-once: an unknown outcome is settled by reading the remote, never by sending again.", Modifier.padding(top = 8.dp))

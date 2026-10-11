@@ -27,7 +27,8 @@ model, so a key that reaches a session can be read by what runs in that session.
    says so. The key cannot be exported, so there is no backup tier: recovery is "none", stated plainly.
 5. **Rotate, revoke and node trust are separate acts.** Rotating overwrites Umbra's copy; revoking deletes it, and the
    screen says the credential stays valid at its issuer until revoked there. No node trust exists to revoke.
-6. The git and cloud/signing brokers are shown as not set up, with what that means; nothing pretends to broker them.
+6. The cloud/signing broker is shown as not set up, with what that means; nothing pretends to broker it. Git
+   credentials are brokered since ADR 0022: bound to one URL, used only by root, given to no agent.
 
 ## Consequences
 
