@@ -143,6 +143,8 @@ class AppContainer(val context: Context) {
         val resource = if (request.target.environment == app.umbra.core.model.action.Environment.LINUX_GUI) "gui:0" else "display:${displayId ?: 0}"
         val lease = inputLeases.current(resource) ?: return null
         return if (lease.owner == app.umbra.core.control.Principal.User && lease.state == app.umbra.core.control.LeaseState.ACTIVE) {
+            // A wait in the Resource Wait Graph: the session's work on this screen is blocked on the user (AC-005).
+            request.sessionId?.let { inputLeases.recordBlocked(resource, app.umbra.core.control.Principal.agent(it), app.umbra.core.control.Principal.User) }
             "The user has taken back this screen ($resource). Wait until they return it, or work on a background display."
         } else null
     }

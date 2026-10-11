@@ -44,7 +44,9 @@ import app.umbra.agent.ui.porcelain.Tag
 import app.umbra.agent.ui.porcelain.Tone
 import app.umbra.agent.ui.sessions.stateText
 import app.umbra.agent.ui.sessionsFlow
+import app.umbra.core.control.LeaseState
 import app.umbra.core.control.PlanPhase
+import app.umbra.core.control.Principal
 import app.umbra.core.control.WaitEdge
 import app.umbra.core.control.WaitGraph
 import app.umbra.runtime.omp.OmpSubagent
@@ -89,6 +91,12 @@ fun PlanningScreen(onOpenSession: (String) -> Unit) {
     val history = revisionsAll.values.filter { it.sessionId == sid }.sortedBy { it.number }
     val progress = progressAll[sid]
     val current = history.lastOrNull()
+    // AC-005: the session's screen work refused because the user holds that screen, while they still hold it.
+    val heldByYou = leases.values.filter { it.owner == Principal.User && it.state == LeaseState.ACTIVE }.map { it.resourceId }.toSet()
+    val blockedOn = timeline.lastOrNull { e ->
+        e.kind == "blocked" && e.timeMs >= System.currentTimeMillis() - 10 * 60_000 &&
+            (e.data as? kotlinx.serialization.json.JsonObject)?.let { (it["by"] as? JsonPrimitive)?.content == Principal.agent(sid ?: "").toString() && (it["resource"] as? JsonPrimitive)?.content in heldByYou } == true
+    }?.let { ((it.data as kotlinx.serialization.json.JsonObject)["resource"] as JsonPrimitive).content }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 18.dp)) {
         Eyebrow("Agent planning & integration")
@@ -115,9 +123,11 @@ fun PlanningScreen(onOpenSession: (String) -> Unit) {
             when (view) {
                 PlanView.Dag -> {
                     val phases = progress?.phases ?: current?.phases.orEmpty()
+                    blockedOn?.let { Callout("Blocked: its actions on $it wait for you, who took that screen back. The phase that needs it waits; its commands and builds go on.", Tone.Warn, Modifier.padding(bottom = 8.dp)) }
                     if (phases.isEmpty()) Subtle("The agent has not written a todo list for this session.")
                     else {
-                        GraphFlow(phases.map { p -> val (label, tone) = phaseTone(p); GraphNode(p.name, label, tone) })
+                        val working = phases.indexOfFirst { p -> p.tasks.any { it.status == "in_progress" } }
+                        GraphFlow(phases.mapIndexed { i, p -> val (label, tone) = phaseTone(p); if (blockedOn != null && i == working) GraphNode(p.name, "Blocked on $blockedOn", Tone.Warn) else GraphNode(p.name, label, tone) })
                         Subtle("omp's phases run in order: each phase depends on the one before it.")
                         phases.forEach { p ->
                             Kicker(p.name, Modifier.padding(top = 10.dp))
