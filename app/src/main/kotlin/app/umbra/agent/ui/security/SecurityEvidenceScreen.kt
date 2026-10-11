@@ -145,7 +145,10 @@ fun SecurityEvidenceScreen(onGo: (String) -> Unit) {
         PCard {
             Kicker("Independent digest anchoring")
             if (nodes.isEmpty()) Subtle("Pair a node (Distributed Nodes) to keep a copy of the digest outside this phone.", Modifier.padding(top = 6.dp))
-            nodes.values.forEach { n ->
+            nodes.values.filter { it.revocation != null }.forEach { n ->
+                Subtle("${n.name} is revoked: the ${anchors.values.count { it.nodeId == n.id }} anchor(s) it holds no longer count as an independent copy.", Modifier.padding(top = 8.dp))
+            }
+            nodes.values.filter { it.revocation == null }.forEach { n ->
                 Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(n.name, Modifier.weight(1f), fontSize = 13.sp, color = P.ink, maxLines = 1)
                     PButton("Anchor", {
@@ -188,7 +191,10 @@ fun SecurityEvidenceScreen(onGo: (String) -> Unit) {
             }
             nodes.values.forEach { n ->
                 val js = nodeJobs.values.filter { it.nodeId == n.id }
-                PSetting(n.name, "Node · ${n.trust.label.lowercase()} trust · ${js.size} job(s) · ${js.sumOf { it.manifestBytes }} bytes sent · no secrets") { Tag("Paired", Tone.Neutral) }
+                PSetting(n.name, "Node · ${n.trust.label.lowercase()} trust · ${js.size} job(s) · ${js.sumOf { it.manifestBytes }} bytes sent · no secrets") {
+                    val rev = n.revocation
+                    Tag(if (rev == null) "Paired" else if (rev.pending) "Revocation pending" else "Revoked", if (rev?.pending == true) Tone.Warn else Tone.Neutral)
+                }
             }
             val published = promotions.values.filter { it.state == PromotionState.COMMITTED }
             PSetting("Commit gate", if (published.isEmpty()) "Nothing published" else published.joinToString { "${it.remote}/${it.branch} ← ${it.candidate.take(8)}" }, divider = false) { Tag("${published.size} write(s)", Tone.Neutral) }

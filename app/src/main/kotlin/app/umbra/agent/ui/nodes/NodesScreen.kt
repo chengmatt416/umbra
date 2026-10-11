@@ -46,6 +46,7 @@ import app.umbra.agent.ui.porcelain.Subtle
 import app.umbra.agent.ui.porcelain.Tag
 import app.umbra.agent.ui.porcelain.Tone
 import app.umbra.core.control.NodeJob
+import app.umbra.core.control.NodeRevocation
 import app.umbra.core.control.NodeTrust
 import app.umbra.core.control.PairedNode
 import app.umbra.core.nodes.JobState
@@ -76,6 +77,7 @@ fun NodesScreen() {
     var busy by remember { mutableStateOf<String?>(null) }
     var pairing by remember { mutableStateOf(false) }
     var running by remember { mutableStateOf<PairedNode?>(null) }
+    var revoking by remember { mutableStateOf<PairedNode?>(null) }
 
     fun act(label: String, block: suspend () -> String) {
         if (busy != null) return
@@ -103,19 +105,31 @@ fun NodesScreen() {
                         Text(n.name, fontSize = 15.sp, color = P.ink)
                         Text("${n.host}:${n.port} · ${shortFingerprint(n.fingerprint)}", fontSize = 11.sp, fontFamily = P.mono, color = P.sub)
                     }
-                    Tag(if (container.nodeConnections.connected(n.id)) "Connected" else n.lastSeenMs?.let { "Seen ${DateUtils.getRelativeTimeSpanString(it)}" } ?: "Not seen", if (container.nodeConnections.connected(n.id)) Tone.Good else Tone.Neutral)
+                    val rev = n.revocation
+                    when {
+                        rev == null -> Tag(if (container.nodeConnections.connected(n.id)) "Connected" else n.lastSeenMs?.let { "Seen ${DateUtils.getRelativeTimeSpanString(it)}" } ?: "Not seen", if (container.nodeConnections.connected(n.id)) Tone.Good else Tone.Neutral)
+                        rev.pending -> Tag("Revocation pending", Tone.Warn)
+                        else -> Tag("Revoked · acknowledged", Tone.Neutral)
+                    }
                 }
-                n.info?.let { i ->
-                    Subtle("${i.os} · ${i.arch} · ${i.cpus} CPUs · ${i.memoryMb / 1024} GB · ${i.tools.keys.joinToString().ifEmpty { "no tools found" }}", Modifier.padding(top = 2.dp))
-                    Subtle("Runner epoch ${i.epoch.take(24)} · jobs in ${i.workspace}", Modifier.padding(top = 2.dp))
-                }
-                Gap(6.dp)
-                Segmented(NodeTrust.entries.map { it to it.label }, n.trust, { t -> container.nodes.setTrust(n.id, t) })
-                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    PButton("Preflight", { act("Asking ${n.name}") { container.nodeConnections.preflight(n.id).let { "${n.name}: ${it.os}, ${it.cpus} CPUs, tools ${it.tools.keys.joinToString()}" } } }, style = ButtonStyle.Alt, tiny = true)
-                    PButton("Run…", { running = n }, tiny = true)
-                    PButton("Rejoin", { act("Reconciling with ${n.name}") { container.nodeConnections.reconcile(n.id); "${n.name}'s account of its jobs is now the record." } }, style = ButtonStyle.Ghost, tiny = true)
-                    PButton("Unpair", { container.nodeConnections.disconnect(n.id); container.nodes.unpair(n.id); message = "Forgotten here. Unpair this phone on ${n.name} too (umbra-node unpair)." }, style = ButtonStyle.Ghost, tiny = true)
+                val revocation = n.revocation
+                if (revocation != null) {
+                    RevocationDetail(n, revocation, onRetry = { act("Telling ${n.name}") { if (container.nodeConnections.notifyRevoked(n.id)) "${n.name} answered: it says it has forgotten this phone." else "${n.name} could not be reached; the revocation stays pending." } },
+                        onForget = { container.nodes.unpair(n.id); message = "The record of ${n.name} is gone; its certificate stays refused (nothing pins it)." })
+                } else {
+                    n.info?.let { i ->
+                        Subtle("${i.os} · ${i.arch} · ${i.cpus} CPUs · ${i.memoryMb / 1024} GB · ${i.tools.keys.joinToString().ifEmpty { "no tools found" }}", Modifier.padding(top = 2.dp))
+                        Subtle("Runner epoch ${i.epoch.take(24)} · jobs in ${i.workspace}", Modifier.padding(top = 2.dp))
+                    }
+                    Gap(6.dp)
+                    Segmented(NodeTrust.entries.map { it to it.label }, n.trust, { t -> container.nodes.setTrust(n.id, t) })
+                    Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        PButton("Preflight", { act("Asking ${n.name}") { container.nodeConnections.preflight(n.id).let { "${n.name}: ${it.os}, ${it.cpus} CPUs, tools ${it.tools.keys.joinToString()}" } } }, style = ButtonStyle.Alt, tiny = true)
+                        PButton("Run…", { running = n }, tiny = true)
+                        PButton("Rejoin", { act("Reconciling with ${n.name}") { container.nodeConnections.reconcile(n.id); "${n.name}'s account of its jobs is now the record." } }, style = ButtonStyle.Ghost, tiny = true)
+                        PButton("Unpair", { container.nodeConnections.disconnect(n.id); container.nodes.unpair(n.id); message = "Forgotten here. Unpair this phone on ${n.name} too (umbra-node unpair)." }, style = ButtonStyle.Ghost, tiny = true)
+                    }
+                    PButton("Revoke…", { revoking = n }, Modifier.padding(top = 6.dp), style = ButtonStyle.Ghost, tiny = true)
                 }
             }
             if (nodes.isEmpty()) Subtle("No node is paired. On a computer you own: umbra-node serve --pair, then Pair a node here.", Modifier.padding(top = 8.dp))
@@ -126,7 +140,7 @@ fun NodesScreen() {
             Kicker("Jobs")
             val list = jobs.values.sortedByDescending { it.startedAtMs }.take(10)
             if (list.isEmpty()) Subtle("No job has been placed on a node.", Modifier.padding(top = 6.dp))
-            list.forEach { j -> JobRow(j, nodes[j.nodeId]?.name ?: j.nodeId, onCancel = { act("Cancelling") { container.nodeConnections.cancel(j.nodeId, j.id); "Cancelled on the node." } }, onForget = { act("Forgetting") { container.nodeConnections.forget(j.nodeId, j.id); "The node deleted the job's folder." } }) }
+            list.forEach { j -> JobRow(j, nodes[j.nodeId]?.name ?: j.nodeId, revoked = nodes[j.nodeId]?.revocation != null, onCancel = { act("Cancelling") { container.nodeConnections.cancel(j.nodeId, j.id); "Cancelled on the node." } }, onForget = { act("Forgetting") { container.nodeConnections.forget(j.nodeId, j.id); "The node deleted the job's folder." } }) }
         }
         Gap(12.dp)
 
@@ -192,6 +206,36 @@ fun NodesScreen() {
             dismissButton = { TextButton(onClick = { pairing = false }) { Text("Cancel") } },
         )
     }
+    revoking?.let { n ->
+        var reason by remember(n.id) { mutableStateOf("") }
+        val mine = jobs.values.filter { it.nodeId == n.id }
+        val live = mine.filter { it.state == JobState.RUNNING }
+        AlertDialog(
+            onDismissRequest = { revoking = null },
+            title = { Text("Revoke ${n.name}?") },
+            text = {
+                Column {
+                    Text("This phone refuses it from now on: no work, no files, no lease renewal, its certificate not accepted. Then the node is told, if it can be reached.", fontSize = 13.sp)
+                    Text(
+                        (if (live.isEmpty()) "No job is running there." else "${live.size} job(s) running there end when their leases do, only if the node keeps its contract; cancel them first if they must stop sooner.") +
+                            " Already sent to it: ${mine.sumOf { it.manifestFiles }} file(s), ${mine.sumOf { it.manifestBytes }} bytes; revoking does not take those back.",
+                        Modifier.padding(top = 6.dp), fontSize = 13.sp, color = P.sub,
+                    )
+                    OutlinedTextField(reason, { reason = it }, Modifier.padding(top = 8.dp), label = { Text("Why (kept in the journal)") }, singleLine = true)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    revoking = null
+                    act("Revoking ${n.name}") {
+                        if (container.nodeConnections.revoke(n.id, reason)) "${n.name} is revoked. It answered: it says it has forgotten this phone (its word, not proof)."
+                        else "${n.name} is revoked on this phone. It could not be told, so the revocation is pending."
+                    }
+                }) { Text("Revoke") }
+            },
+            dismissButton = { TextButton(onClick = { revoking = null }) { Text("Cancel") } },
+        )
+    }
     running?.let { n ->
         var command by remember(n.id) { mutableStateOf("uname -a") }
         var folder by remember(n.id) { mutableStateOf("") }
@@ -239,7 +283,7 @@ fun NodesScreen() {
 private fun Pairing12(code: String) = app.umbra.core.nodes.Pairing.normalize(code).length == 12
 
 @Composable
-private fun JobRow(j: NodeJob, nodeName: String, onCancel: () -> Unit, onForget: () -> Unit) {
+private fun JobRow(j: NodeJob, nodeName: String, revoked: Boolean, onCancel: () -> Unit, onForget: () -> Unit) {
     val context = LocalContext.current
     Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -247,7 +291,7 @@ private fun JobRow(j: NodeJob, nodeName: String, onCancel: () -> Unit, onForget:
                 Text(j.argv.drop(if (j.argv.firstOrNull() == "sh") 2 else 0).joinToString(" ").take(80), fontSize = 13.sp, fontFamily = P.mono, color = P.ink, maxLines = 1)
                 Text("$nodeName · ${j.id} · policy rev. ${j.policyRevision}" + if (j.manifestFiles > 0) " · ${j.manifestFiles} file(s), ${j.manifestBytes} bytes sent" else " · no files sent", fontSize = 11.sp, color = P.sub)
             }
-            Tag(
+            if (revoked && j.state == JobState.RUNNING) Tag("Not confirmed stopped", Tone.Warn) else Tag(
                 when (j.state) { JobState.RUNNING -> "Running"; JobState.EXITED -> "Exit ${j.exit}"; JobState.LEASE_EXPIRED -> "Lease ran out"; JobState.CANCELLED -> "Cancelled"; JobState.FAILED_TO_START -> "Did not start"; JobState.LOST -> "Lost" },
                 when (j.state) { JobState.RUNNING -> Tone.Neutral; JobState.EXITED -> if (j.exit == 0) Tone.Good else Tone.Warn; else -> Tone.Warn },
             )
@@ -258,9 +302,34 @@ private fun JobRow(j: NodeJob, nodeName: String, onCancel: () -> Unit, onForget:
             Modifier.padding(top = 2.dp),
         )
         if (j.outputTail.isNotBlank()) Text(j.outputTail.trimEnd().lines().takeLast(8).joinToString("\n"), Modifier.padding(top = 4.dp), fontSize = 11.sp, fontFamily = P.mono, color = P.sub)
-        Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (j.state == JobState.RUNNING) PButton("Cancel", onCancel, style = ButtonStyle.Ghost, tiny = true)
-            else PButton("Forget (node deletes its files)", onForget, style = ButtonStyle.Ghost, tiny = true)
+        if (revoked) {
+            if (j.state == JobState.RUNNING) Subtle("Last reported running; the node is revoked, so nothing here can confirm it stopped. Its lease ended or ends ${DateUtils.formatDateTime(context, j.leaseUntilMs, DateUtils.FORMAT_SHOW_TIME)}.", Modifier.padding(top = 2.dp))
+        } else {
+            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (j.state == JobState.RUNNING) PButton("Cancel", onCancel, style = ButtonStyle.Ghost, tiny = true)
+                else PButton("Forget (node deletes its files)", onForget, style = ButtonStyle.Ghost, tiny = true)
+            }
         }
+    }
+}
+
+/** A revoked node: what this phone enforces, what the node said (if anything), and what it already had. */
+@Composable
+private fun RevocationDetail(n: PairedNode, rev: NodeRevocation, onRetry: () -> Unit, onForget: () -> Unit) {
+    val context = LocalContext.current
+    Subtle("Revoked ${DateUtils.getRelativeTimeSpanString(rev.atMs)}: ${rev.reason}. This phone refuses it: no work, files or lease renewal go to it.", Modifier.padding(top = 4.dp))
+    if (rev.pending) {
+        Callout(
+            "Not confirmed on the node: it has not answered the revocation" + (rev.lastAttemptError?.let { " (last try: $it)" } ?: "") + ". " +
+                (if (rev.runningJobs.isEmpty()) "No job was running there." else "${rev.runningJobs.size} job(s) were running; they end by ${rev.leasesEndByMs?.let { DateUtils.formatDateTime(context, it, DateUtils.FORMAT_SHOW_TIME) } ?: "their lease"} only if the node keeps its lease contract. Nothing here confirms they stopped."),
+            Tone.Warn, Modifier.padding(top = 6.dp),
+        )
+    } else {
+        Subtle("Acknowledged ${rev.acknowledgedAtMs?.let { DateUtils.getRelativeTimeSpanString(it) }}: ${rev.nodeReport}. That is the node's own account, not proof.", Modifier.padding(top = 4.dp))
+    }
+    Subtle("Already sent to it: ${rev.filesSent} file(s), ${rev.bytesSent} bytes" + if (rev.anchorsThere > 0) "; ${rev.anchorsThere} evidence anchor(s) there no longer count as independent." else ".", Modifier.padding(top = 4.dp))
+    Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (rev.pending) PButton("Tell the node again", onRetry, style = ButtonStyle.Alt, tiny = true)
+        PButton("Forget the record", onForget, style = ButtonStyle.Ghost, tiny = true)
     }
 }

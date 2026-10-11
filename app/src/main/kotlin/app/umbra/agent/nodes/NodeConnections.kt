@@ -108,6 +108,7 @@ class NodeConnections(private val c: AppContainer, private val scope: CoroutineS
     }
 
     private suspend fun channel(node: PairedNode): NodeChannel {
+        if (node.revocation != null) throw NodeException("${node.name} is revoked: this phone does not talk to it")
         channels[node.id]?.takeIf { !it.closed }?.let { return it }
         val ch = NodeChannel.connect(node.host, node.port, tlsContext(keyManagers(), PinnedTrust({ setOf(node.fingerprint) })), scope)
         channels[node.id] = ch
@@ -213,6 +214,33 @@ class NodeConnections(private val c: AppContainer, private val scope: CoroutineS
         val node = registry[nodeId] ?: throw NodeException("no such node")
         val list = channel(node).request("anchors")["anchors"] as? JsonArray ?: return emptyList()
         return list.mapNotNull { e -> (e as? kotlinx.serialization.json.JsonObject)?.get("anchor")?.let { runCatching { Rsp.json.decodeFromJsonElement(app.umbra.core.control.EvidenceAnchor.serializer(), it) }.getOrNull() } }
+    }
+
+    /**
+     * Revokes [nodeId] (architecture spec §13.1, AC-017). This phone's side first, and at once: the connection closes,
+     * no lease is renewed, the certificate is refused. Then the node is told, if it can be reached; until it answers
+     * the revocation is pending, and its running jobs end only when their leases do, if the node keeps its contract.
+     */
+    suspend fun revoke(nodeId: String, reason: String): Boolean {
+        disconnect(nodeId)
+        registry.allJobs.value.values.filter { it.nodeId == nodeId }.forEach { renewals.remove(it.id)?.cancel() }
+        registry.revoke(nodeId, reason, anchorsThere = c.security.allAnchors.value.values.count { it.nodeId == nodeId })
+        return notifyRevoked(nodeId)
+    }
+
+    /** Delivers the revocation notice; the node's answer is recorded as its own account, not as proof. */
+    suspend fun notifyRevoked(nodeId: String): Boolean = withContext(Dispatchers.IO) {
+        val node = registry[nodeId]?.takeIf { it.revocation != null } ?: return@withContext false
+        try {
+            NodeChannel.connect(node.host, node.port, tlsContext(keyManagers(), PinnedTrust({ setOf(node.fingerprint) })), scope).use { ch ->
+                val reply = ch.request("revoke", timeoutMs = 10_000)
+                registry.revocationAcknowledged(nodeId, Rsp.json.decodeFromJsonElement(ListSerializer(JobStatus.serializer()), reply["jobs"]!!))
+            }
+            true
+        } catch (e: Exception) {
+            registry.revocationUnreachable(nodeId, e.message ?: e::class.simpleName.orEmpty())
+            false
+        }
     }
 
     fun disconnect(nodeId: String) {

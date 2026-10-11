@@ -30,7 +30,36 @@ data class PairedNode(
     val pairedAtMs: Long,
     val lastSeenMs: Long? = null,
     val info: NodeInfo? = null,
+    /** Set when the user revoked the node: the phone refuses it from then on, whatever the node does. */
+    val revocation: NodeRevocation? = null,
 )
+
+/**
+ * A revoked node (architecture spec §13.1, AC-017). The phone's side is enforced at once: its certificate is no
+ * longer accepted and no work, data or lease renewal goes to it. The node's side is only what the node says when the
+ * phone reaches it: until then the revocation is pending, and even an acknowledgment is the node's word, not proof
+ * that anything on it stopped.
+ */
+@Serializable
+data class NodeRevocation(
+    val atMs: Long,
+    val reason: String,
+    val by: String = "user",
+    /** Jobs the phone last knew running there; they end with their leases only if the node keeps its contract. */
+    val runningJobs: List<String> = emptyList(),
+    val leasesEndByMs: Long? = null,
+    /** What had gone to the node from this phone: the exposure the revocation cannot take back. */
+    val filesSent: Int = 0,
+    val bytesSent: Long = 0,
+    val anchorsThere: Int = 0,
+    val acknowledgedAtMs: Long? = null,
+    /** The node's own account when it acknowledged: jobs it said were still running, and when their leases end. */
+    val nodeReport: String? = null,
+    val lastAttemptMs: Long? = null,
+    val lastAttemptError: String? = null,
+) {
+    val pending: Boolean get() = acknowledgedAtMs == null
+}
 
 /** The phone's record of one job on a node: the phone's side of what the node reports at rejoin. */
 @Serializable
@@ -92,7 +121,8 @@ class NodeRegistry(private val store: ControlStore) {
 
     operator fun get(id: String): PairedNode? = nodes[id]
 
-    fun pins(): Set<String> = nodes.list().map { it.fingerprint }.toSet()
+    /** The certificates the phone accepts: a revoked node's is not among them. */
+    fun pins(): Set<String> = nodes.list().filter { it.revocation == null }.map { it.fingerprint }.toSet()
 
     fun paired(node: PairedNode) {
         nodes.put(node)
@@ -114,13 +144,57 @@ class NodeRegistry(private val store: ControlStore) {
 
     /** Forgets the node here. The node still lists this phone until it is unpaired there too. */
     fun unpair(id: String) {
+        val n = nodes[id]
         nodes.delete(id)
-        journal.append("nodes.unpaired_here", buildJsonObject { put("node", id) })
+        journal.append("nodes.unpaired_here", buildJsonObject {
+            put("node", id)
+            n?.revocation?.let { put("revocation", if (it.pending) "pending" else "acknowledged") }
+        })
+    }
+
+    /**
+     * Revokes [id] on this phone, now: from here on the phone sends it nothing and accepts nothing from it. What it
+     * still had (running jobs, files, anchors) is recorded with the revocation, because revoking does not take it back.
+     */
+    fun revoke(id: String, reason: String, anchorsThere: Int, by: String = "user"): NodeRevocation {
+        val n = nodes[id] ?: throw IllegalArgumentException("no node $id")
+        n.revocation?.let { return it }
+        val mine = jobs.list().filter { it.nodeId == id }
+        val running = mine.filter { it.state == JobState.RUNNING }
+        val r = NodeRevocation(
+            atMs = store.clock.nowMs(), reason = reason.ifBlank { "revoked by the user" }, by = by,
+            runningJobs = running.map { it.id }, leasesEndByMs = running.maxOfOrNull { it.leaseUntilMs },
+            filesSent = mine.sumOf { it.manifestFiles }, bytesSent = mine.sumOf { it.manifestBytes }, anchorsThere = anchorsThere,
+        )
+        nodes.update(id) { it.copy(revocation = r) }
+        journal.append("nodes.revoked", buildJsonObject {
+            put("node", id); put("fingerprint", n.fingerprint); put("reason", r.reason); put("by", by)
+            put("running_jobs", running.size); put("bytes_sent", r.bytesSent); put("anchors_there", anchorsThere)
+        })
+        return r
+    }
+
+    /** The node answered the revocation notice: [report] is its own account, recorded as such. */
+    fun revocationAcknowledged(id: String, report: List<JobStatus>) {
+        val now = store.clock.nowMs()
+        val running = report.filter { it.state == JobState.RUNNING }
+        val text = if (running.isEmpty()) "the node reports no job running"
+        else "the node reports ${running.size} job(s) still running, leases ending by ${running.maxOf { it.leaseUntilMs }}"
+        nodes.update(id) { n -> n.copy(revocation = n.revocation?.copy(acknowledgedAtMs = now, nodeReport = text, lastAttemptMs = now, lastAttemptError = null)) }
+        journal.append("nodes.revocation_acknowledged", buildJsonObject { put("node", id); put("node_report", text) })
+    }
+
+    /** The notice could not be delivered: the revocation stays pending. */
+    fun revocationUnreachable(id: String, error: String) {
+        val now = store.clock.nowMs()
+        nodes.update(id) { n -> n.copy(revocation = n.revocation?.copy(lastAttemptMs = now, lastAttemptError = error.take(200))) }
+        journal.append("nodes.revocation_pending", buildJsonObject { put("node", id); put("error", error.take(200)) })
     }
 
     /** Why [nodeId] may not get a job with [uploadBytes] of data now, or null when the policy places it. */
     fun placementProblem(nodeId: String, uploadBytes: Long): String? {
         val n = nodes[nodeId] ?: return "no such node"
+        if (n.revocation != null) return "${n.name} is revoked: nothing is placed on it"
         val p = policy()
         if (n.trust.ordinal > p.minimumTrust.ordinal) return "${n.name} is trusted ${n.trust.label.lowercase()}; the policy (revision ${p.revision}) places work on ${p.minimumTrust.label.lowercase()} nodes only"
         if (uploadBytes > p.maxUploadBytes) return "the job's files come to $uploadBytes bytes; the policy lets at most ${p.maxUploadBytes} leave the phone"

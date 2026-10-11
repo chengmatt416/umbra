@@ -56,4 +56,34 @@ class NodeRegistryTest {
         r.seen("n1", info.copy(epoch = "epoch-2"))
         assertTrue(r.recent.value.any { it.kind == "nodes.epoch_changed" })
     }
+
+    @Test
+    fun aRevokedNodeIsRefusedAtOnceAndStaysPendingUntilItAnswers() {
+        val r = registry()
+        r.paired(PairedNode("n1", "pc", "h", 1, "ef".repeat(32), NodeTrust.OWNED, now))
+        r.seen("n1", info)
+        r.started(NodeJob("j1", "n1", listOf("make"), JobState.RUNNING, now, now + 60_000, 1, manifestFiles = 3, manifestBytes = 4_096))
+        r.started(NodeJob("j2", "n1", listOf("true"), JobState.EXITED, now, now + 1_000, 1, manifestFiles = 1, manifestBytes = 10))
+        val rev = r.revoke("n1", "the computer was stolen", anchorsThere = 2)
+        assertTrue(rev.pending)
+        assertEquals(listOf("j1"), rev.runningJobs)
+        assertEquals(now + 60_000, rev.leasesEndByMs)
+        assertEquals(4, rev.filesSent)
+        assertEquals(4_106, rev.bytesSent)
+        assertEquals(emptySet(), r.pins(), "its certificate is no longer accepted")
+        assertTrue("revoked" in r.placementProblem("n1", 0).orEmpty())
+        assertEquals(rev, r.revoke("n1", "again", 0), "revoking twice changes nothing")
+
+        r.revocationUnreachable("n1", "connect timed out")
+        val stillPending = registry()["n1"]!!.revocation!!
+        assertTrue(stillPending.pending, "an unreachable node is not taken as stopped")
+        assertEquals("connect timed out", stillPending.lastAttemptError)
+
+        now = 5_000
+        r.revocationAcknowledged("n1", listOf(JobStatus("j1", JobState.RUNNING, null, 1_000, null, 61_000, "epoch-1")))
+        val ack = registry()["n1"]!!.revocation!!
+        assertEquals(5_000, ack.acknowledgedAtMs)
+        assertTrue("1 job(s) still running" in ack.nodeReport.orEmpty(), "the node's word is recorded as its word")
+        assertTrue(r.recent.value.map { it.kind }.containsAll(listOf("nodes.revoked", "nodes.revocation_pending", "nodes.revocation_acknowledged")))
+    }
 }

@@ -101,6 +101,7 @@ class NodeServer(
                     when {
                         op == "pair" -> pair(req, phone)
                         !paired -> throw JobException("this phone is not paired with this node")
+                        op == "revoke" -> revoke(phone!!)
                         op == "anchor" -> anchor(req, phone!!)
                         op == "anchors" -> anchors(phone!!)
                         else -> {
@@ -116,6 +117,7 @@ class NodeServer(
                     buildJsonObject { put("ok", false); put("error", e.message ?: e::class.simpleName) }
                 }
                 send(JsonObject(reply + ("re" to JsonPrimitive(id))))
+                if (op == "revoke" && reply.bool("ok")) break
             }
         } catch (_: Exception) {
         } finally {
@@ -142,6 +144,18 @@ class NodeServer(
             put("ok", true); put("node_id", home.config.nodeId); put("node_name", home.config.name)
             put("proof", Pairing.nodeProof(window.code, nodeFingerprint, phone))
         }
+    }
+
+    /**
+     * The phone revoked this pairing (architecture spec §13.1): the node forgets it, so its certificate gets nothing
+     * here again, and answers with its own account of the jobs. They keep their leases and end when those run out,
+     * since the phone renews nothing from now on.
+     */
+    private fun revoke(phone: String): JsonObject {
+        val list = jobs.list()
+        home.removePaired(phone)
+        log("a phone (${phone.take(16)}) revoked its pairing with this node: it is forgotten here; ${list.count { it.state == app.umbra.core.nodes.JobState.RUNNING }} job(s) run until their leases end")
+        return buildJsonObject { put("ok", true); put("jobs", Rsp.json.encodeToJsonElement(ListSerializer(app.umbra.core.nodes.JobStatus.serializer()), list)) }
     }
 
     /**

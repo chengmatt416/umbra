@@ -213,4 +213,27 @@ class NodeEndToEndTest {
             srv.stop()
         }
     }
+
+    @Test
+    fun aRevokedPhoneIsForgottenByTheNodeWhoseJobsKeepOnlyTheirLeases(): Unit = runBlocking {
+        val window = PairingWindow(Pairing.newCode(), System.currentTimeMillis() + 60_000)
+        val (srv, port) = server(window)
+        try {
+            val phone = Phone(dir.toFile(), "phone")
+            val pin = pair(phone, port, window.code)
+            connect(phone, port, pin).use { ch ->
+                ch.request("run", buildJsonObject { put("job", "bg"); put("argv", JsonArray(listOf("sleep", "60").map { JsonPrimitive(it) })); put("lease_ms", 1_500) })
+                val report = Rsp.json.decodeFromJsonElement(ListSerializer(JobStatus.serializer()), ch.request("revoke")["jobs"]!!)
+                assertEquals(JobState.RUNNING, report.single { it.job == "bg" }.state, "the node's account: still running, under its lease")
+            }
+            assertTrue(NodeHome(dir.resolve("node").toFile()).paired().isEmpty(), "the node forgot the phone")
+            // The revoked certificate gets nothing any more.
+            assertFailsWith<NodeException> { connect(phone, port, pin).use { it.request("hello") } }
+            // Nothing renews the lease now: the node ends the job by itself when it runs out.
+            delay(3_000)
+            assertEquals(JobState.LEASE_EXPIRED, srv.jobs.list().single { it.job == "bg" }.state)
+        } finally {
+            srv.stop()
+        }
+    }
 }

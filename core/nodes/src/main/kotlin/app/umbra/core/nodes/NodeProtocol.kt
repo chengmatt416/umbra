@@ -130,7 +130,12 @@ class NodeChannel private constructor(private val socket: SSLSocket, scope: Coro
         val answer = CompletableDeferred<JsonObject>()
         pending[id] = answer
         val frame = JsonObject(params + mapOf("id" to JsonPrimitive(id), "op" to JsonPrimitive(op)))
-        writeLock.withLock { withContext(Dispatchers.IO) { out.write((frame.toString() + "\n").toByteArray()); out.flush() } }
+        try {
+            writeLock.withLock { withContext(Dispatchers.IO) { out.write((frame.toString() + "\n").toByteArray()); out.flush() } }
+        } catch (e: java.io.IOException) {
+            pending.remove(id)
+            throw NodeException("the connection to the node closed: ${e.message}")
+        }
         val reply = try { withTimeout(timeoutMs) { answer.await() } } finally { pending.remove(id) }
         if ((reply["ok"] as? JsonPrimitive)?.content != "true") throw NodeException((reply["error"] as? JsonPrimitive)?.content ?: "the node refused $op")
         return reply

@@ -32,7 +32,15 @@ failover and rejoin reconciliation, and honesty about what pairing does not prov
 6. **Rejoin**: the node's account of its jobs (state, exit, output tail, epoch) becomes the phone's record; a job
    the node no longer knows is marked lost, never assumed finished. A runner that restarted (a new epoch) reports the
    jobs it no longer watches as lost.
-7. **Not in this version**: automatic failover to another node and agent-driven placement. A lost node's job is left
+7. **Revocation** (AC-017): the user revokes a node they no longer trust. The phone's side is enforced at once and
+   persisted: the connection closes, no lease is renewed, the node's certificate is no longer pinned, nothing is
+   placed on it, and its evidence anchors stop counting as independent. Then the phone tries to tell the node
+   (`revoke`); an honest node forgets the phone and answers with its jobs. Until it answers, the revocation is
+   **pending**, and the screen says the node's running jobs end with their leases only if the node keeps its
+   contract. An answer is recorded as the node's own account, never as proof; the phone never shows a revoked node's
+   job as stopped. What had already gone to the node (files, anchors) is listed with the revocation, since revoking
+   does not take it back. Revoking needs no new way to stop anything: the jobs end by the lease mechanism above.
+8. **Not in this version**: automatic failover to another node and agent-driven placement. A lost node's job is left
    to its lease; a new attempt elsewhere is started by hand; no two nodes are given the same write. The screen says so.
 
 ## Consequences
@@ -43,4 +51,7 @@ failover and rejoin reconciliation, and honesty about what pairing does not prov
   wrong pins refused, manifest-only uploads, confinement and no inherited secrets, lease expiry while the phone was
   away, rejoin, a restarted runner), `NodeRegistryTest`; on the emulator against `umbra-node` on this Mac: pairing
   through the screen with the code, preflight, a job sending two files by manifest and returning its output, and the
-  node deleting the job's folder when the phone forgot it.
+  node deleting the job's folder when the phone forgot it; revocation with the emulator offline (airplane mode):
+  pending with the connection error, the job shown as not confirmed stopped, the node ending it by itself when the
+  unrenewed lease ran out, then, back online, the notice delivered, the node forgetting the phone and the
+  revocation acknowledged; `revoked`, `revocation_pending` and `revocation_acknowledged` in the nodes journal's chain.
