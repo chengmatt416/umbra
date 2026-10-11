@@ -84,3 +84,22 @@ with the gap named), **not built**.
 Not built, and why: the Execution Halt controller (AC-007's halt, AC-008, AC-009) needs process signalling with
 identity checks and cgroup containment; it is outside what this build does. The existing controls remain: Emergency
 input lockdown, Stop everything, stopping a session, taking back a terminal or the screen, node job leases.
+
+## Architecture spec invariants (INV-001 … INV-014)
+
+| INV | Invariant | How it holds |
+| --- | --- | --- |
+| 001 | UI ≠ process | runners are probed, never assumed: terminals reattach by asking tmux (`TerminalService`), nodes by `hello` and rejoin, sessions are paused with the reason after an app restart; Runners & Continuity shows probed state with its time |
+| 002 | Control plane ≠ executor | the app keeps decisions and durable state (`ControlStore`); processes are held by tmux servers, the Linux environment, omp and `umbra-node` |
+| 003 | Authorization is not inherited | project, session, terminal, screen, commit and node authority are separate leases and grants (`InputLeases`, `CommitGate` capabilities, node trust, credential scopes) |
+| 004 | Unknown ≠ failed | `OUTCOME_UNKNOWN` settled by reading the remote; a node out of reach is "not seen", a revoked one "pending", its jobs "not confirmed stopped" |
+| 005 | Human take back | Take Back Screen and Take control fence new agent input at once; both screens say a command already running is not stopped |
+| 006 | Fencing at the write point | the dispatch gates (`AppContainer.inputGate`, the terminal input dispatcher with lease generations) and the remote's lease (`--force-with-lease`) |
+| 007 | No fake atomicity or exactly-once | the commit gate's journal, conditional write and read-back; the screens say external effects are not exactly-once |
+| 008 | No fake sandbox | Runners & Continuity measures the agent's process from inside it (kernel user, capabilities, no-new-privileges, seccomp, SELinux domain, namespaces, hidden processes, system files: `IsolationProbe`) and calls the result user-level, or none under proot; tmux groups say "not a sandbox" |
+| 009 | No silent privilege widening | resume needs a contract; restore brings no publishing authority back; placement follows the versioned policy; queued admission adds no authority; no automatic failover |
+| 010 | Durable emergency restrictions | the lockdown, node revocations and a suspended git broker are persisted and survive restarts until the user lifts them |
+| 011 | Explicit provenance | plan revisions, policy revisions, service and runner epochs, node job policy revisions, promotion journals and incident versions, all in hash-chained journals |
+| 012 | Outcome verification | the commit gate reads the remote back; node jobs come from the node's own account; action verification for Android (`Verifier`) |
+| 013 | Least privilege for privileged parts | the agent runs without capabilities and cannot reach the helpers' tokens (ADR 0010); git tokens are used only by root and never given to an agent (ADR 0022); no SSH agent, deployment or signing material is held |
+| 014 | Privacy-first evidence | journals stay on the phone; only digests are anchored, on a node the user chooses; the full export is encrypted under the user's passphrase |

@@ -2,6 +2,7 @@ package app.umbra.agent.ui.runtime
 
 import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -122,6 +123,8 @@ fun RuntimeScreen(onOpenSession: (String) -> Unit) {
             Subtle("Probed ${DateUtils.getRelativeTimeSpanString(probedAt)}. Detached is not dead; a screen that was rebuilt is not a runner that restarted.")
         }
         Gap(12.dp)
+        IsolationCard()
+        Gap(12.dp)
         PCard {
             Kicker("Session-scoped resume contracts")
             val withContract = sessions.filter { contracts.containsKey(it.id) }
@@ -155,5 +158,39 @@ fun RuntimeScreen(onOpenSession: (String) -> Unit) {
             )
         }
         Gap(28.dp)
+    }
+}
+
+/** The agent's process as the kernel sees it: no tmux group, process group or proot is reported as a sandbox (INV-008). */
+suspend fun probeIsolation(c: AppContainer): app.umbra.runtime.linux.IsolationReport? {
+    if (c.guest.state.value != GuestManager.State.Ready) return null
+    val out = c.guest.runtime.exec(listOf("bash", "-c", app.umbra.runtime.linux.IsolationProbe.SCRIPT), timeoutMs = 30_000)
+    if (out.exitCode != 0 && out.stdout.isBlank()) return null
+    val appNs = listOf("mnt", "pid", "net", "user", "uts", "ipc", "cgroup").associateWith { n -> runCatching { android.system.Os.readlink("/proc/self/ns/$n") }.getOrDefault("") }
+    return app.umbra.runtime.linux.IsolationProbe.report(out.stdout, android.os.Process.myUid(), appNs, c.guest.mode)
+}
+
+@Composable
+private fun IsolationCard() {
+    val container = LocalContext.current.container
+    var report by remember { mutableStateOf<app.umbra.runtime.linux.IsolationReport?>(null) }
+    var measuredAt by remember { mutableStateOf<Long?>(null) }
+    val guest by container.guest.state.collectAsStateWithLifecycle()
+    LaunchedEffect(guest) {
+        report = runCatching { probeIsolation(container) }.getOrNull()
+        measuredAt = System.currentTimeMillis()
+    }
+    PCard {
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Kicker("What the agent's processes are", Modifier.weight(1f))
+            Tag(if (report == null) "Not measured" else if (container.guest.mode == LinuxMode.PROOT) "No isolation" else "User-level", if (report?.sameUserAsApp == false) Tone.Good else Tone.Warn)
+        }
+        val r = report
+        if (r == null) Subtle(if (guest == GuestManager.State.Ready) "Measuring…" else "The Linux environment is not running: nothing to measure.", Modifier.padding(top = 6.dp))
+        else {
+            Subtle(r.summary, Modifier.padding(top = 6.dp))
+            r.facts.forEach { f -> PSetting(f.name, "${f.value} · ${f.meaning}", divider = f != r.facts.last()) { Tag(if (f.good) "Holds" else "Limit", if (f.good) Tone.Good else Tone.Warn) } }
+            measuredAt?.let { Subtle("Measured ${DateUtils.getRelativeTimeSpanString(it)} from inside an agent command, from the kernel's own account. Approvals, not this, are what stand between a hostile agent and the app (ADR 0010).", Modifier.padding(top = 4.dp)) }
+        }
     }
 }
