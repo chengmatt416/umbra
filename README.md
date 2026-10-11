@@ -25,9 +25,11 @@ its own work, and asks before anything risky.
   restart only under a resume contract you gave it.
 * **Porcelain in Motion.** A camera-anchored Capsule over any app (the task, approvals, a composer, and
   Snapshot selection: circle part of the screen and send it with its text), and the Power Studio:
-  planning and agents, resources, runners, shared services, terminals, emergency lockdown, a credential
-  vault, a commit gate that publishes only what you authorize and reads it back, and your own computers as
-  execution nodes ([`umbra-node`](#your-computers-as-nodes)).
+  planning and agents, resources (requests beyond what the phone can run wait in a fair, visible queue),
+  runners, shared services, terminals, emergency lockdown, a credential vault (git tokens used only by root
+  for one repository, never given to an agent; a backup sealed under a recovery code), a commit gate that
+  publishes only what you authorize and reads it back, security evidence with independent anchors, and your
+  own computers as execution nodes ([`umbra-node`](#your-computers-as-nodes)), which you can revoke.
 
 Free software, GPL-3.0-or-later. Sideload or F-Droid; there is no Play Store build.
 
@@ -70,7 +72,9 @@ Every part is tested against the real thing: the real omp binary, a real Android
 Debian environment on it. The one stand-in is the language model in automated runs (a scripted
 endpoint), since a real model needs your key. [docs/ONDEVICE_TEST_PLAN.md](docs/ONDEVICE_TEST_PLAN.md) lists what was
 verified where, what only a real phone can show, and how to run the end-to-end acceptance task on yours.
-[docs/traceability.md](docs/traceability.md) maps each requirement to code and tests.
+[docs/traceability.md](docs/traceability.md) maps each requirement to code and tests, including the architecture
+spec's 22 acceptance criteria with their status (19 met; AC-007 partly and AC-008/009 not built: they need an
+Execution Halt controller this build does not have).
 
 ## Building
 
