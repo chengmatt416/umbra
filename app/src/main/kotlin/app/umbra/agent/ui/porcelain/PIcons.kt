@@ -63,4 +63,9 @@ object PIcons {
     val filter = IconSpec(listOf("M3 4h18l-7 8v7l-4 2v-9l-7-8Z" to false))
     val settings = IconSpec(listOf("M9 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0z" to false, "M12 2v3m0 14v3M4.9 4.9 7 7m10 10 2.1 2.1M2 12h3m14 0h3M4.9 19.1 7 17M17 7l2.1-2.1" to false))
     val more = IconSpec(listOf("M4 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0z" to false, "M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0z" to false, "M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0z" to false))
+
+    // Added with the UX fixes, drawn on the same 24-unit grid and stroke as the reference set.
+    val folder = IconSpec(listOf("M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2.2h8.4a1.5 1.5 0 0 1 1.5 1.5v9.8a1.5 1.5 0 0 1 -1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" to false))
+    val trash = IconSpec(listOf("M4 7h16M9 7V4.5h6V7" to false, "m6.5 7 1 12.6a1.5 1.5 0 0 0 1.5 1.4h6a1.5 1.5 0 0 0 1.5 -1.4L17.5 7" to false, "M10 11v6m4-6v6" to false))
+    val chevronRight = IconSpec(listOf("m9 6 6 6-6 6" to false))
 }

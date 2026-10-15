@@ -1,5 +1,7 @@
 package app.umbra.agent.ui.terminal
 
+import app.umbra.agent.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -160,7 +162,7 @@ fun TerminalPane(service: TerminalService, id: String, ownsInput: Boolean, modif
             }
             val s = screen
             if (s == null) {
-                Text("Connecting to the terminal…", style = textStyle.copy(color = TermPalette.foreground.copy(alpha = 0.6f)))
+                Text(stringResource(R.string.tp_connecting), style = textStyle.copy(color = TermPalette.foreground.copy(alpha = 0.6f)))
             } else {
                 Box(Modifier.fillMaxSize().horizontalScroll(rememberScrollState())) {
                     Column {
@@ -174,12 +176,13 @@ fun TerminalPane(service: TerminalService, id: String, ownsInput: Boolean, modif
                     }
                 }
                 if (s.dead) Text(
-                    "Process ended" + (s.deadStatus?.let { " (status $it)" } ?: ""),
+                    stringResource(R.string.tp_ended) + (s.deadStatus?.let { " " + stringResource(R.string.tp_status, it.toString()) } ?: ""),
                     Modifier.padding(4.dp).background(Color(0xCC26372F)).padding(horizontal = 8.dp, vertical = 4.dp),
                     color = Color(0xFFF0CF95), fontSize = 12.sp,
                 )
             }
             // The keyboard: a hidden field that turns typed text, Enter and Backspace into terminal bytes.
+            val inputLabel = stringResource(R.string.tp_input)
             BasicTextField(
                 field,
                 { v ->
@@ -197,7 +200,7 @@ fun TerminalPane(service: TerminalService, id: String, ownsInput: Boolean, modif
                         v
                     }
                 },
-                Modifier.size(1.dp).alpha(0f).focusRequester(focus).semantics { contentDescription = "Terminal input" }
+                Modifier.size(1.dp).alpha(0f).focusRequester(focus).semantics { contentDescription = inputLabel }
                     .onPreviewKeyEvent { e ->
                         if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         val seq = when (e.key) {

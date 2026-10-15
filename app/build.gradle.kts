@@ -13,8 +13,8 @@ android {
 
     defaultConfig {
         applicationId = "app.umbra.agent"
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     // Releases are signed with the key in UMBRA_KEYSTORE (see .github/workflows/release.yml); without it the

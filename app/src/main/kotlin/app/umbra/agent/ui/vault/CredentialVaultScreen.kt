@@ -1,5 +1,8 @@
 package app.umbra.agent.ui.vault
 
+import app.umbra.agent.R
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -28,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.umbra.agent.container
+import app.umbra.agent.ui.credentialScopeRes
 import app.umbra.agent.data.SecretStore
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.Callout
@@ -65,6 +69,7 @@ import kotlinx.serialization.json.JsonPrimitive
 fun CredentialVaultScreen() {
     val container = LocalContext.current.container
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val records by container.vault.all.collectAsStateWithLifecycle()
     val exposures by container.vault.recentExposures.collectAsStateWithLifecycle()
     val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
@@ -78,57 +83,58 @@ fun CredentialVaultScreen() {
         chain = withContext(Dispatchers.IO) { runCatching { container.vault.verifyExposures() }.getOrNull() }
     }
 
+    val sessionLabel = stringResource(R.string.vault_session, "%s")
     fun recipient(to: String): String =
-        if (to.startsWith("session ")) sessions.firstOrNull { it.id == to.removePrefix("session ") }?.let { "Session · ${it.title}" } ?: to else to
+        if (to.startsWith("session ")) sessions.firstOrNull { it.id == to.removePrefix("session ") }?.let { sessionLabel.format(it.title) } ?: to else to
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 18.dp)) {
-        Eyebrow("Secure credential architecture")
-        Headline("Authority without", "exposing secrets.", Modifier.padding(top = 6.dp, bottom = 12.dp), size = 26)
+        Eyebrow(stringResource(R.string.vault_eyebrow))
+        Headline(stringResource(R.string.vault_headline), stringResource(R.string.vault_headline_tail), Modifier.padding(top = 6.dp, bottom = 12.dp), size = 26)
         message?.let { Callout(it, Tone.Neutral); Gap(10.dp) }
 
         PCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Kicker("Key custody")
-                    Text("Device-bound", Modifier.padding(top = 4.dp), fontSize = 18.sp, color = P.ink)
+                    Kicker(stringResource(R.string.vault_custody))
+                    Text(stringResource(R.string.vault_device_bound), Modifier.padding(top = 4.dp), fontSize = 18.sp, color = P.ink)
                 }
-                custody?.getOrNull()?.let { Tag(if (it.hardwareBacked) "Hardware-backed" else "Software", if (it.hardwareBacked) Tone.Good else Tone.Warn) }
+                custody?.getOrNull()?.let { Tag(if (it.hardwareBacked) stringResource(R.string.vault_hw) else stringResource(R.string.vault_sw), if (it.hardwareBacked) Tone.Good else Tone.Warn) }
             }
             when (val c = custody) {
-                null -> Subtle("Asking the keystore…", Modifier.padding(top = 6.dp))
+                null -> Subtle(stringResource(R.string.vault_asking), Modifier.padding(top = 6.dp))
                 else -> c.fold(
                     onSuccess = { k ->
-                        PSetting("Protecting key", "${k.alias} · ${k.algorithm} ${k.keySize}-bit · never leaves the keystore") {}
-                        PSetting("Where it lives", k.securityLevel + " (as the keystore reports it; no attestation chain is verified)") {}
-                        PSetting("Unlock", if (k.userAuthentication) "Needs the user's authentication" else "Usable while the phone runs, without asking", divider = false) {}
+                        PSetting(stringResource(R.string.vault_protecting), stringResource(R.string.vault_key_desc, k.alias, k.algorithm, k.keySize)) {}
+                        PSetting(stringResource(R.string.vault_where), stringResource(R.string.vault_level_desc, k.securityLevel)) {}
+                        PSetting(stringResource(R.string.vault_unlock), if (k.userAuthentication) stringResource(R.string.vault_needs_auth) else stringResource(R.string.vault_usable), divider = false) {}
                     },
-                    onFailure = { Callout("The keystore did not answer: ${it.message}", Tone.Warn) },
+                    onFailure = { Callout(stringResource(R.string.vault_keystore_failed, it.message.orEmpty()), Tone.Warn) },
                 )
             }
-            Subtle("Each secret is AES-GCM encrypted under this key. The key cannot be exported; a recovery backup (below) is sealed under a code of its own instead.", Modifier.padding(top = 6.dp))
+            Subtle(stringResource(R.string.vault_each_secret), Modifier.padding(top = 6.dp))
         }
         Gap(12.dp)
 
         PCard {
-            Kicker("Broker federation")
+            Kicker(stringResource(R.string.vault_federation))
             Gap(6.dp)
-            PObject("Local Identity Broker", "Android Keystore · this phone · ${records.size} credential(s)", PIcons.phone, trailing = { Tag("Active", Tone.Good) })
+            PObject(stringResource(R.string.vault_local_broker), pluralStringResource(R.plurals.vault_local_desc, records.size, records.size), PIcons.phone, trailing = { Tag(stringResource(R.string.vault_active), Tone.Good) })
             Gap(6.dp)
             val git by container.gitCredentials.all.collectAsStateWithLifecycle()
             val noRoot = app.umbra.agent.integration.brokerUnavailable(container)
             PObject(
-                "Git Credential Broker",
+                stringResource(R.string.vault_git_broker),
                 when {
-                    git.isEmpty() -> "Not set up: no git credential held; other remotes use the workspace's own git configuration"
-                    noRoot != null -> "${git.size} credential(s) held, unusable here: brokering needs root"
-                    else -> "${git.size} credential(s), each bound to one URL, used only by root in a staging repository"
+                    git.isEmpty() -> stringResource(R.string.vault_git_none)
+                    noRoot != null -> pluralStringResource(R.plurals.vault_git_noroot, git.size, git.size)
+                    else -> pluralStringResource(R.plurals.vault_git_desc, git.size, git.size)
                 },
                 PIcons.git,
-                trailing = { Tag(if (git.isEmpty()) "Not set up" else if (noRoot != null) "Needs root" else "Active", if (git.isNotEmpty() && noRoot == null) Tone.Good else Tone.Neutral) },
+                trailing = { Tag(if (git.isEmpty()) stringResource(R.string.vault_not_set_up) else if (noRoot != null) stringResource(R.string.vault_needs_root) else stringResource(R.string.vault_active), if (git.isNotEmpty() && noRoot == null) Tone.Good else Tone.Neutral) },
             )
             Gap(6.dp)
-            PObject("Cloud / Signing Broker", "Not set up: no deployment or signing material is held", PIcons.key, trailing = { Tag("Not set up", Tone.Neutral) })
-            Subtle("No secret is copied to another device: no node is paired with this phone.", Modifier.padding(top = 8.dp))
+            PObject(stringResource(R.string.vault_cloud_broker), stringResource(R.string.vault_cloud_none), PIcons.key, trailing = { Tag(stringResource(R.string.vault_not_set_up), Tone.Neutral) })
+            Subtle(stringResource(R.string.vault_no_copy), Modifier.padding(top = 8.dp))
         }
         Gap(12.dp)
 
@@ -139,8 +145,8 @@ fun CredentialVaultScreen() {
         Gap(12.dp)
 
         PCard {
-            Kicker("Credentials · ${records.size}")
-            if (records.isEmpty()) Subtle("None. Keys added in Models & accounts appear here.", Modifier.padding(top = 6.dp))
+            Kicker(stringResource(R.string.vault_credentials, records.size))
+            if (records.isEmpty()) Subtle(stringResource(R.string.vault_none), Modifier.padding(top = 6.dp))
             records.values.sortedBy { it.label }.forEach { r ->
                 Gap(10.dp)
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -148,26 +154,29 @@ fun CredentialVaultScreen() {
                         Text(r.label, fontSize = 15.sp, color = P.ink)
                         Text(r.name, fontSize = 11.sp, fontFamily = P.mono, color = P.sub)
                     }
-                    Tag(if (r.exposures == 0L) "Never handed out" else "Handed out ${r.exposures}×", if (r.exposures == 0L) Tone.Good else Tone.Neutral)
+                    Tag(if (r.exposures == 0L) stringResource(R.string.vault_never_out) else stringResource(R.string.vault_handed_out, r.exposures.toInt()), if (r.exposures == 0L) Tone.Good else Tone.Neutral)
                 }
                 Subtle(
-                    "Added ${DateUtils.getRelativeTimeSpanString(r.createdAtMs)}" +
-                        (r.rotatedAtMs?.let { " · rotated ${DateUtils.getRelativeTimeSpanString(it)}" } ?: "") +
-                        (r.lastExposedAtMs?.let { " · last to ${recipient(r.lastExposedTo.orEmpty())} ${DateUtils.getRelativeTimeSpanString(it)}" } ?: ""),
+                    stringResource(R.string.vault_added, DateUtils.getRelativeTimeSpanString(r.createdAtMs).toString()) +
+                        (r.rotatedAtMs?.let { " · " + stringResource(R.string.vault_rotated_at, DateUtils.getRelativeTimeSpanString(it).toString()) } ?: "") +
+                        (r.lastExposedAtMs?.let { " · " + stringResource(R.string.vault_last_to, recipient(r.lastExposedTo.orEmpty()), DateUtils.getRelativeTimeSpanString(it).toString()) } ?: ""),
                     Modifier.padding(top = 2.dp),
                 )
                 Gap(6.dp)
-                Segmented(CredentialScope.entries.map { it to it.label }, r.scope, { scope ->
+                Segmented(CredentialScope.entries.map { it to resources.getString(credentialScopeRes(it)) }, r.scope, { scope ->
                     container.vault.setScope(r.name, scope)
-                    message = "${r.label}: ${scope.label.lowercase()}" + when (scope) {
-                        CredentialScope.ANY_SESSION -> " — every session may switch to its models."
-                        CredentialScope.ITS_PROVIDER_ONLY -> " — only sessions on its provider get it; others cannot switch to it."
-                        CredentialScope.NOT_FOR_AGENTS -> " — no session gets it, and its models are not offered."
-                    }
+                    message = resources.getString(
+                        when (scope) {
+                            CredentialScope.ANY_SESSION -> R.string.vault_scope_any
+                            CredentialScope.ITS_PROVIDER_ONLY -> R.string.vault_scope_provider
+                            CredentialScope.NOT_FOR_AGENTS -> R.string.vault_scope_none
+                        },
+                        r.label, resources.getString(credentialScopeRes(scope)).lowercase(),
+                    )
                 })
                 Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PButton("Rotate", { rotating = r }, style = ButtonStyle.Alt, tiny = true)
-                    PButton("Revoke here", { revoking = r }, style = ButtonStyle.Ghost, tiny = true)
+                    PButton(stringResource(R.string.vault_rotate), { rotating = r }, style = ButtonStyle.Alt, tiny = true)
+                    PButton(stringResource(R.string.vault_revoke_here), { revoking = r }, style = ButtonStyle.Ghost, tiny = true)
                 }
             }
         }
@@ -175,11 +184,11 @@ fun CredentialVaultScreen() {
 
         PCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Kicker("Exposure record", Modifier.weight(1f))
-                chain?.let { Tag(if (it.intact) "Chain intact · ${it.entries}" else "Broken at #${it.firstBadSeq}", if (it.intact) Tone.Good else Tone.Danger) }
+                Kicker(stringResource(R.string.vault_exposure_record), Modifier.weight(1f))
+                chain?.let { Tag(if (it.intact) stringResource(R.string.commit_chain_intact, it.entries) else stringResource(R.string.commit_chain_broken, it.firstBadSeq ?: 0), if (it.intact) Tone.Good else Tone.Danger) }
             }
-            Subtle("Every time a credential leaves the vault, to which process and why. What was handed out cannot be shown as not copied; it is never hidden.", Modifier.padding(top = 4.dp))
-            if (exposures.isEmpty()) Subtle("Nothing has left the vault yet.", Modifier.padding(top = 6.dp))
+            Subtle(stringResource(R.string.vault_exposure_body), Modifier.padding(top = 4.dp))
+            if (exposures.isEmpty()) Subtle(stringResource(R.string.vault_nothing_left), Modifier.padding(top = 6.dp))
             exposures.takeLast(12).reversed().forEach { e ->
                 val d = e.data as? JsonObject
                 fun f(k: String) = (d?.get(k) as? JsonPrimitive)?.content.orEmpty()
@@ -192,11 +201,11 @@ fun CredentialVaultScreen() {
         Gap(12.dp)
 
         PCard(style = CardStyle.Soft) {
-            Kicker("Vault safety")
-            PSetting("Model keys and the agent", "omp needs its provider key to call the model, so the key is in omp's environment, where the agent's own commands may be able to read it. Scopes narrow which sessions get which key; each hand-over is recorded.") { Tag("Recorded", Tone.Warn) }
-            PSetting("Git credentials", "Given to no agent: root uses a token for its one URL, in a staging repository, reading the candidate from a bundle; without root they are not used at all") { Tag("Brokered", Tone.Good) }
-            PSetting("Revoke · rotate · node trust", "Separate acts. Revoking here deletes Umbra's copy only; the key stays valid at its issuer until revoked there.") { Tag("Independent", Tone.Neutral) }
-            PSetting("Recovery", "Only what you saved: a backup file sealed under a recovery code that is never stored. Without both, a lost phone means new keys at each issuer and revoking the old ones there.", divider = false) { Tag("Code-sealed", Tone.Neutral) }
+            Kicker(stringResource(R.string.vault_safety))
+            PSetting(stringResource(R.string.vault_model_keys), stringResource(R.string.vault_model_keys_d)) { Tag(stringResource(R.string.vault_recorded), Tone.Warn) }
+            PSetting(stringResource(R.string.vault_git_credentials), stringResource(R.string.vault_git_d)) { Tag(stringResource(R.string.vault_brokered), Tone.Good) }
+            PSetting(stringResource(R.string.vault_separate), stringResource(R.string.vault_separate_d)) { Tag(stringResource(R.string.vault_independent), Tone.Neutral) }
+            PSetting(stringResource(R.string.vault_recovery), stringResource(R.string.vault_recovery_d), divider = false) { Tag(stringResource(R.string.vault_code_sealed), Tone.Neutral) }
         }
         Gap(28.dp)
     }
@@ -205,38 +214,38 @@ fun CredentialVaultScreen() {
         var value by remember(r.name) { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { rotating = null },
-            title = { Text("Rotate ${r.label}") },
+            title = { Text(stringResource(R.string.vault_rotate_title, r.label)) },
             text = {
                 Column {
-                    Text("Create a new key at its issuer first, enter it here, then revoke the old one there. The old value is overwritten here at once.", fontSize = 13.sp)
-                    OutlinedTextField(value, { value = it }, Modifier.padding(top = 10.dp), label = { Text("New value") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+                    Text(stringResource(R.string.vault_rotate_body), fontSize = 13.sp)
+                    OutlinedTextField(value, { value = it }, Modifier.padding(top = 10.dp), label = { Text(stringResource(R.string.vault_new_value)) }, singleLine = true, visualTransformation = PasswordVisualTransformation())
                 }
             },
             confirmButton = {
                 TextButton(enabled = value.isNotBlank(), onClick = {
                     container.secrets.put(r.name, value.trim())
                     container.vault.rotated(r.name)
-                    message = "${r.label} rotated. Running sessions keep the old value until they restart; revoke the old key at its issuer."
+                    message = resources.getString(R.string.vault_msg_rotated, r.label)
                     rotating = null
-                }) { Text("Rotate") }
+                }) { Text(stringResource(R.string.vault_rotate)) }
             },
-            dismissButton = { TextButton(onClick = { rotating = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { rotating = null }) { Text(stringResource(R.string.vault_cancel)) } },
         )
     }
     revoking?.let { r ->
         AlertDialog(
             onDismissRequest = { revoking = null },
-            title = { Text("Revoke ${r.label} here?") },
-            text = { Text("Umbra's copy is deleted and no new session will get it. The key itself stays valid at its issuer until you revoke it there, and any copy a process already received is beyond recall.", fontSize = 13.sp) },
+            title = { Text(stringResource(R.string.vault_revoke_title, r.label)) },
+            text = { Text(stringResource(R.string.vault_revoke_body), fontSize = 13.sp) },
             confirmButton = {
                 TextButton(onClick = {
                     container.vault.revoked(r.name)
                     container.secrets.remove(r.name)
-                    message = "${r.label}: Umbra's copy deleted. Revoke it at its issuer too."
+                    message = resources.getString(R.string.vault_msg_deleted, r.label)
                     revoking = null
-                }) { Text("Revoke here") }
+                }) { Text(stringResource(R.string.vault_revoke_here)) }
             },
-            dismissButton = { TextButton(onClick = { revoking = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { revoking = null }) { Text(stringResource(R.string.vault_cancel)) } },
         )
     }
 }

@@ -55,6 +55,8 @@ data class AppPrefs(
     /** Where the Linux environment archive is downloaded from (an https URL). */
     val rootfsUrl: String = "",
     val setupDismissed: Boolean = false,
+    /** Approval history lists only entries after this time; the ledger itself keeps every line (append-only). */
+    val approvalHistoryHiddenBeforeMs: Long = 0,
 )
 
 object ProviderPresets {

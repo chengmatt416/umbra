@@ -49,29 +49,29 @@ class SelfTest(private val container: AppContainer) {
     }
 
     private fun steps(): List<Step> = listOf(
-        Step("shell", "Run a shell command") {
+        Step("shell", container.context.getString(app.umbra.agent.R.string.st_shell)) {
             val out = act(Operation.Shell("echo umbra-selftest && id -u")).result
             if ("umbra-selftest" !in out.summary) error("unexpected output: ${out.summary.take(120)}")
             "ran as ${out.backend ?: "a shell"}"
         },
-        Step("observe", "Read the screen") {
+        Step("observe", container.context.getString(app.umbra.agent.R.string.st_observe)) {
             if (!container.accessibility.isAvailable()) throw Skip("the accessibility service is not running")
             val out = act(Operation.Observe(ObserveLevel.TREE)).result
             "read ${out.summary.lineSequence().count()} lines from ${out.backend}"
         },
-        Step("screenshot", "Take a screenshot") {
+        Step("screenshot", container.context.getString(app.umbra.agent.R.string.st_screenshot)) {
             val exec = act(Operation.Screenshot())
             val image = exec.images.firstOrNull() ?: error("no image came back")
             "${image.bytes.size / 1024} KB ${image.mime}"
         },
-        Step("launch", "Open an app and see it in front") {
+        Step("launch", container.context.getString(app.umbra.agent.R.string.st_launch)) {
             act(Operation.LaunchApp("com.android.settings"), timeoutMs = 30_000)
             val out = act(Operation.Observe(ObserveLevel.BRIEF)).result
             if (!out.summary.contains("settings", ignoreCase = true)) error("Settings did not come to the front: ${out.summary.take(160)}")
             act(Operation.Global(GlobalAction.HOME))
             "Settings opened and was seen"
         },
-        Step("display", "Work in a background display") {
+        Step("display", container.context.getString(app.umbra.agent.R.string.st_display)) {
             if (!container.displays.isAvailable()) throw Skip("needs the privileged helper")
             val created = act(Operation.Display(DisplayAction.CREATE, width = 720, height = 1280, dpi = 320)).result
             val id = Regex("""(?:display|id)\D{0,12}(\d+)""", RegexOption.IGNORE_CASE).find(created.summary)?.groupValues?.get(1)?.toIntOrNull()
@@ -86,19 +86,19 @@ class SelfTest(private val container: AppContainer) {
                 runCatching { container.pipeline.execute(request(Operation.Display(DisplayAction.DESTROY, displayId = id))) }
             }
         },
-        Step("linux", "Start the Linux environment") {
+        Step("linux", container.context.getString(app.umbra.agent.R.string.st_linux)) {
             if (container.guest.state.value == GuestManager.State.NoRoot) throw Skip("needs root")
             if (!container.guest.ensureReady()) throw Skip("the Linux environment is not installed")
             val versions = container.guest.runtime.versions() ?: error("it did not answer")
             "debian ${versions["debian"]}, bun ${versions["bun"]}, omp ${versions["omp"]}, git ${versions["git"]}"
         },
-        Step("network", "Reach the internet from Linux") {
+        Step("network", container.context.getString(app.umbra.agent.R.string.st_network)) {
             if (!container.guest.ensureReady()) throw Skip("the Linux environment is not installed")
             val out = container.guest.runtime.exec(listOf("bash", "-c", "curl -sS -m 20 -o /dev/null -w '%{http_code}' https://deb.debian.org/debian/dists/trixie/Release"), timeoutMs = 40_000)
             if (out.stdout.trim() != "200") error("HTTP ${out.stdout.trim().ifEmpty { "none" }} ${out.stderr.take(120)}")
             "reached deb.debian.org"
         },
-        Step("model", "Ask the AI model") {
+        Step("model", container.context.getString(app.umbra.agent.R.string.st_model)) {
             val prefs = container.settings.value
             val model = prefs.defaultModel ?: throw Skip("no model is chosen")
             if (!container.guest.ensureReady()) throw Skip("the Linux environment is not installed")
@@ -110,7 +110,7 @@ class SelfTest(private val container: AppContainer) {
             val reply = ModelProbe(container).ask(model.provider + "/" + model.modelId, secrets)
             "${model.provider}/${model.modelId}: “${reply.take(60)}”"
         },
-        Step("logs", "Watch the system log") {
+        Step("logs", container.context.getString(app.umbra.agent.R.string.st_logs)) {
             val summary = container.logMonitor.summary()
             if (container.logMonitor.linesSeen == 0L && container.logMonitor.lastError != null) error(container.logMonitor.lastError!!)
             "${container.logMonitor.linesSeen} log lines seen; ${summary.crashes.size} crashes"
@@ -133,6 +133,18 @@ class SelfTest(private val container: AppContainer) {
                 } catch (e: Skip) {
                     update(step.id) { it.copy(status = StepStatus.SKIPPED, detail = e.message.orEmpty(), durationMs = System.currentTimeMillis() - started) }
                 } catch (e: kotlinx.coroutines.CancellationException) {
+                    // The user cancelled: the step in progress and the ones after it say so instead of looking unfinished.
+                    val cancelled = container.context.getString(app.umbra.agent.R.string.diag_cancelled)
+                    val notRun = container.context.getString(app.umbra.agent.R.string.diag_not_run)
+                    mutable.update { all ->
+                        all.map {
+                            when (it.status) {
+                                StepStatus.RUNNING -> it.copy(status = StepStatus.SKIPPED, detail = cancelled, durationMs = System.currentTimeMillis() - started)
+                                StepStatus.PENDING -> it.copy(status = StepStatus.SKIPPED, detail = notRun)
+                                else -> it
+                            }
+                        }
+                    }
                     throw e
                 } catch (e: Exception) {
                     update(step.id) { it.copy(status = StepStatus.FAILED, detail = e.message ?: e::class.simpleName.orEmpty(), durationMs = System.currentTimeMillis() - started) }

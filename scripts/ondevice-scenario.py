@@ -30,6 +30,15 @@ SCENARIOS = {
             say("That is everything I wanted to do."),
         ],
     ),
+    # A CRITICAL approval whose action changes nothing even if approved: SELinux is already enforcing, and the agent
+    # has no right to set it. For checking the Inbox's second confirmation step.
+    "critical": (
+        "Ask for something the safety system rates critical.",
+        [
+            tool("android_shell", {"command": "setenforce 1"}),
+            say("Done asking."),
+        ],
+    ),
     "long": (
         "Keep working for a while.",
         [

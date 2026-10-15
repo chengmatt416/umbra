@@ -19,10 +19,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.annotation.StringRes
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.umbra.agent.R
 import app.umbra.agent.container
+import app.umbra.agent.ui.porcelain.Disclosure
+import app.umbra.agent.ui.porcelain.PBar
+import app.umbra.agent.ui.porcelain.PIcon
+import app.umbra.agent.ui.porcelain.PIcons
+import app.umbra.agent.ui.porcelain.PObject
+import app.umbra.agent.ui.sessions.sessionTone
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.Callout
 import app.umbra.agent.ui.porcelain.CardStyle
@@ -53,7 +68,7 @@ import app.umbra.runtime.omp.OmpSubagent
 import app.umbra.runtime.omp.subagents
 import kotlinx.serialization.json.JsonPrimitive
 
-private enum class PlanView(val label: String) { Dag("Phase DAG"), Tree("Agent tree"), Wait("Wait graph") }
+private enum class PlanView(@param:StringRes val label: Int) { Progress(R.string.view_progress), Dag(R.string.view_phases), Tree(R.string.view_helpers), Wait(R.string.view_waits) }
 
 private fun stepState(status: String) = when (status) {
     "completed", "done" -> StepState.Done
@@ -63,11 +78,11 @@ private fun stepState(status: String) = when (status) {
     else -> StepState.Wait
 }
 
-private fun phaseTone(p: PlanPhase): Pair<String, Tone> = when {
-    p.tasks.isNotEmpty() && p.tasks.all { it.status == "completed" || it.status == "abandoned" } -> "Completed" to Tone.Good
-    p.tasks.any { it.status == "in_progress" } -> "Working" to Tone.Good
-    p.tasks.any { it.status == "completed" } -> "Under way" to Tone.Neutral
-    else -> "Queued" to Tone.Neutral
+private fun phaseTone(p: PlanPhase): Pair<Int, Tone> = when {
+    p.tasks.isNotEmpty() && p.tasks.all { it.status == "completed" || it.status == "abandoned" } -> R.string.phase_completed to Tone.Good
+    p.tasks.any { it.status == "in_progress" } -> R.string.phase_working to Tone.Good
+    p.tasks.any { it.status == "completed" } -> R.string.phase_under_way to Tone.Neutral
+    else -> R.string.phase_queued to Tone.Neutral
 }
 
 /**
@@ -85,7 +100,8 @@ fun PlanningScreen(onOpenSession: (String) -> Unit) {
     val timeline by container.inputLeases.recent.collectAsStateWithLifecycle()
     val focused by container.ui.focusedSession.collectAsStateWithLifecycle()
     var selected by remember { mutableStateOf<String?>(null) }
-    var view by remember { mutableStateOf(PlanView.Dag) }
+    var view by remember { mutableStateOf(PlanView.Progress) }
+    var picking by remember { mutableStateOf(false) }
     val sid = selected ?: focused?.takeIf { f -> sessions.any { it.id == f } } ?: sessions.firstOrNull()?.id
     val session = sessions.firstOrNull { it.id == sid }
     val history = revisionsAll.values.filter { it.sessionId == sid }.sortedBy { it.number }
@@ -99,36 +115,57 @@ fun PlanningScreen(onOpenSession: (String) -> Unit) {
     }?.let { ((it.data as kotlinx.serialization.json.JsonObject)["resource"] as JsonPrimitive).content }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 18.dp)) {
-        Eyebrow("Agent planning & integration")
-        Headline("Plans that can", "evolve safely.", Modifier.padding(top = 6.dp, bottom = 10.dp), size = 26)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            sessions.take(12).forEach { s -> PButton(s.title.take(22), { selected = s.id }, style = if (s.id == sid) ButtonStyle.Primary else ButtonStyle.Alt, tiny = true) }
-        }
-        Gap(10.dp)
+        Eyebrow(stringResource(R.string.plan_eyebrow))
+        Headline(stringResource(R.string.plan_headline), stringResource(R.string.plan_headline_tail), Modifier.padding(top = 6.dp, bottom = 10.dp), size = 26)
         if (session == null) {
-            Subtle("No sessions yet. Plans appear here as agents write their todo lists.")
+            Subtle(stringResource(R.string.plan_empty))
             return@Column
         }
-        PCard {
-            Row {
-                Column(Modifier.weight(1f)) {
-                    Kicker(current?.let { "Plan revision ${it.number}" } ?: "No plan yet")
-                    Text(session.title, Modifier.padding(top = 4.dp), fontSize = 18.sp, color = P.ink)
+        // The session picker: the whole title, ellipsized at a word's end by the text layout, never cut mid-word (L-01).
+        Box {
+            PObject(session.title, current?.let { stringResource(R.string.plan_revision, it.number) } ?: stringResource(R.string.plan_none), PIcons.layers, onClick = { picking = true }, trailing = {
+                Tag(stateText(session), sessionTone(session))
+                PIcon(PIcons.chevronDown, size = 16.dp, tint = P.muted)
+            })
+            DropdownMenu(picking, { picking = false }) {
+                sessions.take(20).forEach { s ->
+                    DropdownMenuItem(
+                        text = { Text(s.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = if (s.id == sid) FontWeight.SemiBold else FontWeight.Normal) },
+                        onClick = { picking = false; selected = s.id },
+                    )
                 }
-                Tag(stateText(session), Tone.Neutral)
             }
-            Gap(8.dp)
-            Segmented(PlanView.entries.map { it to it.label }, view, { view = it })
-            Gap(8.dp)
+        }
+        Gap(10.dp)
+        Segmented(PlanView.entries.map { it to stringResource(it.label) }, view, { view = it }, fill = true)
+        Gap(10.dp)
+        PCard {
+            val phases = progress?.phases ?: current?.phases.orEmpty()
             when (view) {
+                PlanView.Progress -> {
+                    blockedOn?.let { Callout(stringResource(R.string.plan_blocked, it), Tone.Warn, Modifier.padding(bottom = 8.dp)) }
+                    val tasks = phases.flatMap { it.tasks }
+                    if (tasks.isEmpty()) Subtle(stringResource(R.string.plan_no_todos))
+                    else {
+                        val done = tasks.count { it.status == "completed" || it.status == "abandoned" }
+                        val now = tasks.firstOrNull { it.status == "in_progress" }
+                        val next = tasks.firstOrNull { it.status == "pending" }
+                        val phase = phases.firstOrNull { p -> p.tasks.any { it.status == "in_progress" } } ?: phases.firstOrNull { p -> p.tasks.any { it.status == "pending" } }
+                        Text(stringResource(R.string.plan_progress_of, done, tasks.size), fontFamily = P.serif, fontSize = 22.sp, color = P.ink, style = androidx.compose.ui.text.TextStyle(fontFeatureSettings = P.tabular))
+                        Box(Modifier.padding(top = 10.dp)) { PBar(done / tasks.size.toFloat()) }
+                        phase?.let { Subtle(stringResource(R.string.plan_phase_now, it.name), Modifier.padding(top = 12.dp)) }
+                        now?.let { Text(stringResource(R.string.plan_now, it.content), Modifier.padding(top = 4.dp), fontSize = 14.sp, lineHeight = 20.sp, color = P.ink) }
+                        next?.let { Subtle(stringResource(R.string.plan_next, it.content), Modifier.padding(top = 4.dp)) }
+                    }
+                }
                 PlanView.Dag -> {
-                    val phases = progress?.phases ?: current?.phases.orEmpty()
-                    blockedOn?.let { Callout("Blocked: its actions on $it wait for you, who took that screen back. The phase that needs it waits; its commands and builds go on.", Tone.Warn, Modifier.padding(bottom = 8.dp)) }
-                    if (phases.isEmpty()) Subtle("The agent has not written a todo list for this session.")
+                    blockedOn?.let { Callout(stringResource(R.string.plan_blocked, it), Tone.Warn, Modifier.padding(bottom = 8.dp)) }
+                    if (phases.isEmpty()) Subtle(stringResource(R.string.plan_no_todos))
                     else {
                         val working = phases.indexOfFirst { p -> p.tasks.any { it.status == "in_progress" } }
-                        GraphFlow(phases.mapIndexed { i, p -> val (label, tone) = phaseTone(p); if (blockedOn != null && i == working) GraphNode(p.name, "Blocked on $blockedOn", Tone.Warn) else GraphNode(p.name, label, tone) })
-                        Subtle("omp's phases run in order: each phase depends on the one before it.")
+                        val blockedLabel = blockedOn?.let { stringResource(R.string.plan_blocked_on, it) }
+                        GraphFlow(phases.mapIndexed { i, p -> val (label, tone) = phaseTone(p); if (blockedLabel != null && i == working) GraphNode(p.name, blockedLabel, Tone.Warn) else GraphNode(p.name, stringResource(label), tone) })
+                        Subtle(stringResource(R.string.plan_phases_note))
                         phases.forEach { p ->
                             Kicker(p.name, Modifier.padding(top = 10.dp))
                             Steps(p.tasks.map { StepItem(it.content, null, stepState(it.status)) })
@@ -139,31 +176,33 @@ fun PlanningScreen(onOpenSession: (String) -> Unit) {
                 PlanView.Wait -> {
                     val edges = waitEdges(leases.values.toList(), timeline)
                     val cycles = WaitGraph.cycles(edges)
-                    val holds = leases.values.filter { it.owner != null }.map { GraphNode(it.owner.toString(), "holds ${it.resourceId}", Tone.Good) }
-                    if (holds.isEmpty() && edges.isEmpty()) Subtle("Nobody holds input on a terminal, screen or desktop right now.")
+                    val holds = leases.values.filter { it.owner != null }.map { GraphNode(it.owner.toString(), stringResource(R.string.plan_holds, it.resourceId), Tone.Good) }
+                    if (holds.isEmpty() && edges.isEmpty()) Subtle(stringResource(R.string.plan_nobody_holds))
                     if (holds.isNotEmpty()) GraphFlow(holds, edge = "·")
-                    edges.takeLast(10).forEach { e -> Text("${e.waiter} waited for ${e.resource}, held by ${e.holder}", fontSize = 12.sp, color = P.sub, modifier = Modifier.padding(top = 3.dp)) }
+                    edges.takeLast(10).forEach { e -> Text(stringResource(R.string.plan_waited, e.waiter, e.resource, e.holder), fontSize = 12.sp, color = P.sub, modifier = Modifier.padding(top = 3.dp)) }
                     Gap(6.dp)
-                    if (cycles.isNotEmpty()) Callout("Potential circular wait: ${cycles.first().joinToString(" → ")} → ${cycles.first().first()}. Resolve it by releasing one lease or by coordination; nothing is ended automatically.", Tone.Warn)
-                    else Callout("No circular wait among the recent waits.", Tone.Good)
+                    if (cycles.isNotEmpty()) Callout(stringResource(R.string.plan_cycle, (cycles.first() + cycles.first().first()).joinToString(" → ")), Tone.Warn)
+                    else Callout(stringResource(R.string.plan_no_cycle), Tone.Good)
                 }
             }
         }
         Gap(12.dp)
         PCard(style = CardStyle.Soft) {
-            Kicker("Revision history · read-only")
-            if (history.isEmpty()) Subtle("No revisions yet.", Modifier.padding(top = 6.dp))
-            history.reversed().forEach { r ->
-                Row(Modifier.padding(top = 10.dp)) {
-                    Text("Rev. ${r.number}", fontSize = 14.sp, color = P.ink, modifier = Modifier.weight(1f))
-                    Tag(if (r.source == "user") "You" else "Agent", if (r.source == "user") Tone.Neutral else Tone.Good)
+            Kicker(stringResource(R.string.plan_changes, history.size))
+            if (history.isEmpty()) Subtle(stringResource(R.string.plan_no_changes), Modifier.padding(top = 6.dp))
+            else Disclosure(stringResource(R.string.details)) {
+                history.reversed().forEach { r ->
+                    Row(Modifier.padding(top = 10.dp)) {
+                        Text(stringResource(R.string.plan_rev, r.number), fontSize = 14.sp, color = P.ink, modifier = Modifier.weight(1f))
+                        Tag(stringResource(if (r.source == "user") R.string.plan_by_you else R.string.plan_by_agent), if (r.source == "user") Tone.Neutral else Tone.Good)
+                    }
+                    Subtle(pluralStringResource(R.plurals.plan_rev_meta, r.phases.size, DateUtils.getRelativeTimeSpanString(r.createdAtMs).toString(), r.phases.size, r.phases.sumOf { it.tasks.size }) + " · ${r.graphHash.take(10)}")
+                    r.changes.take(6).forEach { Text("• $it", fontSize = 12.sp, color = P.sub) }
+                    r.conflict?.let { Gap(4.dp); Callout(it, Tone.Warn) }
                 }
-                Subtle("${DateUtils.getRelativeTimeSpanString(r.createdAtMs)} · ${r.phases.size} phases · ${r.phases.sumOf { it.tasks.size }} tasks · ${r.graphHash.take(10)}")
-                r.changes.take(6).forEach { Text("• $it", fontSize = 12.sp, color = P.sub) }
-                r.conflict?.let { Gap(4.dp); Callout(it, Tone.Warn) }
             }
             Gap(8.dp)
-            PButton("Open the session", { onOpenSession(session.id) }, style = ButtonStyle.Alt, tiny = true)
+            PButton(stringResource(R.string.plan_open_session), { onOpenSession(session.id) }, style = ButtonStyle.Alt, tiny = true)
         }
         Gap(28.dp)
     }
@@ -180,9 +219,9 @@ private fun AgentTree(sessionId: String, title: String, recorded: List<Pair<Stri
     }
     val nodes = live?.map { GraphNode("${it.agent} #${it.index}", it.status, if (it.status == "running") Tone.Good else Tone.Neutral) }
         ?: recorded.map { (id, what) -> GraphNode(id.take(10), what, Tone.Neutral) }
-    GraphFlow(listOf(GraphNode("Coordinator", title.take(24), Tone.Good)) + nodes)
-    if (nodes.isEmpty()) Subtle("This session has not delegated to subagents.")
-    Subtle("Delegation tree ≠ phase order ≠ which processes belong to whom: do not infer what a halt would stop from this view.", Modifier.padding(top = 6.dp))
+    GraphFlow(listOf(GraphNode(stringResource(R.string.plan_coordinator), title, Tone.Good)) + nodes)
+    if (nodes.isEmpty()) Subtle(stringResource(R.string.plan_no_helpers))
+    Subtle(stringResource(R.string.plan_tree_note), Modifier.padding(top = 6.dp))
 }
 
 private fun waitEdges(leases: List<app.umbra.core.control.InputLease>, timeline: List<app.umbra.core.control.JournalEntry>): List<WaitEdge> {

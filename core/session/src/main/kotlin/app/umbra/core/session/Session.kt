@@ -79,8 +79,6 @@ data class Session(
     val parentSessionId: String? = null,
     val failureCount: Int = 0,
     val lastError: String? = null,
-    /** approval mode name in effect (cautious | balanced | autonomous). */
-    val approvalMode: String? = null,
     /** Free-form per-subsystem data (for example remembered approval rules), keyed by name. */
     val attachments: Map<String, JsonElement> = emptyMap(),
     /** The one project that owns this session; null for an independent session (architecture spec §2.1). */

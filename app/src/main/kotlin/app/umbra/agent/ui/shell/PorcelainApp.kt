@@ -32,6 +32,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -49,6 +50,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.annotation.StringRes
+import androidx.compose.ui.res.stringResource
+import app.umbra.agent.R
 import app.umbra.agent.container
 import app.umbra.agent.ui.ApprovalHistoryScreen
 import app.umbra.agent.ui.DiagnosticsScreen
@@ -68,38 +72,40 @@ import app.umbra.agent.ui.porcelain.P
 import app.umbra.agent.ui.porcelain.PIcon
 import app.umbra.agent.ui.porcelain.PIconButton
 import app.umbra.agent.ui.porcelain.PIcons
+import app.umbra.agent.ui.porcelain.hasCjk
 import app.umbra.agent.ui.sessions.SessionsScreen
 import kotlinx.coroutines.launch
 
-/** A place in the app. [tab] places sit in the bottom bar; the others are in the drawer (Power Studio). */
-enum class Dest(val route: String, val title: String, val icon: IconSpec, val group: String? = null, val tab: Boolean = false) {
-    Home("home", "Home", PIcons.home, tab = true),
-    Sessions("sessions", "Sessions", PIcons.layers, tab = true),
-    Current("current", "Current", PIcons.activity, tab = true),
-    Inbox("inbox", "Inbox", PIcons.shield, tab = true),
+/** A place in the app. [tab] places sit in the bottom bar; the others are in the drawer, under their [group]. */
+enum class Dest(val route: String, @param:StringRes val title: Int, val icon: IconSpec, @param:StringRes val group: Int? = null, val tab: Boolean = false) {
+    Home("home", R.string.dest_home, PIcons.home, tab = true),
+    Sessions("sessions", R.string.dest_sessions, PIcons.layers, tab = true),
+    Current("current", R.string.dest_current, PIcons.activity, tab = true),
+    Inbox("inbox", R.string.dest_inbox, PIcons.shield, tab = true),
 
-    Workspaces("workspaces", "Workspaces", PIcons.grid, "PRODUCT"),
-    Repositories("repositories", "Repository Hub", PIcons.box, "PRODUCT"),
-    Commit("commit", "Commit & Integration", PIcons.git, "PRODUCT"),
+    Workspaces("workspaces", R.string.dest_workspaces, PIcons.grid, R.string.group_product),
+    Repositories("repositories", R.string.dest_repositories, PIcons.box, R.string.group_product),
+    Commit("commit", R.string.dest_commit, PIcons.git, R.string.group_product),
 
-    Planning("planning", "Planning & Agents", PIcons.workflow, "OPERATIONS"),
-    Resources("resources", "Resource Manager", PIcons.sliders, "OPERATIONS"),
-    Runtime("runtime", "Runners & Continuity", PIcons.server, "OPERATIONS"),
-    Services("services", "Shared Services", PIcons.recycle, "OPERATIONS"),
-    Nodes("nodes", "Distributed Nodes", PIcons.cloud, "OPERATIONS"),
-    Terminals("terminals", "Terminals", PIcons.terminal, "OPERATIONS"),
+    Planning("planning", R.string.dest_planning, PIcons.workflow, R.string.group_operations),
+    Resources("resources", R.string.dest_resources, PIcons.sliders, R.string.group_operations),
+    Runtime("runtime", R.string.dest_runtime, PIcons.server, R.string.group_operations),
+    Services("services", R.string.dest_services, PIcons.recycle, R.string.group_operations),
+    Nodes("nodes", R.string.dest_nodes, PIcons.cloud, R.string.group_operations),
+    Terminals("terminals", R.string.dest_terminals, PIcons.terminal, R.string.group_operations),
 
-    Vault("vault", "Credential Vault", PIcons.key, "TRUST & SAFETY"),
-    Security("security", "Security & Evidence", PIcons.shield, "TRUST & SAFETY"),
-    Emergency("emergency", "Emergency Control", PIcons.alert, "TRUST & SAFETY"),
+    Vault("vault", R.string.dest_vault, PIcons.key, R.string.group_trust),
+    Security("security", R.string.dest_security, PIcons.shield, R.string.group_trust),
+    Emergency("emergency", R.string.dest_emergency, PIcons.alert, R.string.group_trust),
 
-    Linux("linux", "Linux & add-ons", PIcons.terminal, "SYSTEM"),
-    Models("models", "Models & accounts", PIcons.spark, "SYSTEM"),
-    Displays("displays", "Displays", PIcons.monitor, "SYSTEM"),
-    Processes("processes", "Processes", PIcons.activity, "SYSTEM"),
-    ApprovalHistory("approvals", "Approval history", PIcons.check, "SYSTEM"),
-    Diagnostics("diagnostics", "Diagnostics", PIcons.info, "SYSTEM"),
-    Settings("settings", "Settings", PIcons.settings, "SYSTEM"),
+    Linux("linux", R.string.dest_linux, PIcons.terminal, R.string.group_system),
+    Models("models", R.string.dest_models, PIcons.spark, R.string.group_system),
+    Displays("displays", R.string.dest_displays, PIcons.monitor, R.string.group_system),
+    Processes("processes", R.string.dest_processes, PIcons.activity, R.string.group_system),
+    ApprovalHistory("approvals", R.string.dest_approvals, PIcons.check, R.string.group_system),
+    Diagnostics("diagnostics", R.string.dest_diagnostics, PIcons.info, R.string.group_system),
+    Settings("settings", R.string.dest_settings, PIcons.settings, R.string.group_system),
+    Reference("reference", R.string.dest_reference, PIcons.book, R.string.group_system),
 }
 
 /** The app: Porcelain shell, bottom bar, drawer, and every screen. [openSession] deep-links into a task, [openPage] to a page. */
@@ -126,15 +132,18 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
         go(Dest.Current)
     }
 
+    var stopAll by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     LaunchedEffect(openSession, openPage) {
         if (openSession != null) {
             openSessionNow(openSession)
             onOpened()
         } else if (openPage != null) {
-            Dest.entries.firstOrNull { it.route == openPage }?.let { go(it) }
+            if (openPage == app.umbra.agent.AgentService.PAGE_STOP_ALL) stopAll = true
+            else Dest.entries.firstOrNull { it.route == openPage }?.let { go(it) }
             onOpened()
         }
     }
+    if (stopAll) app.umbra.agent.ui.emergency.StopAllConfirm(onDismiss = { stopAll = false })
 
     val approvals by container.approvals.pending.collectAsStateWithLifecycle()
     val questions by container.questions.pending.collectAsStateWithLifecycle()
@@ -213,11 +222,12 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                     composable(Dest.Workspaces.route) { WorkspacesScreen(onBack = { nav.popBackStack() }, onOpen = { nav.navigate("workspace/$it") }) }
                     composable("workspace/{id}") { e -> WorkspaceBrowserScreen(e.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() }) }
                     composable(Dest.Linux.route) { SetupScreen(onBack = { nav.popBackStack() }, onModels = { go(Dest.Models) }) }
-                    composable(Dest.Models.route) { ModelsScreen(onBack = { nav.popBackStack() }) }
+                    composable(Dest.Models.route) { ModelsScreen(onBack = { nav.popBackStack() }, onSetup = { go(Dest.Linux) }) }
                     composable(Dest.Displays.route) { DisplaysScreen(onBack = { nav.popBackStack() }) }
                     composable(Dest.Processes.route) { ProcessesScreen(onBack = { nav.popBackStack() }) }
                     composable(Dest.ApprovalHistory.route) { ApprovalHistoryScreen(onBack = { nav.popBackStack() }) }
                     composable(Dest.Diagnostics.route) { DiagnosticsScreen(onBack = { nav.popBackStack() }) }
+                    composable(Dest.Reference.route) { app.umbra.agent.ui.reference.ReferenceScreen(onBack = { nav.popBackStack() }) }
                     composable(Dest.Settings.route) {
                         SettingsScreen(
                             onBack = { nav.popBackStack() },
@@ -263,17 +273,52 @@ fun AppBar(onMenu: () -> Unit, actions: @Composable () -> Unit = {}) {
         Text("Umbra", Modifier.padding(start = 10.dp).weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = P.ink)
         actions()
         Spacer(Modifier.width(8.dp))
-        PIconButton(if (locked) PIcons.alert else PIcons.shield, "Emergency Control", LocalOpenEmergency.current, size = 36.dp, tint = if (locked) P.danger else P.accent2)
+        PIconButton(if (locked) PIcons.alert else PIcons.shield, stringResource(R.string.dest_emergency), LocalOpenEmergency.current, size = 36.dp, tint = if (locked) P.danger else P.accent2)
         Spacer(Modifier.width(8.dp))
-        PIconButton(PIcons.menu, "Open the menu", onMenu, size = 36.dp)
+        PIconButton(PIcons.menu, stringResource(R.string.open_menu), onMenu, size = 36.dp)
     }
-    if (locked) {
-        Text(
-            "Input lockdown in force · agents cannot change anything",
-            Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFF4E1DD)).clickable(onClick = LocalOpenEmergency.current).padding(horizontal = 12.dp, vertical = 7.dp),
-            fontSize = 12.sp, color = Color(0xFF97564F), fontWeight = FontWeight.SemiBold,
-        )
+    if (locked) LockdownBanner()
     }
+}
+
+@Composable
+private fun LockdownBanner() {
+    Text(
+        androidx.compose.ui.res.stringResource(app.umbra.agent.R.string.lockdown_banner),
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFF4E1DD)).clickable(onClick = LocalOpenEmergency.current).padding(horizontal = 12.dp, vertical = 7.dp),
+        fontSize = 12.sp, color = Color(0xFF97564F), fontWeight = FontWeight.SemiBold,
+    )
+}
+
+/**
+ * A page opened from the drawer or from another page: back, the page's name, its own [actions], and the same
+ * emergency shield every bar carries. One header for the whole app.
+ */
+@Composable
+fun PorcelainPage(title: String, onBack: () -> Unit, actions: @Composable () -> Unit = {}, content: @Composable () -> Unit) {
+    val container = LocalContext.current.container
+    val emergency by container.emergency.state.collectAsStateWithLifecycle()
+    val locked = emergency.level == app.umbra.core.control.EmergencyLevel.LOCKDOWN
+    androidx.activity.compose.BackHandler(onBack = onBack)
+    Column(Modifier.fillMaxSize().background(P.page)) {
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().padding(start = 12.dp, end = 14.dp, top = 10.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PIconButton(PIcons.chevronLeft, androidx.compose.ui.res.stringResource(app.umbra.agent.R.string.action_back), onBack, size = 36.dp)
+            Text(
+                title, Modifier.padding(start = 12.dp).weight(1f), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = P.ink,
+                maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, letterSpacing = (-0.3).sp,
+            )
+            actions()
+            Spacer(Modifier.width(8.dp))
+            PIconButton(
+                if (locked) PIcons.alert else PIcons.shield, androidx.compose.ui.res.stringResource(app.umbra.agent.R.string.dest_emergency),
+                LocalOpenEmergency.current, size = 36.dp, tint = if (locked) P.danger else P.accent2,
+            )
+        }
+        if (locked) LockdownBanner()
+        Box(Modifier.weight(1f).fillMaxWidth()) { content() }
     }
 }
 
@@ -293,7 +338,7 @@ private fun BottomBar(route: String, attention: Int, onGo: (Dest) -> Unit) {
             val on = route.startsWith(d.route)
             val color = if (on) Color(0xFF44694B) else Color(0xFF839683)
             Column(
-                Modifier.clip(RoundedCornerShape(14.dp)).clickable(role = Role.Tab, onClickLabel = d.title) { onGo(d) }.padding(horizontal = 14.dp, vertical = 6.dp),
+                Modifier.clip(RoundedCornerShape(14.dp)).clickable(role = Role.Tab, onClickLabel = stringResource(d.title)) { onGo(d) }.padding(horizontal = 14.dp, vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Box {
@@ -304,7 +349,7 @@ private fun BottomBar(route: String, attention: Int, onGo: (Dest) -> Unit) {
                         }
                     }
                 }
-                Text(d.title, Modifier.padding(top = 4.dp), fontSize = 11.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium, color = color)
+                Text(stringResource(d.title), Modifier.padding(top = 4.dp), fontSize = 11.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium, color = color)
             }
         }
     }
@@ -317,12 +362,12 @@ private fun DrawerContent(current: String, onGo: (Dest) -> Unit) {
             BadgeIcon(PIcons.spark, size = 44.dp)
             Column(Modifier.padding(start = 12.dp)) {
                 Text("Umbra", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = P.ink)
-                Text("PORCELAIN IN MOTION", fontSize = 9.sp, letterSpacing = 2.sp, color = P.muted)
+                Text(stringResource(R.string.drawer_tagline).uppercase(), fontSize = 9.sp, letterSpacing = 2.sp, color = P.muted)
             }
         }
         DrawerItem(Dest.Home, current.startsWith(Dest.Home.route), onGo)
         Dest.entries.filter { it.group != null }.groupBy { it.group!! }.forEach { (group, dests) ->
-            Text(group, Modifier.padding(start = 12.dp, top = 18.dp, bottom = 6.dp), fontSize = 10.sp, letterSpacing = 2.4.sp, fontWeight = FontWeight.Bold, color = P.eyebrow)
+            Text(stringResource(group).uppercase(), Modifier.padding(start = 12.dp, top = 18.dp, bottom = 6.dp), fontSize = 10.sp, letterSpacing = if (stringResource(group).hasCjk()) 0.8.sp else 2.4.sp, fontWeight = FontWeight.Bold, color = P.eyebrow)
             dests.forEach { DrawerItem(it, current.startsWith(it.route), onGo) }
         }
     }
@@ -342,7 +387,7 @@ private fun DrawerItem(d: Dest, active: Boolean, onGo: (Dest) -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         PIcon(d.icon, size = 18.dp, tint = if (active) Color(0xFF395941) else Color(0xFF647965))
-        Text(d.title, Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (active) Color(0xFF395941) else Color(0xFF647965))
+        Text(stringResource(d.title), Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (active) Color(0xFF395941) else Color(0xFF647965))
     }
 }
 

@@ -1,5 +1,7 @@
 package app.umbra.agent.ui.runtime
 
+import androidx.compose.ui.res.stringResource
+import app.umbra.agent.R
 import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -46,11 +48,11 @@ import app.umbra.runtime.linux.LinuxMode
 import kotlinx.coroutines.delay
 
 /** A runner's state (spec §14): only what a probe just confirmed. Detached is not dead. */
-enum class RunnerState(val label: String, val tone: Tone) {
-    CONNECTED("Connected", Tone.Good),
-    DETACHED("Detached", Tone.Warn),
-    RECOVERING("Recovering", Tone.Warn),
-    UNAVAILABLE("Unavailable", Tone.Neutral),
+enum class RunnerState(@param:androidx.annotation.StringRes val label: Int, val tone: Tone) {
+    CONNECTED(R.string.rs_connected, Tone.Good),
+    DETACHED(R.string.rs_detached, Tone.Warn),
+    RECOVERING(R.string.rs_recovering, Tone.Warn),
+    UNAVAILABLE(R.string.rs_unavailable, Tone.Neutral),
 }
 
 data class RunnerRow(val name: String, val detail: String, val state: RunnerState, val icon: app.umbra.agent.ui.porcelain.IconSpec)
@@ -58,33 +60,34 @@ data class RunnerRow(val name: String, val detail: String, val state: RunnerStat
 /** Asks every runner the app depends on how it is, now. */
 suspend fun probeRunners(c: AppContainer): List<RunnerRow> {
     val rows = ArrayList<RunnerRow>()
+    fun t(id: Int, vararg args: Any) = c.context.getString(id, *args)
     val a11y = runCatching { c.accessibility.isAvailable() }.getOrDefault(false)
-    rows += RunnerRow("Android control", if (a11y) "Accessibility service connected" else "Accessibility service not connected", if (a11y) RunnerState.CONNECTED else RunnerState.UNAVAILABLE, PIcons.phone)
+    rows += RunnerRow(t(R.string.rr_android), t(if (a11y) R.string.rr_a11y_on else R.string.rr_a11y_off), if (a11y) RunnerState.CONNECTED else RunnerState.UNAVAILABLE, PIcons.phone)
     val helper = runCatching { c.helper.client.isUp() }.getOrDefault(false)
-    rows += RunnerRow("Privileged helper", if (helper) "Shell-level helper answering" else "Not running", if (helper) RunnerState.CONNECTED else RunnerState.UNAVAILABLE, PIcons.key)
+    rows += RunnerRow(t(R.string.rr_helper), t(if (helper) R.string.rr_helper_on else R.string.rr_not_running), if (helper) RunnerState.CONNECTED else RunnerState.UNAVAILABLE, PIcons.key)
     val rootHelper = runCatching { c.helper.rootClient.isUp() }.getOrDefault(false)
-    rows += RunnerRow("Root helper", if (rootHelper) "Root helper answering" else "Not running", if (rootHelper) RunnerState.CONNECTED else RunnerState.UNAVAILABLE, PIcons.shield)
+    rows += RunnerRow(t(R.string.rr_root_helper), t(if (rootHelper) R.string.rr_root_on else R.string.rr_not_running), if (rootHelper) RunnerState.CONNECTED else RunnerState.UNAVAILABLE, PIcons.shield)
     val g = c.guest.state.value
-    val mode = if (c.guest.mode == LinuxMode.PROOT) "proot, no root" else "chroot"
+    val mode = t(if (c.guest.mode == LinuxMode.PROOT) R.string.rr_proot else R.string.rr_chroot)
     rows += when (g) {
-        GuestManager.State.Ready -> RunnerRow("Linux environment", "Debian, $mode, mounted", RunnerState.CONNECTED, PIcons.terminal)
-        GuestManager.State.Installed -> RunnerRow("Linux environment", "Installed, not mounted yet", RunnerState.DETACHED, PIcons.terminal)
-        is GuestManager.State.Installing, is GuestManager.State.Downloading -> RunnerRow("Linux environment", "Installing", RunnerState.RECOVERING, PIcons.terminal)
-        else -> RunnerRow("Linux environment", g.toString(), RunnerState.UNAVAILABLE, PIcons.terminal)
+        GuestManager.State.Ready -> RunnerRow(t(R.string.rr_linux), t(R.string.rr_linux_ready, mode), RunnerState.CONNECTED, PIcons.terminal)
+        GuestManager.State.Installed -> RunnerRow(t(R.string.rr_linux), t(R.string.rr_linux_installed), RunnerState.DETACHED, PIcons.terminal)
+        is GuestManager.State.Installing, is GuestManager.State.Downloading -> RunnerRow(t(R.string.rr_linux), t(R.string.rr_linux_installing), RunnerState.RECOVERING, PIcons.terminal)
+        else -> RunnerRow(t(R.string.rr_linux), g.toString(), RunnerState.UNAVAILABLE, PIcons.terminal)
     }
     val terms = c.terminals.terminals.value
     terms.groupBy { it.record.group }.forEach { (group, list) ->
         val attached = list.count { it.status == TerminalStatus.ATTACHED || it.status == TerminalStatus.PANE_EXITED }
         val lost = list.count { it.status == TerminalStatus.SERVER_LOST }
         rows += RunnerRow(
-            "tmux group “$group”", "${list.size} terminal(s): $attached reachable, $lost lost · its own server and socket, not a sandbox",
+            t(R.string.rr_tmux, group), t(R.string.rr_tmux_d, list.size, attached, lost),
             when { lost == list.size -> RunnerState.UNAVAILABLE; attached > 0 -> RunnerState.CONNECTED; else -> RunnerState.DETACHED }, PIcons.terminal,
         )
     }
     val gui = runCatching { c.linuxGui.isAvailable() }.getOrDefault(false)
-    rows += RunnerRow("Linux desktop", if (gui) "X display answering" else "Not running (the desktop add-on starts it when needed)", if (gui) RunnerState.CONNECTED else RunnerState.UNAVAILABLE, PIcons.monitor)
+    rows += RunnerRow(t(R.string.rr_desktop), t(if (gui) R.string.rr_desktop_on else R.string.rr_desktop_off), if (gui) RunnerState.CONNECTED else RunnerState.UNAVAILABLE, PIcons.monitor)
     val agents = c.sessionStore.list().mapNotNull { s -> c.supervisor.liveSession(s.id)?.takeIf { it.isProcessAlive }?.let { s.title } }
-    rows += RunnerRow("Agent processes", if (agents.isEmpty()) "None running" else agents.joinToString(), if (agents.isEmpty()) RunnerState.UNAVAILABLE else RunnerState.CONNECTED, PIcons.bot)
+    rows += RunnerRow(t(R.string.rr_agents), if (agents.isEmpty()) t(R.string.rr_agents_none) else agents.joinToString(), if (agents.isEmpty()) RunnerState.UNAVAILABLE else RunnerState.CONNECTED, PIcons.bot)
     return rows
 }
 
@@ -109,51 +112,51 @@ fun RuntimeScreen(onOpenSession: (String) -> Unit) {
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 18.dp)) {
-        Eyebrow("Runtime continuity")
-        Headline("A session is more", "than a process.", Modifier.padding(top = 6.dp, bottom = 12.dp), size = 26)
+        Eyebrow(stringResource(R.string.rt_eyebrow))
+        Headline(stringResource(R.string.rt_headline), stringResource(R.string.rt_headline_tail), Modifier.padding(top = 6.dp, bottom = 12.dp), size = 26)
         PCard {
-            Kicker("Live status requires evidence")
+            Kicker(stringResource(R.string.rt_live))
             val list = rows
-            if (list == null) Subtle("Probing…", Modifier.padding(top = 6.dp))
+            if (list == null) Subtle(stringResource(R.string.rt_probing), Modifier.padding(top = 6.dp))
             else list.forEach { r ->
                 Gap(8.dp)
-                PObject(r.name, r.detail, r.icon, trailing = { Tag(r.state.label, r.state.tone) })
+                PObject(r.name, r.detail, r.icon, trailing = { Tag(stringResource(r.state.label), r.state.tone) })
             }
             Gap(8.dp)
-            Subtle("Probed ${DateUtils.getRelativeTimeSpanString(probedAt)}. Detached is not dead; a screen that was rebuilt is not a runner that restarted.")
+            Subtle(stringResource(R.string.rt_probed, DateUtils.getRelativeTimeSpanString(probedAt).toString()))
         }
         Gap(12.dp)
         IsolationCard()
         Gap(12.dp)
         PCard {
-            Kicker("Session-scoped resume contracts")
+            Kicker(stringResource(R.string.rt_contracts))
             val withContract = sessions.filter { contracts.containsKey(it.id) }
-            if (withContract.isEmpty()) Subtle("No session may resume by itself after a restart. Give one a contract from its menu in Current.", Modifier.padding(top = 6.dp))
+            if (withContract.isEmpty()) Subtle(stringResource(R.string.rt_no_contracts), Modifier.padding(top = 6.dp))
             withContract.forEach { s ->
                 val c = contracts.getValue(s.id)
                 val why = container.contracts.eligibility(s.id)
                 val until = c.expiresAtMs
-                PSetting(s.title, (if (until == null) "Until the task completes" else "Until ${DateUtils.formatDateTime(container.context, until, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME)}") + (if (c.allowedWork.isNotBlank()) " · ${c.allowedWork}" else "")) {
-                    Tag(if (why == null) "Will resume" else "Will not resume", if (why == null) Tone.Good else Tone.Neutral)
+                PSetting(s.title, (if (until == null) stringResource(R.string.rt_until_done) else stringResource(R.string.rt_until, DateUtils.formatDateTime(container.context, until, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME))) + (if (c.allowedWork.isNotBlank()) " · ${c.allowedWork}" else "")) {
+                    Tag(if (why == null) stringResource(R.string.rt_will_resume) else stringResource(R.string.rt_will_not), if (why == null) Tone.Good else Tone.Neutral)
                 }
-                PButton("Open", { onOpenSession(s.id) }, style = ButtonStyle.Ghost, tiny = true)
+                PButton(stringResource(R.string.rt_open), { onOpenSession(s.id) }, style = ButtonStyle.Ghost, tiny = true)
             }
             Gap(8.dp)
-            Callout("A contract grants nothing new: permissions, the screen, root and credentials are checked again, and a lockdown still holds every session.", Tone.Neutral)
+            Callout(stringResource(R.string.rt_contract_note), Tone.Neutral)
             log.takeLast(6).reversed().forEach { e ->
                 Text("${DateUtils.formatDateTime(container.context, e.timeMs, DateUtils.FORMAT_SHOW_TIME)} ${e.kind} ${e.data?.toString()?.take(100).orEmpty()}", Modifier.padding(top = 4.dp), fontSize = 11.sp, fontFamily = P.mono, color = P.sub)
             }
         }
         Gap(12.dp)
         PCard(style = CardStyle.Soft) {
-            Kicker("Recovery engine")
+            Kicker(stringResource(R.string.rt_recovery))
             Gap(8.dp)
             FactGrid(
                 listOf(
-                    "Reattach" to "Terminals are found again in the same tmux server epoch; a lost server is reported, not replaced",
-                    "Resume" to "A session continues from omp's saved conversation, with a note to look before acting",
-                    "Reconcile" to "Leases from a restarted runner become uncertain until taken again",
-                    "Selective" to "Only sessions with a contract resume by themselves; the rest wait for you",
+                    stringResource(R.string.rt_reattach) to stringResource(R.string.rt_reattach_d),
+                    stringResource(R.string.rt_resume) to stringResource(R.string.rt_resume_d),
+                    stringResource(R.string.rt_reconcile) to stringResource(R.string.rt_reconcile_d),
+                    stringResource(R.string.rt_selective) to stringResource(R.string.rt_selective_d),
                 ),
             )
         }
@@ -182,15 +185,15 @@ private fun IsolationCard() {
     }
     PCard {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Kicker("What the agent's processes are", Modifier.weight(1f))
-            Tag(if (report == null) "Not measured" else if (container.guest.mode == LinuxMode.PROOT) "No isolation" else "User-level", if (report?.sameUserAsApp == false) Tone.Good else Tone.Warn)
+            Kicker(stringResource(R.string.rt_processes), Modifier.weight(1f))
+            Tag(if (report == null) stringResource(R.string.rt_not_measured) else if (container.guest.mode == LinuxMode.PROOT) stringResource(R.string.rt_no_isolation) else stringResource(R.string.rt_user_level), if (report?.sameUserAsApp == false) Tone.Good else Tone.Warn)
         }
         val r = report
-        if (r == null) Subtle(if (guest == GuestManager.State.Ready) "Measuring…" else "The Linux environment is not running: nothing to measure.", Modifier.padding(top = 6.dp))
+        if (r == null) Subtle(if (guest == GuestManager.State.Ready) stringResource(R.string.rt_measuring) else stringResource(R.string.rt_not_running), Modifier.padding(top = 6.dp))
         else {
             Subtle(r.summary, Modifier.padding(top = 6.dp))
-            r.facts.forEach { f -> PSetting(f.name, "${f.value} · ${f.meaning}", divider = f != r.facts.last()) { Tag(if (f.good) "Holds" else "Limit", if (f.good) Tone.Good else Tone.Warn) } }
-            measuredAt?.let { Subtle("Measured ${DateUtils.getRelativeTimeSpanString(it)} from inside an agent command, from the kernel's own account. Approvals, not this, are what stand between a hostile agent and the app (ADR 0010).", Modifier.padding(top = 4.dp)) }
+            r.facts.forEach { f -> PSetting(f.name, "${f.value} · ${f.meaning}", divider = f != r.facts.last()) { Tag(if (f.good) stringResource(R.string.rt_holds) else stringResource(R.string.rt_limit), if (f.good) Tone.Good else Tone.Warn) } }
+            measuredAt?.let { Subtle(stringResource(R.string.rt_measured, DateUtils.getRelativeTimeSpanString(it).toString()), Modifier.padding(top = 4.dp)) }
         }
     }
 }

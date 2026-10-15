@@ -22,10 +22,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.umbra.agent.R
 import app.umbra.agent.container
+import app.umbra.agent.ui.porcelain.Disclosure
+import app.umbra.agent.ui.breakerRes
+import app.umbra.agent.ui.displayDetail
+import app.umbra.agent.ui.displayName
+import app.umbra.agent.ui.displaySingleton
+import app.umbra.agent.ui.healthLevelRes
 import app.umbra.agent.services.SharedService
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.Callout
@@ -62,6 +71,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun SharedServicesScreen(onOpenSession: (String) -> Unit) {
     val container = LocalContext.current.container
+    val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val scope = rememberCoroutineScope()
     val catalog by container.serviceMonitor.catalog.collectAsStateWithLifecycle()
     val records by container.services.all.collectAsStateWithLifecycle()
@@ -80,17 +91,17 @@ fun SharedServicesScreen(onOpenSession: (String) -> Unit) {
     }
 
     fun consumerName(consumer: String): String = when {
-        consumer.startsWith("session:") -> sessions.firstOrNull { it.id == consumer.removePrefix("session:") }?.let { "Session · ${it.title}" } ?: consumer
-        consumer.startsWith("terminal:") -> terminals.firstOrNull { it.record.id == consumer.removePrefix("terminal:") }?.let { "Terminal · ${it.record.title}" } ?: consumer
-        consumer == "laya" -> "Laya sidecar (runs in Linux)"
-        consumer == "linux" -> "The Linux environment (chroot runs through root)"
-        consumer == "decision-router" -> "The decision router"
+        consumer.startsWith("session:") -> sessions.firstOrNull { it.id == consumer.removePrefix("session:") }?.let { resources.getString(R.string.svc_session, it.title) } ?: consumer
+        consumer.startsWith("terminal:") -> terminals.firstOrNull { it.record.id == consumer.removePrefix("terminal:") }?.let { resources.getString(R.string.svc_terminal, it.record.title) } ?: consumer
+        consumer == "laya" -> resources.getString(R.string.svc_laya)
+        consumer == "linux" -> resources.getString(R.string.svc_linux)
+        consumer == "decision-router" -> resources.getString(R.string.svc_router)
         else -> consumer
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 18.dp)) {
-        Eyebrow("Shared runtime service manager")
-        Headline("Shared services,", "without cascading failures.", Modifier.padding(top = 6.dp, bottom = 12.dp), size = 26)
+        Eyebrow(stringResource(R.string.svc_eyebrow))
+        Headline(stringResource(R.string.svc_headline), stringResource(R.string.svc_headline_tail), Modifier.padding(top = 6.dp, bottom = 12.dp), size = 26)
         message?.let { Callout(it, Tone.Neutral); Gap(10.dp) }
 
         catalog.forEach { service ->
@@ -98,102 +109,112 @@ fun SharedServicesScreen(onOpenSession: (String) -> Unit) {
             val probe = health[service.id]
             val held = refs.values.filter { it.serviceId == service.id }.sortedBy { it.sinceMs }
             PCard {
+                // A service nothing needs and that is not running is idle, not down.
+                val idle = probe != null && !probe.passes(HealthLevel.L1) && held.isEmpty()
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Kicker(service.id)
-                        Text(service.name, Modifier.padding(top = 4.dp), fontSize = 17.sp, color = P.ink)
-                    }
-                    // A service nothing needs and that is not running is idle, not down.
-                    val idle = probe != null && !probe.passes(HealthLevel.L1) && held.isEmpty()
+                    Text(service.displayName(resources), Modifier.weight(1f), fontSize = 17.sp, color = P.ink)
                     Tag(
-                        when { probe == null -> "Not probed"; probe.ready -> "Ready"; idle -> "Not running"; probe.passes(HealthLevel.L1) -> "Alive, not ready"; else -> "Down" },
+                        stringResource(when { probe == null -> R.string.svc_not_probed; probe.ready -> R.string.svc_ready; idle -> R.string.svc_not_running; probe.passes(HealthLevel.L1) -> R.string.svc_alive; else -> R.string.svc_down }),
                         when { probe == null || idle -> Tone.Neutral; probe.ready -> Tone.Good; else -> Tone.Warn },
                     )
                 }
-                Subtle(service.detail + (record?.instance?.let { " · instance $it" } ?: ""), Modifier.padding(top = 4.dp))
-                Gap(8.dp)
-                HealthLevel.entries.forEach { level ->
-                    val p = probe?.levels?.get(level)
-                    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(level.name, Modifier.width(30.dp), fontSize = 12.sp, color = P.sub)
-                        Text(level.label, Modifier.width(132.dp), fontSize = 12.sp, color = P.ink)
-                        Text(p?.detail ?: "—", Modifier.weight(1f), fontSize = 11.sp, color = P.sub, maxLines = 2)
-                        Tag(
-                            when (p?.result) { ProbeResult.PASS -> "Pass"; ProbeResult.FAIL -> "Fail"; else -> "Unknown" },
-                            when (p?.result) { ProbeResult.PASS -> Tone.Good; ProbeResult.FAIL -> Tone.Danger; else -> Tone.Neutral },
-                        )
-                    }
-                }
-                probe?.let { Subtle("Probed ${DateUtils.getRelativeTimeSpanString(it.atMs)}. Each level is judged on its own; no probe changes anything.", Modifier.padding(top = 4.dp)) }
-
-                Gap(10.dp)
-                Kicker("Registered references · ${held.size}")
-                if (held.isEmpty()) Subtle("None that Umbra knows of. Zero references is not proof that nothing uses it.", Modifier.padding(top = 4.dp))
-                held.forEach { r ->
-                    val sessionId = r.consumer.removePrefix("session:").takeIf { r.consumer.startsWith("session:") }
-                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(consumerName(r.consumer), Modifier.weight(1f), fontSize = 13.sp, color = P.ink, maxLines = 1)
-                        Text(DateUtils.getRelativeTimeSpanString(r.sinceMs).toString(), fontSize = 11.sp, color = P.sub)
-                        if (sessionId != null) PButton("Open", { onOpenSession(sessionId) }, Modifier.padding(start = 6.dp), style = ButtonStyle.Ghost, tiny = true)
-                    }
-                }
-
-                Gap(10.dp)
-                record?.let { BreakerAndAdmission(it, service, supervisor[service.id]?.heldBy, container.services.policy) }
-                Gap(8.dp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (record?.admission == Admission.DRAINING) {
-                        PButton("Open admission", { container.services.resume(service.id); message = "${service.name} takes new work again." }, style = ButtonStyle.Alt, tiny = true)
-                    } else if (record != null) {
-                        PButton("Drain", {
-                            val report = container.services.drain(service.id, "drained by the user")
-                            message = "${service.name} takes no new work. ${report.references.size} reference(s) still hold it; it is left running for them" +
-                                (if (report.references.isEmpty()) " (zero references is not proof that nothing uses it)." else ".")
-                        }, style = ButtonStyle.Alt, tiny = true)
-                    }
-                    if (service.supervised) PButton("Recover now", {
+                Subtle(service.displayDetail(resources), Modifier.padding(top = 4.dp))
+                Text(
+                    if (held.isEmpty()) stringResource(R.string.svc_unused) else pluralStringResource(R.plurals.svc_used_by, held.size, held.size),
+                    Modifier.padding(top = 6.dp), fontSize = 12.sp, color = P.sub,
+                )
+                if (record?.admission == Admission.DRAINING) Text(stringResource(R.string.svc_draining_note), Modifier.padding(top = 2.dp), fontSize = 12.sp, color = P.amber)
+                if (record?.breaker == Breaker.OPEN) Text(stringResource(R.string.svc_paused_note), Modifier.padding(top = 2.dp), fontSize = 12.sp, color = P.amber)
+                Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (service.supervised && probe?.ready != true && !idle) PButton(stringResource(R.string.svc_recover), {
                         scope.launch {
                             runCatching { container.health.checkNow(service.id) }
-                            val s = container.health.state(service.id)
+                            val st = container.health.state(service.id)
                             message = when {
-                                s.health.isHealthy -> "${service.name} is healthy."
-                                s.heldBy != null -> "Recovery of ${service.name} held back: ${s.heldBy}."
-                                s.needsUser != null -> s.needsUser
-                                else -> "${service.name}: ${s.health}"
+                                st.health.isHealthy -> resources.getString(R.string.svc_healthy, service.displayName(resources))
+                                st.heldBy != null -> resources.getString(R.string.svc_recovery_held, service.displayName(resources), st.heldBy.toString())
+                                st.needsUser != null -> st.needsUser
+                                else -> "${service.displayName(resources)}: ${st.health}"
                             }
                         }
-                    }, style = ButtonStyle.Alt, tiny = true)
-                    if (record != null && record.breaker != Breaker.CLOSED) PButton("Reset breaker", {
-                        container.services.resetBreaker(service.id, by = "user", reason = "reset from Shared Services")
-                        message = "The breaker of ${service.name} was closed by hand (journaled)."
-                    }, style = ButtonStyle.Ghost, tiny = true)
+                    }, tiny = true)
+                    if (record?.admission == Admission.DRAINING) PButton(stringResource(R.string.svc_open), { container.services.resume(service.id); message = resources.getString(R.string.svc_takes_again, service.displayName(resources)) }, style = ButtonStyle.Alt, tiny = true)
+                }
+                Disclosure(stringResource(R.string.details)) {
+                    Kicker(stringResource(R.string.svc_health))
+                    HealthLevel.entries.forEach { level ->
+                        val p = probe?.levels?.get(level)
+                        Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(level.name, Modifier.width(30.dp), fontSize = 12.sp, color = P.sub)
+                            Column(Modifier.weight(1f)) {
+                                Text(stringResource(healthLevelRes(level)), fontSize = 12.sp, color = P.ink)
+                                p?.detail?.let { Text(it, fontSize = 11.sp, color = P.sub, maxLines = 2) }
+                            }
+                            Tag(
+                                stringResource(when (p?.result) { ProbeResult.PASS -> R.string.svc_pass; ProbeResult.FAIL -> R.string.svc_fail; else -> R.string.svc_unknown }),
+                                when (p?.result) { ProbeResult.PASS -> Tone.Good; ProbeResult.FAIL -> Tone.Danger; else -> Tone.Neutral },
+                            )
+                        }
+                    }
+                    probe?.let { Subtle(stringResource(R.string.svc_probed, DateUtils.getRelativeTimeSpanString(it.atMs).toString()), Modifier.padding(top = 4.dp)) }
+                    record?.instance?.let { Subtle(stringResource(R.string.svc_instance, it), Modifier.padding(top = 2.dp)) }
+
+                    Gap(10.dp)
+                    Kicker(stringResource(R.string.svc_refs, held.size))
+                    if (held.isEmpty()) Subtle(stringResource(R.string.svc_refs_none), Modifier.padding(top = 4.dp))
+                    held.forEach { r ->
+                        val sessionId = r.consumer.removePrefix("session:").takeIf { r.consumer.startsWith("session:") }
+                        Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(consumerName(r.consumer), Modifier.weight(1f), fontSize = 13.sp, color = P.ink, maxLines = 1)
+                            Text(DateUtils.getRelativeTimeSpanString(r.sinceMs).toString(), fontSize = 11.sp, color = P.sub)
+                            if (sessionId != null) PButton(stringResource(R.string.svc_open_session), { onOpenSession(sessionId) }, Modifier.padding(start = 6.dp), style = ButtonStyle.Ghost, tiny = true)
+                        }
+                    }
+
+                    Gap(10.dp)
+                    record?.let { BreakerAndAdmission(it, service, supervisor[service.id]?.heldBy, container.services.policy) }
+                    Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (record != null && record.admission != Admission.DRAINING) {
+                            PButton(stringResource(R.string.svc_drain), {
+                                val report = container.services.drain(service.id, "drained by the user")
+                                message = if (report.references.isEmpty()) resources.getString(R.string.svc_drained_0, service.displayName(resources))
+                                else resources.getString(R.string.svc_drained_n, service.displayName(resources), report.references.size)
+                            }, style = ButtonStyle.Alt, tiny = true)
+                        }
+                        if (record != null && record.breaker != Breaker.CLOSED) PButton(stringResource(R.string.svc_reset), {
+                            container.services.resetBreaker(service.id, by = "user", reason = "reset from Shared Services")
+                            message = resources.getString(R.string.svc_breaker_closed, service.displayName(resources))
+                        }, style = ButtonStyle.Ghost, tiny = true)
+                    }
                 }
             }
             Gap(12.dp)
         }
 
         PCard(style = CardStyle.Soft) {
-            Kicker("Capability-aware service pool")
-            Text("One instance each", Modifier.padding(top = 4.dp), fontSize = 17.sp, color = P.ink)
-            Subtle("A service is replicated only when it declares it may be, its placement is safe and the phone can afford it. None of these may:", Modifier.padding(top = 4.dp))
-            catalog.forEach { s -> PSetting(s.name, s.singleton, divider = s != catalog.last()) { Tag("Singleton", Tone.Neutral) } }
-        }
-        Gap(12.dp)
-        PCard(style = CardStyle.Soft) {
-            Kicker("Service recovery pipeline")
-            val ramping = records.values.firstOrNull { container.services.reattaching(it) }
-            Steps(
-                listOf(
-                    StepItem("Single recovery owner", "Each recovery gets a fenced epoch; a late outcome of an older one is ignored", StepState.Done),
-                    StepItem("Demand first", "Nothing is restarted that no consumer needs", StepState.Done),
-                    StepItem("Readiness, not just a pid", "Alive ≠ transport ≠ ready ≠ functional", StepState.Done),
-                    StepItem("Staged reattachment", ramping?.let { "${it.serviceId} is letting work in in stages (${it.reattached} admitted)" } ?: "New work is let in in stages after a recovery", if (ramping != null) StepState.Active else StepState.Done),
-                    StepItem("Circuit breaker", "Closed / Open / Half-open; budget and cooldowns persisted", StepState.Done),
-                ),
-            )
-            Gap(8.dp)
-            journal.takeLast(8).reversed().forEach { e ->
-                Text("${DateUtils.formatDateTime(container.context, e.timeMs, DateUtils.FORMAT_SHOW_TIME)} ${e.kind.removePrefix("service.")} ${e.data?.toString()?.take(110).orEmpty()}", Modifier.padding(top = 4.dp), fontSize = 11.sp, fontFamily = P.mono, color = P.sub)
+            Kicker(stringResource(R.string.svc_how))
+            Subtle(stringResource(R.string.svc_how_body), Modifier.padding(top = 6.dp))
+            Disclosure(stringResource(R.string.details)) {
+                val ramping = records.values.firstOrNull { container.services.reattaching(it) }
+                Steps(
+                    listOf(
+                        StepItem(stringResource(R.string.svc_step_owner), stringResource(R.string.svc_step_owner_d), StepState.Done),
+                        StepItem(stringResource(R.string.svc_step_demand), stringResource(R.string.svc_step_demand_d), StepState.Done),
+                        StepItem(stringResource(R.string.svc_step_ready), stringResource(R.string.svc_step_ready_d), StepState.Done),
+                        StepItem(
+                            stringResource(R.string.svc_step_stages),
+                            ramping?.let { stringResource(R.string.svc_step_stages_now, it.serviceId, it.reattached) } ?: stringResource(R.string.svc_step_stages_d),
+                            if (ramping != null) StepState.Active else StepState.Done,
+                        ),
+                        StepItem(stringResource(R.string.svc_step_breaker), stringResource(R.string.svc_step_breaker_d), StepState.Done),
+                    ),
+                )
+                Kicker(stringResource(R.string.svc_singletons), Modifier.padding(top = 6.dp))
+                catalog.forEach { s -> PSetting(s.displayName(resources), s.displaySingleton(resources), divider = s != catalog.last()) { Tag(stringResource(R.string.svc_singleton), Tone.Neutral) } }
+                Gap(8.dp)
+                journal.takeLast(8).reversed().forEach { e ->
+                    Text("${DateUtils.formatDateTime(container.context, e.timeMs, DateUtils.FORMAT_SHOW_TIME)} ${e.kind.removePrefix("service.")} ${e.data?.toString()?.take(110).orEmpty()}", Modifier.padding(top = 4.dp), fontSize = 11.sp, fontFamily = P.mono, color = P.sub)
+                }
             }
         }
         Gap(28.dp)
@@ -203,33 +224,34 @@ fun SharedServicesScreen(onOpenSession: (String) -> Unit) {
 @Composable
 private fun BreakerAndAdmission(record: ServiceRecord, service: SharedService, heldBy: String?, policy: ServicePolicy) {
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val now = System.currentTimeMillis()
-    PSetting("Admission", record.admissionReason ?: if (record.admission == Admission.OPEN) "Takes new work" else "Draining") {
-        Tag(if (record.admission == Admission.OPEN) "Open" else "Draining", if (record.admission == Admission.OPEN) Tone.Good else Tone.Warn)
+    PSetting(stringResource(R.string.svc_admission), record.admissionReason ?: stringResource(if (record.admission == Admission.OPEN) R.string.svc_takes_work else R.string.svc_draining)) {
+        Tag(stringResource(if (record.admission == Admission.OPEN) R.string.svc_open_tag else R.string.svc_draining), if (record.admission == Admission.OPEN) Tone.Good else Tone.Warn)
     }
     PSetting(
-        "Circuit breaker",
+        stringResource(R.string.svc_breaker),
         buildString {
-            append("${record.attempts.count { now - it < policy.windowMs }} of ${policy.restartBudget} recoveries in ${policy.windowMs / 60_000} min")
-            record.openUntilMs?.takeIf { record.breaker == Breaker.OPEN }?.let { append(" · paused until ${DateUtils.formatDateTime(context, it, DateUtils.FORMAT_SHOW_TIME)}") }
-            if (record.breaker == Breaker.HALF_OPEN) append(" · ${record.stableProbes} of ${policy.stability} healthy probes toward closing")
-            record.lastOutcome?.let { append(" · last: $it") }
+            append(stringResource(R.string.svc_breaker_d, record.attempts.count { now - it < policy.windowMs }, policy.restartBudget, (policy.windowMs / 60_000).toInt()))
+            record.openUntilMs?.takeIf { record.breaker == Breaker.OPEN }?.let { append(" · " + stringResource(R.string.svc_paused_until, DateUtils.formatDateTime(context, it, DateUtils.FORMAT_SHOW_TIME))) }
+            if (record.breaker == Breaker.HALF_OPEN) append(" · " + stringResource(R.string.svc_toward_closing, record.stableProbes, policy.stability))
+            record.lastOutcome?.let { append(" · " + stringResource(R.string.svc_last, it)) }
         },
     ) {
-        Tag(record.breaker.name.lowercase().replace('_', '-').replaceFirstChar { it.uppercase() }, when (record.breaker) { Breaker.CLOSED -> Tone.Good; Breaker.HALF_OPEN -> Tone.Warn; Breaker.OPEN -> Tone.Danger })
+        Tag(stringResource(breakerRes(record.breaker)), when (record.breaker) { Breaker.CLOSED -> Tone.Good; Breaker.HALF_OPEN -> Tone.Warn; Breaker.OPEN -> Tone.Danger })
     }
     PSetting(
-        "Recovery",
+        stringResource(R.string.svc_recovery),
         when {
-            !service.supervised -> "Not restarted automatically: " + when (service.id) {
-                "root-helper" -> "only adb, Shizuku or a root manager can start it"
-                "x-desktop" -> "a desktop task starts it when it needs one"
-                "laya" -> "start it from Linux & add-ons"
-                else -> "a lost tmux server is reported, not replaced; its terminals' state went with it"
-            }
-            record.recoveryOwner != null -> "Owned by ${record.recoveryOwner} (epoch ${record.recoveryEpoch})"
-            heldBy != null -> "Held back: $heldBy"
-            else -> "By the health supervisor, through this breaker, only while something needs it (epoch ${record.recoveryEpoch})"
+            !service.supervised -> stringResource(R.string.svc_not_auto, stringResource(when (service.id) {
+                "root-helper" -> R.string.svc_why_root_helper
+                "x-desktop" -> R.string.svc_why_desktop
+                "laya" -> R.string.svc_why_laya
+                else -> R.string.svc_why_tmux
+            }))
+            record.recoveryOwner != null -> stringResource(R.string.svc_owned_by, record.recoveryOwner.orEmpty(), record.recoveryEpoch)
+            heldBy != null -> stringResource(R.string.svc_held_back, heldBy)
+            else -> stringResource(R.string.svc_by_supervisor, record.recoveryEpoch)
         },
         divider = false,
     ) {}

@@ -16,8 +16,9 @@ its own work, and asks before anything risky.
 * **You stay in control.** Risky actions (payments, messages, deleting data, security settings,
   installing apps, passwords) always need your approval, from the app, a notification or a floating
   control. The agent can never operate its own app or answer its own approvals. Everything it asked and
-  you answered is kept in a history. Settings → *Access and data* takes access back (stop everything,
-  revoke the helpers, turn screen control off, delete the history). The Linux side runs without
+  you answered is kept in a history. Settings → *Stop and take back* takes access back (stop everything,
+  revoke the helpers, turn screen control off, delete the history); each of these says what it ends before it
+  does it. The Linux side runs without
   privileges and cannot change its own system files or read the app's private data; the limits of that
   are in [ADR 0010](docs/adr/0010-what-the-agent-can-reach.md).
 * **Resumable.** Tasks are persistent sessions: pause, resume, stop, follow up, restart after the app or
@@ -31,7 +32,10 @@ its own work, and asks before anything risky.
   publishes only what you authorize and reads it back, security evidence with independent anchors, and your
   own computers as execution nodes ([`umbra-node`](#your-computers-as-nodes)), which you can revoke.
 
-Free software, GPL-3.0-or-later. Sideload or F-Droid; there is no Play Store build.
+* **English and 繁體中文.** The whole interface is in both; it follows the phone's language, or pick one in
+  Android's per-app language settings.
+
+Free software under the MIT License. Sideload or F-Droid; there is no Play Store build.
 
 ## Requirements
 

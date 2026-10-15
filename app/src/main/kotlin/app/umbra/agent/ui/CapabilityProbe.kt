@@ -6,24 +6,29 @@ import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
 import app.umbra.agent.AppContainer
+import app.umbra.agent.R
+import app.umbra.platform.api.exec
 import app.umbra.agent.data.GuestManager
 
 enum class CapabilityStatus { OK, WARN, MISSING }
 
+/** Android's "restricted settings" hold on accessibility: known to be in force, likely (installed from a file), or not. */
+enum class Restriction { HELD, LIKELY, NONE }
+
 /** What the user can do about a capability from the setup screen. */
-enum class CapabilityAction(val label: String) {
-    ENABLE_ACCESSIBILITY("Enable"),
-    START_HELPER("Start"),
-    INSTALL_LINUX("Install"),
-    ADD_PROVIDER("Add"),
-    GRANT_PERMISSIONS("Grant"),
-    OPEN_NOTIFICATION_SETTINGS("Open settings"),
-    OPEN_OVERLAY_SETTINGS("Open settings"),
-    OPEN_BATTERY_SETTINGS("Open settings"),
-    OPEN_ACCESSIBILITY_SETTINGS("Open settings"),
-    OPEN_SHIZUKU("Open Shizuku"),
-    REQUEST_SHIZUKU("Allow"),
-    START_HELPER_WITH_SHIZUKU("Start"),
+enum class CapabilityAction(@param:androidx.annotation.StringRes val label: Int) {
+    ENABLE_ACCESSIBILITY(R.string.cap_act_enable),
+    START_HELPER(R.string.cap_act_start),
+    INSTALL_LINUX(R.string.cap_act_install),
+    ADD_PROVIDER(R.string.cap_act_add),
+    GRANT_PERMISSIONS(R.string.cap_act_grant),
+    OPEN_NOTIFICATION_SETTINGS(R.string.cap_act_open_settings),
+    OPEN_OVERLAY_SETTINGS(R.string.cap_act_open_settings),
+    OPEN_BATTERY_SETTINGS(R.string.cap_act_open_settings),
+    OPEN_ACCESSIBILITY_SETTINGS(R.string.cap_act_open_settings),
+    OPEN_SHIZUKU(R.string.cap_act_open_shizuku),
+    REQUEST_SHIZUKU(R.string.cap_act_allow),
+    START_HELPER_WITH_SHIZUKU(R.string.cap_act_start),
 }
 
 data class CapabilityRow(
@@ -33,6 +38,10 @@ data class CapabilityRow(
     val detail: String,
     val essential: Boolean,
     val action: CapabilityAction? = null,
+    /** Android 13+ holds accessibility back for sideloaded apps until the user allows "restricted settings". */
+    val restricted: Restriction = Restriction.NONE,
+    /** Works on the development emulator, not yet tried on a real phone (UX report F-04). */
+    val unverified: Boolean = false,
 )
 
 /**
@@ -42,6 +51,22 @@ data class CapabilityRow(
  */
 class CapabilityProbe(private val container: AppContainer) {
     private val context = container.context
+    private fun t(id: Int, vararg args: Any) = context.getString(id, *args)
+
+    /**
+     * Whether Android holds back accessibility for this app as a "restricted setting" (Android 13+). An app may not read
+     * that op itself, so it is asked with shell-level rights when the helper or root is at hand; without them, an app
+     * installed from an APK file is the case Android restricts, so that counts as likely.
+     */
+    suspend fun restrictedSettings(): Restriction {
+        val answer = runCatching { container.shellUser.exec("appops get ${context.packageName} ACCESS_RESTRICTED_SETTINGS", timeoutMs = 5_000) }.getOrNull()
+        val out = answer?.stdout.orEmpty()
+        if (answer?.exitCode == 0 && "ACCESS_RESTRICTED_SETTINGS" in out) {
+            return if (Regex("ACCESS_RESTRICTED_SETTINGS: (deny|ignore)").containsMatchIn(out)) Restriction.HELD else Restriction.NONE
+        }
+        val source = runCatching { context.packageManager.getInstallSourceInfo(context.packageName).packageSource }.getOrNull()
+        return if (source == android.content.pm.PackageInstaller.PACKAGE_SOURCE_LOCAL_FILE || source == android.content.pm.PackageInstaller.PACKAGE_SOURCE_DOWNLOADED_FILE) Restriction.LIKELY else Restriction.NONE
+    }
 
     suspend fun probe(): List<CapabilityRow> {
         val rows = ArrayList<CapabilityRow>()
@@ -49,46 +74,42 @@ class CapabilityProbe(private val container: AppContainer) {
         val serviceRunning = container.accessibility.isAvailable()
         val serviceEnabled = serviceRunning || container.grants.accessibilityEnabled()
         rows += when {
-            serviceRunning -> CapabilityRow("accessibility", "Screen control", CapabilityStatus.OK, "The accessibility service is running.", true)
-            serviceEnabled -> CapabilityRow("accessibility", "Screen control", CapabilityStatus.WARN, "Enabled but not connected. Turn it off and on again in Accessibility settings.", true, CapabilityAction.OPEN_ACCESSIBILITY_SETTINGS)
-            else -> CapabilityRow("accessibility", "Screen control", CapabilityStatus.MISSING, "Needed to see and operate apps. Enable the Umbra accessibility service. If its switch is greyed out: Umbra's App info, ⋮ menu, Allow restricted settings.", true, CapabilityAction.ENABLE_ACCESSIBILITY)
+            serviceRunning -> CapabilityRow("accessibility", t(R.string.cap_screen), CapabilityStatus.OK, t(R.string.cap_screen_ok), true)
+            serviceEnabled -> CapabilityRow("accessibility", t(R.string.cap_screen), CapabilityStatus.WARN, t(R.string.cap_screen_warn), true, CapabilityAction.OPEN_ACCESSIBILITY_SETTINGS)
+            else -> CapabilityRow("accessibility", t(R.string.cap_screen), CapabilityStatus.MISSING, t(R.string.cap_screen_missing), true, CapabilityAction.ENABLE_ACCESSIBILITY, restricted = restrictedSettings())
         }
 
         val root = container.rootShell.isAvailable()
-        rows += if (root) CapabilityRow("root", "Root", CapabilityStatus.OK, "Root access works.", false)
-        else CapabilityRow("root", "Root", CapabilityStatus.MISSING, "No root access. Linux runs without it, under proot (slower, and not kept apart from the app as with root); the Android tools still work.", false)
+        rows += if (root) CapabilityRow("root", t(R.string.cap_root), CapabilityStatus.OK, t(R.string.cap_root_ok), false)
+        else CapabilityRow("root", t(R.string.cap_root), CapabilityStatus.MISSING, t(R.string.cap_root_missing), false)
 
         val helperUp = container.helper.client.isUp()
         val shizuku = container.shizuku.state()
         rows += when {
-            helperUp -> CapabilityRow("helper", "Privileged helper", CapabilityStatus.OK, "Running as the shell user. Enables background displays and system settings.", false)
-            root -> CapabilityRow("helper", "Privileged helper", CapabilityStatus.WARN, "Not running. Start it to use background displays and shell-level tools.", false, CapabilityAction.START_HELPER)
-            shizuku == app.umbra.agent.ShizukuLauncher.State.READY -> CapabilityRow("helper", "Privileged helper", CapabilityStatus.WARN, "Not running. Shizuku can start it.", false, CapabilityAction.START_HELPER_WITH_SHIZUKU)
-            else -> CapabilityRow("helper", "Privileged helper", CapabilityStatus.WARN, "Not running. Start it with Shizuku, or over adb (see Settings).", false)
+            helperUp -> CapabilityRow("helper", t(R.string.cap_helper), CapabilityStatus.OK, t(R.string.cap_helper_ok), false)
+            root -> CapabilityRow("helper", t(R.string.cap_helper), CapabilityStatus.WARN, t(R.string.cap_helper_root), false, CapabilityAction.START_HELPER)
+            shizuku == app.umbra.agent.ShizukuLauncher.State.READY -> CapabilityRow("helper", t(R.string.cap_helper), CapabilityStatus.WARN, t(R.string.cap_helper_shizuku), false, CapabilityAction.START_HELPER_WITH_SHIZUKU, unverified = true)
+            else -> CapabilityRow("helper", t(R.string.cap_helper), CapabilityStatus.WARN, t(R.string.cap_helper_none), false)
         }
 
         rows += when (shizuku) {
-            app.umbra.agent.ShizukuLauncher.State.NOT_INSTALLED -> CapabilityRow("shizuku", "Shizuku", CapabilityStatus.WARN, "Optional: gives shell-level tools without root. Not installed.", false)
-            app.umbra.agent.ShizukuLauncher.State.NOT_RUNNING -> CapabilityRow("shizuku", "Shizuku", CapabilityStatus.WARN, "Installed but not running. Open Shizuku and start it.", false, CapabilityAction.OPEN_SHIZUKU)
-            app.umbra.agent.ShizukuLauncher.State.NEEDS_PERMISSION -> CapabilityRow("shizuku", "Shizuku", CapabilityStatus.WARN, "Running. Allow Umbra to use it.", false, CapabilityAction.REQUEST_SHIZUKU)
-            app.umbra.agent.ShizukuLauncher.State.READY -> CapabilityRow("shizuku", "Shizuku", CapabilityStatus.OK, if (container.shizuku.uid == 0) "Ready, running as root." else "Ready: shell-level access (not root).", false)
+            app.umbra.agent.ShizukuLauncher.State.NOT_INSTALLED -> CapabilityRow("shizuku", t(R.string.cap_shizuku), CapabilityStatus.WARN, t(R.string.cap_shizuku_absent), false, unverified = true)
+            app.umbra.agent.ShizukuLauncher.State.NOT_RUNNING -> CapabilityRow("shizuku", t(R.string.cap_shizuku), CapabilityStatus.WARN, t(R.string.cap_shizuku_stopped), false, CapabilityAction.OPEN_SHIZUKU, unverified = true)
+            app.umbra.agent.ShizukuLauncher.State.NEEDS_PERMISSION -> CapabilityRow("shizuku", t(R.string.cap_shizuku), CapabilityStatus.WARN, t(R.string.cap_shizuku_permission), false, CapabilityAction.REQUEST_SHIZUKU, unverified = true)
+            app.umbra.agent.ShizukuLauncher.State.READY -> CapabilityRow("shizuku", t(R.string.cap_shizuku), CapabilityStatus.OK, t(if (container.shizuku.uid == 0) R.string.cap_shizuku_root else R.string.cap_shizuku_shell), false, unverified = true)
         }
 
-        rows += if (container.displays.isAvailable()) CapabilityRow("displays", "Background displays", CapabilityStatus.OK, "The agent can work in an invisible display while you use the phone.", false)
-        else CapabilityRow("displays", "Background displays", CapabilityStatus.WARN, "Needs the privileged helper. Without it the agent works on the main screen.", false)
+        rows += if (container.displays.isAvailable()) CapabilityRow("displays", t(R.string.cap_displays), CapabilityStatus.OK, t(R.string.cap_displays_ok), false)
+        else CapabilityRow("displays", t(R.string.cap_displays), CapabilityStatus.WARN, t(R.string.cap_displays_missing), false)
 
         rows += when (val g = container.guest.state.value) {
-            GuestManager.State.Ready, GuestManager.State.Installed -> CapabilityRow(
-                "linux", "Linux environment", CapabilityStatus.OK,
-                "Debian is installed. The agent can use bash, git and developer tools." + if (container.guest.mode == app.umbra.runtime.linux.LinuxMode.PROOT) " Runs without root (proot)." else "",
-                true,
-            )
-            GuestManager.State.NoRoot -> CapabilityRow("linux", "Linux environment", CapabilityStatus.MISSING, "Neither root nor proot can run it on this phone.", true)
-            is GuestManager.State.Installing, is GuestManager.State.Downloading -> CapabilityRow("linux", "Linux environment", CapabilityStatus.WARN, "Installing…", true)
-            is GuestManager.State.Failed -> CapabilityRow("linux", "Linux environment", CapabilityStatus.MISSING, g.message, true, CapabilityAction.INSTALL_LINUX)
+            GuestManager.State.Ready, GuestManager.State.Installed -> CapabilityRow("linux", t(R.string.cap_linux), CapabilityStatus.OK, t(R.string.cap_linux_ok), true)
+            GuestManager.State.NoRoot -> CapabilityRow("linux", t(R.string.cap_linux), CapabilityStatus.MISSING, t(R.string.cap_linux_noroot), true)
+            is GuestManager.State.Installing, is GuestManager.State.Downloading -> CapabilityRow("linux", t(R.string.cap_linux), CapabilityStatus.WARN, t(R.string.cap_linux_installing), true)
+            is GuestManager.State.Failed -> CapabilityRow("linux", t(R.string.cap_linux), CapabilityStatus.MISSING, g.message, true, CapabilityAction.INSTALL_LINUX)
             else -> CapabilityRow(
-                "linux", "Linux environment", CapabilityStatus.MISSING,
-                if (container.guest.bundle != null) "Not installed yet. It comes with the app: install it below, no download needed." else "Not installed. The agent runs inside it.",
+                "linux", t(R.string.cap_linux), CapabilityStatus.MISSING,
+                t(if (container.guest.bundle != null) R.string.cap_linux_bundled else R.string.cap_linux_missing),
                 true, CapabilityAction.INSTALL_LINUX,
             )
         }
@@ -96,24 +117,24 @@ class CapabilityProbe(private val container: AppContainer) {
         val prefs = container.settings.value
         val model = prefs.defaultModel
         val providerOk = model != null && prefs.providers.any { p -> p.id == model.provider && (p.apiKeyEnv == null || container.secrets.has(p.apiKeyEnv)) }
-        rows += if (providerOk) CapabilityRow("model", "AI model", CapabilityStatus.OK, "${model.provider}/${model.modelId}", true)
-        else CapabilityRow("model", "AI model", CapabilityStatus.MISSING, "Add a provider and choose a model.", true, CapabilityAction.ADD_PROVIDER)
+        rows += if (providerOk) CapabilityRow("model", t(R.string.cap_model), CapabilityStatus.OK, "${model.provider}/${model.modelId}", true)
+        else CapabilityRow("model", t(R.string.cap_model), CapabilityStatus.MISSING, t(R.string.cap_model_missing), true, CapabilityAction.ADD_PROVIDER)
 
         val notificationsOn = context.getSystemService(NotificationManager::class.java).areNotificationsEnabled()
-        rows += if (notificationsOn) CapabilityRow("notifications", "Notifications", CapabilityStatus.OK, "Approvals can reach you outside the app.", false)
-        else CapabilityRow("notifications", "Notifications", CapabilityStatus.WARN, "Turned off: approval requests would only show inside the app.", false, CapabilityAction.OPEN_NOTIFICATION_SETTINGS)
+        rows += if (notificationsOn) CapabilityRow("notifications", t(R.string.cap_notifications), CapabilityStatus.OK, t(R.string.cap_notifications_ok), false)
+        else CapabilityRow("notifications", t(R.string.cap_notifications), CapabilityStatus.WARN, t(R.string.cap_notifications_off), false, CapabilityAction.OPEN_NOTIFICATION_SETTINGS)
 
         val listener = container.grants.notificationListenerAllowed()
-        rows += if (listener) CapabilityRow("notification-access", "Notification access", CapabilityStatus.OK, "The agent can read and answer notifications.", false)
-        else CapabilityRow("notification-access", "Notification access", CapabilityStatus.WARN, "Lets the agent read notifications (e.g. codes, messages) when a task needs it.", false, CapabilityAction.GRANT_PERMISSIONS)
+        rows += if (listener) CapabilityRow("notification-access", t(R.string.cap_listener), CapabilityStatus.OK, t(R.string.cap_listener_ok), false)
+        else CapabilityRow("notification-access", t(R.string.cap_listener), CapabilityStatus.WARN, t(R.string.cap_listener_missing), false, CapabilityAction.GRANT_PERMISSIONS)
 
         val battery = context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
-        rows += if (battery) CapabilityRow("battery", "Background running", CapabilityStatus.OK, "Exempt from battery optimisation.", false)
-        else CapabilityRow("battery", "Background running", CapabilityStatus.WARN, "Android may stop long tasks. Exempt Umbra from battery optimisation.", false, CapabilityAction.GRANT_PERMISSIONS)
+        rows += if (battery) CapabilityRow("battery", t(R.string.cap_battery), CapabilityStatus.OK, t(R.string.cap_battery_ok), false)
+        else CapabilityRow("battery", t(R.string.cap_battery), CapabilityStatus.WARN, t(R.string.cap_battery_missing), false, CapabilityAction.GRANT_PERMISSIONS)
 
         val overlay = Settings.canDrawOverlays(context)
-        rows += if (overlay) CapabilityRow("overlay", "Floating controls", CapabilityStatus.OK, "The overlay can show progress and approvals over other apps.", false)
-        else CapabilityRow("overlay", "Floating controls", CapabilityStatus.WARN, "Optional: draw over other apps to show a stop button and approvals.", false, CapabilityAction.OPEN_OVERLAY_SETTINGS)
+        rows += if (overlay) CapabilityRow("overlay", t(R.string.cap_overlay), CapabilityStatus.OK, t(R.string.cap_overlay_ok), false)
+        else CapabilityRow("overlay", t(R.string.cap_overlay), CapabilityStatus.WARN, t(R.string.cap_overlay_missing), false, CapabilityAction.OPEN_OVERLAY_SETTINGS)
 
         return rows
     }

@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.porcelain
 
+import app.umbra.agent.R
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -59,7 +60,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -100,11 +103,24 @@ object P {
     /** cubic-bezier(.22, 1, .36, 1): controls press before their shape settles. */
     val ease = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 
-    val serif = FontFamily.Serif
+    /** Interface text: Geist, a variable sans with four weights in use (400, 500, 600, 700). */
+    val sans = FontFamily(geist(400), geist(500), geist(600), geist(700))
+
+    /** Titles and headline tails: Newsreader at a display optical size (the reference's Georgia, with more care). */
+    val serif = FontFamily(newsreader(400), newsreader(500))
     val mono = FontFamily.Monospace
+
+    /** Numbers that change in place (counts, sizes, timers) keep their width. */
+    const val tabular = "tnum"
 
     val radius = 24.dp
 }
+
+private fun geist(weight: Int) =
+    Font(R.font.geist, FontWeight(weight), variationSettings = FontVariation.Settings(FontVariation.weight(weight)))
+
+private fun newsreader(weight: Int) =
+    Font(R.font.newsreader, FontWeight(weight), variationSettings = FontVariation.Settings(FontVariation.weight(weight), FontVariation.Setting("opsz", 36f)))
 
 enum class Tone { Good, Neutral, Warn, Danger }
 
@@ -137,18 +153,24 @@ private val PorcelainColors = lightColorScheme(
 @Composable
 fun PorcelainTheme(content: @Composable () -> Unit) {
     val base = MaterialTheme.typography
+    // Every style carries Geist; display styles use the serif. Text without a style inherits bodyLarge.
+    val sans = TextStyle(fontFamily = P.sans)
     val type = base.copy(
+        displayLarge = base.displayLarge.merge(sans),
+        displayMedium = base.displayMedium.merge(sans),
         displaySmall = base.displaySmall.copy(fontFamily = P.serif, fontWeight = FontWeight.Normal, letterSpacing = (-0.5).sp, color = P.ink),
-        headlineMedium = TextStyle(fontSize = 28.sp, lineHeight = 32.sp, fontWeight = FontWeight.Medium, letterSpacing = (-1.2).sp, color = P.ink),
-        headlineSmall = TextStyle(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.8).sp, color = P.ink),
-        titleMedium = TextStyle(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.3).sp, color = P.ink),
-        titleSmall = TextStyle(fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp, color = P.ink),
-        bodyLarge = TextStyle(fontSize = 15.sp, lineHeight = 23.sp, color = P.ink),
-        bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 21.sp, color = P.ink),
-        bodySmall = TextStyle(fontSize = 12.sp, lineHeight = 18.sp, color = P.sub),
-        labelLarge = TextStyle(fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold, color = P.ink),
-        labelMedium = TextStyle(fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = P.sub),
-        labelSmall = TextStyle(fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = P.muted),
+        headlineLarge = base.headlineLarge.merge(sans),
+        headlineMedium = TextStyle(fontFamily = P.sans, fontSize = 28.sp, lineHeight = 32.sp, fontWeight = FontWeight.Medium, letterSpacing = (-1.2).sp, color = P.ink),
+        headlineSmall = TextStyle(fontFamily = P.sans, fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.8).sp, color = P.ink),
+        titleLarge = base.titleLarge.merge(sans).copy(color = P.ink, letterSpacing = (-0.4).sp),
+        titleMedium = TextStyle(fontFamily = P.sans, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.3).sp, color = P.ink),
+        titleSmall = TextStyle(fontFamily = P.sans, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp, color = P.ink),
+        bodyLarge = TextStyle(fontFamily = P.sans, fontSize = 15.sp, lineHeight = 23.sp, color = P.ink),
+        bodyMedium = TextStyle(fontFamily = P.sans, fontSize = 14.sp, lineHeight = 21.sp, color = P.ink),
+        bodySmall = TextStyle(fontFamily = P.sans, fontSize = 12.sp, lineHeight = 18.sp, color = P.sub),
+        labelLarge = TextStyle(fontFamily = P.sans, fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold, color = P.ink),
+        labelMedium = TextStyle(fontFamily = P.sans, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = P.sub),
+        labelSmall = TextStyle(fontFamily = P.sans, fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = P.muted),
     )
     MaterialTheme(colorScheme = PorcelainColors, typography = type, content = content)
 }
@@ -157,11 +179,17 @@ fun PorcelainTheme(content: @Composable () -> Unit) {
 
 @Composable
 fun Eyebrow(text: String, modifier: Modifier = Modifier, color: Color = P.eyebrow) =
-    Text(text.uppercase(), modifier, fontSize = 10.sp, letterSpacing = 2.4.sp, fontWeight = FontWeight.Bold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Text(text.uppercase(), modifier, fontSize = 10.sp, letterSpacing = if (text.hasCjk()) 0.8.sp else 2.4.sp, fontWeight = FontWeight.Bold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+/**
+ * Chinese, Japanese and Korean set solid: the wide tracking of the small Latin capitals pulls ideographs apart, so
+ * labels in those scripts use a fraction of it, and a heading's two parts join without a space.
+ */
+fun String.hasCjk(): Boolean = any { Character.UnicodeScript.of(it.code).let { s -> s == Character.UnicodeScript.HAN || s == Character.UnicodeScript.HIRAGANA || s == Character.UnicodeScript.KATAKANA || s == Character.UnicodeScript.HANGUL } }
 
 @Composable
 fun Kicker(text: String, modifier: Modifier = Modifier, color: Color = P.accent) =
-    Text(text.uppercase(), modifier, fontSize = 10.sp, letterSpacing = 1.6.sp, fontWeight = FontWeight.Bold, color = color)
+    Text(text.uppercase(), modifier, fontSize = 10.sp, letterSpacing = if (text.hasCjk()) 0.6.sp else 1.6.sp, fontWeight = FontWeight.Bold, color = color)
 
 /** A heading with an optional serif tail, as the reference writes them ("Workspaces, *without boundaries.*"). */
 @Composable
@@ -170,7 +198,7 @@ fun Headline(sans: String, serif: String? = null, modifier: Modifier = Modifier,
         androidx.compose.ui.text.buildAnnotatedString {
             append(sans)
             if (serif != null) {
-                append(" ")
+                if (!(sans.hasCjk() || serif.hasCjk())) append(" ")
                 pushStyle(androidx.compose.ui.text.SpanStyle(fontFamily = P.serif, fontWeight = FontWeight.Normal, letterSpacing = (-0.4).sp))
                 append(serif)
                 pop()
@@ -182,12 +210,13 @@ fun Headline(sans: String, serif: String? = null, modifier: Modifier = Modifier,
         fontWeight = FontWeight.Medium,
         letterSpacing = (-1).sp,
         color = P.ink,
+        style = TextStyle(lineBreak = androidx.compose.ui.text.style.LineBreak.Heading),
     )
 }
 
 @Composable
 fun SerifTitle(text: String, modifier: Modifier = Modifier, size: Int = 28) =
-    Text(text, modifier, fontFamily = P.serif, fontSize = size.sp, lineHeight = (size * 1.12).sp, color = P.ink, letterSpacing = (-0.4).sp)
+    Text(text, modifier, fontFamily = P.serif, fontSize = size.sp, lineHeight = (size * 1.12).sp, color = P.ink, letterSpacing = (-0.4).sp, style = TextStyle(lineBreak = androidx.compose.ui.text.style.LineBreak.Heading))
 
 @Composable
 fun Subtle(text: String, modifier: Modifier = Modifier, maxLines: Int = Int.MAX_VALUE) =
@@ -409,12 +438,15 @@ fun PIconButton(icon: IconSpec, contentDescription: String, onClick: () -> Unit,
     ) { PIcon(icon, size = 18.dp, tint = tint, contentDescription = contentDescription) }
 }
 
-/** The glaze segmented control (`.seg`). */
+/**
+ * The glaze segmented control (`.seg`). With [fill] it spans the width it is given and every segment gets an equal
+ * share, so it lines up with the content under it.
+ */
 @Composable
-fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit, modifier: Modifier = Modifier) {
+fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit, modifier: Modifier = Modifier, fill: Boolean = false) {
     val shape = RoundedCornerShape(15.dp)
     Row(
-        modifier.clip(shape).background(Color(0xFFDCE7D9)).border(1.dp, Color(0xA1FFFFFF), shape).padding(4.dp),
+        modifier.then(if (fill) Modifier.fillMaxWidth() else Modifier).clip(shape).background(Color(0xFFDCE7D9)).border(1.dp, Color(0xA1FFFFFF), shape).padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         options.forEach { (value, label) ->
@@ -422,12 +454,13 @@ fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> 
             val inner = RoundedCornerShape(11.dp)
             Box(
                 Modifier
+                    .then(if (fill) Modifier.weight(1f) else Modifier)
                     .let { if (on) it.shadow(3.dp, inner, spotColor = Color(0x33455F49)).clip(inner).background(P.ceramic) else it.clip(inner) }
                     .clickable(role = Role.Tab) { onSelect(value) }
                     .defaultMinSize(minHeight = 34.dp)
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 contentAlignment = Alignment.Center,
-            ) { Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (on) Color(0xFF355740) else Color(0xFF6C806D), maxLines = 1) }
+            ) { Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (on) Color(0xFF355740) else Color(0xFF6C806D), maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
     }
 }
@@ -521,7 +554,7 @@ fun Metric(label: String, value: String, detail: String? = null, icon: IconSpec?
             Kicker(label, Modifier.weight(1f), color = P.muted)
             if (icon != null) PIcon(icon, size = 16.dp, tint = P.accent)
         }
-        Text(value, Modifier.padding(top = 8.dp), fontFamily = P.serif, fontSize = 28.sp, color = P.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, Modifier.padding(top = 8.dp), fontFamily = P.serif, fontSize = 28.sp, color = P.ink, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(fontFeatureSettings = P.tabular))
         if (detail != null) Text(detail, Modifier.padding(top = 2.dp), fontSize = 11.sp, color = P.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }

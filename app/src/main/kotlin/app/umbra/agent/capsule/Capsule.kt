@@ -1,5 +1,6 @@
 package app.umbra.agent.capsule
 
+import app.umbra.agent.R
 import android.content.ComponentCallbacks
 import android.content.Context
 import android.content.Intent
@@ -101,8 +102,8 @@ class Capsule(private val context: Context, private val container: AppContainer)
                 }
             }
             launch { expanded.collect { place() } }
-            // Opening Umbra folds the capsule away from its own screen.
-            launch { container.ui.appVisible.collect { visible -> if (visible) expanded.value = false } }
+            // Opening Umbra folds the capsule away from its own screen, and (below the status bar) takes it off.
+            launch { container.ui.appVisible.collect { visible -> if (visible) expanded.value = false; sync() } }
         }
     }
 
@@ -116,7 +117,12 @@ class Capsule(private val context: Context, private val container: AppContainer)
         selecting = false
     }
 
-    private fun canShow() = enabled && (UmbraAccessibilityService.connected.value || Settings.canDrawOverlays(context))
+    /**
+     * Without the accessibility service the capsule can only sit below the status bar, where it would cover the app
+     * bar of the app in front; over Umbra itself that is Umbra's own header, which already shows all it would.
+     */
+    private fun canShow() = enabled && (UmbraAccessibilityService.connected.value || Settings.canDrawOverlays(context)) &&
+        !(container.ui.appVisible.value && UmbraAccessibilityService.instance == null)
 
     /** Creates, moves to the right window type, or removes the capsule window to match the settings and the services. */
     private fun sync() {
@@ -142,7 +148,7 @@ class Capsule(private val context: Context, private val container: AppContainer)
         capsuleType = type
         capsuleWindow = runCatching {
             OverlayWindow(wm, params, host, onOutside = { if (expanded.value) expanded.value = false }) { CapsuleView(this, container) }
-        }.onFailure { notice.value = "The capsule could not be shown: ${it.message}" }.getOrNull()
+        }.onFailure { notice.value = context.getString(R.string.cap_notice_capsule, it.message.orEmpty()) }.getOrNull()
         place()
     }
 
@@ -234,7 +240,7 @@ class Capsule(private val context: Context, private val container: AppContainer)
             OverlayWindow(wm, params, host, onBack = { if (composerFocused.value) focusComposer(false) else closeComposer(); true }) {
                 QuickComposerView(this, container, screenHeight, navigation)
             }
-        }.onFailure { notice.value = "The composer could not be shown: ${it.message}" }.getOrNull()
+        }.onFailure { notice.value = context.getString(R.string.cap_notice_composer, it.message.orEmpty()) }.getOrNull()
     }
 
     /** The composer takes the keyboard only while the user is typing; otherwise it never steals focus from the app. */
@@ -259,7 +265,7 @@ class Capsule(private val context: Context, private val container: AppContainer)
     fun send(text: String, projectId: String?) {
         if (busy.value != null) return
         val target = container.ui.composerTarget.value
-        busy.value = "Sending…"
+        busy.value = context.getString(R.string.cap_sending)
         scope.launch {
             try {
                 screen.send(text, target, projectId)
@@ -319,7 +325,7 @@ class Capsule(private val context: Context, private val container: AppContainer)
             }.onFailure {
                 selecting = false
                 sync()
-                notice.value = "The selection could not be shown: ${it.message}"
+                notice.value = context.getString(R.string.cap_notice_selection, it.message.orEmpty())
             }.getOrNull()
         }
     }
@@ -327,7 +333,7 @@ class Capsule(private val context: Context, private val container: AppContainer)
     /** Done: the selection becomes a context chip on the shared composer, and the app underneath is back. */
     private fun finishSelection(capture: ScreenContext.Capture?, stroke: List<Point>?) {
         scope.launch {
-            val chip = if (capture != null && !stroke.isNullOrEmpty()) runCatching { screen.select(capture, stroke) }.onFailure { notice.value = "The selection could not be read: ${it.message}" }.getOrNull() else null
+            val chip = if (capture != null && !stroke.isNullOrEmpty()) runCatching { screen.select(capture, stroke) }.onFailure { notice.value = context.getString(R.string.cap_notice_read, it.message.orEmpty()) }.getOrNull() else null
             selectionWindow?.close()
             selectionWindow = null
             selecting = false

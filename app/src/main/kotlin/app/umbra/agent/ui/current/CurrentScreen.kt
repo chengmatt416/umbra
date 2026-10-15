@@ -37,11 +37,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.clickable
+import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.umbra.agent.AppContainer
+import androidx.annotation.StringRes
+import app.umbra.agent.R
 import app.umbra.agent.container
 import app.umbra.agent.ui.ActivityCard
 import app.umbra.agent.ui.AgentBubble
@@ -106,6 +112,9 @@ class SessionOps(
     private val onError: (String) -> Unit,
     private val onInfo: (String) -> Unit,
 ) {
+    /** A string of the user's language, for work that runs outside composition. */
+    fun string(@StringRes id: Int, vararg args: Any): String = context.getString(id, *args)
+
     suspend fun <T> run(label: String, block: suspend (OmpClient) -> T): T? = try {
         container.supervisor.omp(sessionId, block)
     } catch (e: CancellationException) {
@@ -132,18 +141,18 @@ class SessionOps(
 
     /** Exports the conversation into the session's artifacts folder and opens it. */
     fun exportHtml() = scope.launch {
-        val dirs = try { container.workspaces.sessionDirs(sessionId) } catch (e: Exception) { onError("Export: ${e.message}"); return@launch }
+        val dirs = try { container.workspaces.sessionDirs(sessionId) } catch (e: Exception) { onError(context.getString(R.string.ops_export_failed, e.message.orEmpty())); return@launch }
         val host = dirs.artifacts.resolve("conversation-${System.currentTimeMillis()}.html")
-        val guest = container.workspaceLayout.toGuest(host) ?: run { onError("Export: no guest path for the artifacts folder"); return@launch }
+        val guest = container.workspaceLayout.toGuest(host) ?: run { onError(context.getString(R.string.ops_export_no_path)); return@launch }
         val written = run("Exporting") { it.exportHtml(guest) } ?: return@launch
         val file = container.workspaceLayout.toHost(written)?.toFile()?.takeIf { it.exists() } ?: host.toFile()
-        onInfo("Saved ${file.name} in this session's artifacts.")
+        onInfo(context.getString(R.string.ops_saved_export, file.name))
         open(file, "text/html")
     }
 
     fun copyLastAnswer() = launch("Copying", then = { text: String ->
         context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("answer", text))
-        onInfo("Copied.")
+        onInfo(context.getString(R.string.ops_copied))
     }) { it.lastAssistantText().orEmpty() }
 
     fun open(file: File, mime: String) {
@@ -151,12 +160,12 @@ class SessionOps(
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
             context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (e: Exception) {
-            onError("Nothing on this phone opens ${file.name} (${e.message}).")
+            onError(context.getString(R.string.ops_no_opener, file.name, e.message.orEmpty()))
         }
     }
 }
 
-private enum class View(val label: String) { Chat("Chat"), Terminal("Terminal"), Activity("Activity") }
+private enum class View(@param:androidx.annotation.StringRes val label: Int) { Chat(R.string.view_chat), Terminal(R.string.view_terminal), Activity(R.string.view_activity) }
 
 /**
  * Current: the focused session as omp shows it (ADR 0013) — the conversation with tools, thinking and pictures,
@@ -166,6 +175,7 @@ private enum class View(val label: String) { Chat("Chat"), Terminal("Terminal"),
 fun CurrentScreen(onMenu: () -> Unit, onOpenSession: (String) -> Unit, onSessions: () -> Unit) {
     val container = LocalContext.current.container
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val focused by container.ui.focusedSession.collectAsStateWithLifecycle()
     val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
     val session = sessions.firstOrNull { it.id == focused }
@@ -173,12 +183,10 @@ fun CurrentScreen(onMenu: () -> Unit, onOpenSession: (String) -> Unit, onSession
     Column(Modifier.fillMaxSize()) {
         AppBar(onMenu)
         if (session == null) {
-            Column(Modifier.fillMaxWidth().padding(24.dp)) {
-                Eyebrow("Current")
-                SerifTitle("No session open", Modifier.padding(top = 8.dp), size = 26)
-                Subtle("Open one from Sessions, or start new work on Home.", Modifier.padding(top = 8.dp, bottom = 14.dp))
-                PButton("Sessions", onSessions, style = ButtonStyle.Alt)
-            }
+            app.umbra.agent.ui.porcelain.PEmpty(
+                stringResource(R.string.cur_none_title), stringResource(R.string.cur_none_body), icon = PIcons.activity,
+                action = { PButton(stringResource(R.string.dest_sessions), onSessions, style = ButtonStyle.Alt) },
+            )
             return
         }
         SessionView(session, context, onOpenSession)
@@ -200,6 +208,8 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
     var sheet by remember(id) { mutableStateOf(Sheet.None) }
     var menu by remember { mutableStateOf(false) }
     var contractDialog by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var titleOpen by remember(id) { mutableStateOf(false) }
 
     // omp asks the client to open a sign-in page or prefill the composer.
     LaunchedEffect(id) {
@@ -207,7 +217,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
         effects.collect { e ->
             when (e) {
                 is ConversationEffect.OpenUrl -> runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(e.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                    .onFailure { error = "Open this link to continue: ${e.url}" }
+                    .onFailure { error = context.getString(R.string.cur_open_link, e.url) }
                 is ConversationEffect.SetComposer -> composer = e.text
             }
         }
@@ -221,46 +231,56 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
     val project = session.projectId?.let { container.projects[it] }
 
     Column(Modifier.fillMaxSize().imePadding()) {
-        // Header: where this is, what state it is in, which model; controls for the session.
+        // Header: where this is and what state it is in (one line), the title (one line, tap for all of it), the
+        // session's facts in a row that fades where it continues, then the views.
         Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
-            Eyebrow(project?.let { "Session · ${it.name}" } ?: "Independent session")
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SerifTitle(conversation.title ?: session.title, Modifier.weight(1f).padding(top = 4.dp), size = 24)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Eyebrow(project?.let { stringResource(R.string.cur_eyebrow_project, it.name) } ?: stringResource(R.string.cur_eyebrow_independent), Modifier.weight(1f))
+                Tag(stateText(session), sessionTone(session))
+            }
+            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    conversation.title ?: session.title,
+                    Modifier.weight(1f).clickable(role = androidx.compose.ui.semantics.Role.Button) { titleOpen = !titleOpen }.animateContentSize(),
+                    fontFamily = P.serif, fontSize = 21.sp, lineHeight = 25.sp, color = P.ink, letterSpacing = (-0.3).sp,
+                    maxLines = if (titleOpen) 5 else 1, overflow = TextOverflow.Ellipsis,
+                )
                 Box {
-                    PIconButton(PIcons.more, "Session actions", { menu = true }, size = 36.dp)
+                    PIconButton(PIcons.more, stringResource(R.string.cur_actions), { menu = true }, size = 36.dp)
                     DropdownMenu(menu, { menu = false }) {
-                        DropdownMenuItem(text = { Text("Conversation…") }, onClick = { menu = false; sheet = Sheet.Session })
-                        DropdownMenuItem(text = { Text("Resume contract…") }, onClick = { menu = false; contractDialog = true })
-                        DropdownMenuItem(text = { Text("Open in omp TUI") }, onClick = {
+                        MenuItem(stringResource(R.string.cur_menu_conversation)) { menu = false; sheet = Sheet.Session }
+                        MenuItem(stringResource(R.string.cur_menu_contract)) { menu = false; contractDialog = true }
+                        MenuItem(stringResource(R.string.cur_menu_tui)) {
                             menu = false
                             scope.launch {
                                 try {
                                     container.ompTui.open(id, conversation.title ?: session.title)
                                     view = View.Terminal
-                                    info = "The conversation is open in omp's terminal UI. Close that terminal to continue here."
+                                    info = context.getString(R.string.cur_tui_opened)
                                 } catch (e: Exception) { error = e.message ?: e::class.simpleName }
                             }
-                        })
-                        if (busy) DropdownMenuItem(text = { Text("Pause") }, onClick = { menu = false; scope.launch { container.supervisor.pause(id) } })
-                        if (session.state == SessionState.PAUSED) DropdownMenuItem(text = { Text("Resume") }, onClick = { menu = false; scope.launch { runCatching { container.supervisor.resume(id) }.onFailure { error = it.message } } })
-                        if (!session.state.isTerminal) DropdownMenuItem(text = { Text("Stop the task") }, onClick = { menu = false; scope.launch { container.supervisor.stop(id) } })
-                        DropdownMenuItem(text = { Text("Run again") }, onClick = { menu = false; scope.launch { runCatching { container.supervisor.duplicate(id) }.onSuccess { onOpenSession(it.id) }.onFailure { error = it.message } } })
-                        DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; scope.launch { container.supervisor.delete(id); container.ui.focus(null) } })
+                        }
+                        androidx.compose.material3.HorizontalDivider(color = P.line2)
+                        if (busy) MenuItem(stringResource(R.string.cur_menu_pause), stringResource(R.string.cur_menu_pause_detail)) { menu = false; scope.launch { container.supervisor.pause(id) } }
+                        if (session.state == SessionState.PAUSED) MenuItem(stringResource(R.string.cur_menu_resume)) { menu = false; scope.launch { runCatching { container.supervisor.resume(id) }.onFailure { error = it.message } } }
+                        if (!session.state.isTerminal) MenuItem(stringResource(R.string.cur_menu_stop), stringResource(R.string.cur_menu_stop_detail)) { menu = false; scope.launch { container.supervisor.stop(id) } }
+                        MenuItem(stringResource(R.string.cur_menu_run_again)) { menu = false; scope.launch { runCatching { container.supervisor.duplicate(id) }.onSuccess { onOpenSession(it.id) }.onFailure { error = it.message } } }
+                        androidx.compose.material3.HorizontalDivider(color = P.line2)
+                        MenuItem(stringResource(R.string.cur_menu_delete), danger = true) { menu = false; confirmDelete = true }
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Tag(stateText(session), sessionTone(session))
-                PButton(conversation.session?.model?.name ?: session.model?.modelId ?: "Model", { sheet = Sheet.Model }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.spark)
-                conversation.session?.thinkingLevel?.let { PButton("Thinking: $it", { sheet = Sheet.Model }, style = ButtonStyle.Ghost, tiny = true) }
-                conversation.session?.contextUsage?.let { Tag("Context ${"%.0f".format(it.percent)}%", if (it.percent > 85) Tone.Warn else Tone.Neutral) }
+            app.umbra.agent.ui.porcelain.FadingRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                PButton(conversation.session?.model?.name ?: session.model?.modelId ?: stringResource(R.string.cur_model), { sheet = Sheet.Model }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.spark)
+                conversation.session?.thinkingLevel?.let { PButton(stringResource(R.string.cur_thinking, it), { sheet = Sheet.Model }, style = ButtonStyle.Ghost, tiny = true) }
+                conversation.session?.contextUsage?.let { Tag(stringResource(R.string.cur_context, it.percent.toInt()), if (it.percent > 85) Tone.Warn else Tone.Neutral) }
                 conversation.session?.todos?.takeIf { it.isNotEmpty() }?.let { ph ->
                     val tasks = ph.flatMap { it.tasks }
-                    PButton("Todos ${tasks.count { it.status == "completed" }}/${tasks.size}", { sheet = Sheet.Todos }, style = ButtonStyle.Ghost, tiny = true)
+                    PButton(stringResource(R.string.cur_todos, tasks.count { it.status == "completed" }, tasks.size), { sheet = Sheet.Todos }, style = ButtonStyle.Ghost, tiny = true)
                 }
-                if (!conversation.live) Tag("Agent not running", Tone.Neutral)
+                if (!conversation.live) Tag(stringResource(R.string.cur_not_running), Tone.Neutral)
             }
-            Row(Modifier.padding(top = 8.dp)) { Segmented(View.entries.map { it to it.label }, view, { view = it }) }
+            Segmented(View.entries.map { it to stringResource(it.label) }, view, { view = it }, Modifier.padding(top = 8.dp), fill = true)
         }
         error?.let { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { Callout(it, Tone.Danger) } }
         info?.let { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { Callout(it, Tone.Good) } }
@@ -268,8 +288,8 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
             var why by remember(id) { mutableStateOf<String?>(null) }
             LaunchedEffect(id) { while (true) { why = runCatching { container.supervisor.waitingReason(session.projectId) }.getOrNull(); kotlinx.coroutines.delay(2_000) } }
             Column(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) {
-                Callout("Queued: it has no agent process yet and starts by itself when a slot frees, in fair order." + (why?.let { " Waiting because: $it" } ?: ""), Tone.Warn)
-                PButton("Take it out of the queue", { scope.launch { container.supervisor.dequeue(id) } }, Modifier.padding(top = 6.dp), style = ButtonStyle.Ghost, tiny = true)
+                Callout(stringResource(R.string.cur_queued) + (why?.let { " " + stringResource(R.string.cur_queued_why, it) } ?: ""), Tone.Warn)
+                PButton(stringResource(R.string.cur_dequeue), { scope.launch { container.supervisor.dequeue(id) } }, Modifier.padding(top = 6.dp), style = ButtonStyle.Ghost, tiny = true)
             }
         }
 
@@ -307,6 +327,10 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
     }
     OmpSheet(sheet, conversation, ops, onClose = { sheet = Sheet.None }, onOpen = { sheet = it }, onComposer = { composer = it })
     if (contractDialog) ResumeContractDialog(id, onDismiss = { contractDialog = false })
+    if (confirmDelete) app.umbra.agent.ui.sessions.ConfirmDeleteSession(session, onDismiss = { confirmDelete = false }) {
+        confirmDelete = false
+        scope.launch { container.supervisor.delete(id); container.ui.focus(null) }
+    }
 }
 
 /** Lets one session continue by itself after the app or the phone restarts (architecture spec §8.1). */
@@ -317,32 +341,40 @@ private fun ResumeContractDialog(sessionId: String, onDismiss: () -> Unit) {
     var resume by remember { mutableStateOf(existing?.resumeAfterRestart ?: true) }
     var duration by remember { mutableStateOf(if (existing?.expiresAtMs == null) "complete" else "custom") }
     var allowed by remember { mutableStateOf(existing?.allowedWork.orEmpty()) }
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Resume contract") },
+    app.umbra.agent.ui.porcelain.PConfirm(
+        title = stringResource(R.string.contract_title),
+        body = stringResource(R.string.contract_body),
+        confirmLabel = stringResource(R.string.action_save),
+        danger = false,
+        dismissLabel = stringResource(if (existing != null) R.string.contract_remove else R.string.action_cancel),
+        onDismiss = onDismiss,
+        onDismissButton = { if (existing != null) container.contracts.revoke(sessionId); onDismiss() },
+        onConfirm = {
+            val now = System.currentTimeMillis()
+            val expires = when (duration) { "day" -> now + 86_400_000L; "week" -> now + 7 * 86_400_000L; "custom" -> existing?.expiresAtMs; else -> null }
+            container.contracts.set(sessionId, resume, expires, allowed)
+            onDismiss()
+        },
+        extra = {
+            app.umbra.agent.ui.porcelain.PToggle(stringResource(R.string.contract_switch), checked = resume, onChange = { resume = it }, divider = false)
+            Text(stringResource(R.string.contract_how_long), fontSize = 12.sp, color = P.muted)
+            Segmented(listOf("complete" to stringResource(R.string.contract_until_done), "day" to stringResource(R.string.contract_day), "week" to stringResource(R.string.contract_week)), duration, { duration = it }, fill = true)
+            app.umbra.agent.ui.porcelain.PField(allowed, { allowed = it }, placeholder = stringResource(R.string.contract_allowed))
+        },
+    )
+}
+
+/** A menu entry with an optional second line that says what it does. */
+@Composable
+private fun MenuItem(title: String, detail: String? = null, danger: Boolean = false, onClick: () -> Unit) {
+    DropdownMenuItem(
         text = {
-            Column {
-                Text("If the app or the phone restarts while this session works, it may continue by itself once Linux is ready. It gains no new permissions, and a lockdown still holds it.", fontSize = 13.sp, color = P.sub)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp)) {
-                    Text("Resume after a restart", Modifier.weight(1f), fontSize = 14.sp, color = P.ink)
-                    androidx.compose.material3.Switch(resume, { resume = it })
-                }
-                Text("For how long", Modifier.padding(top = 8.dp), fontSize = 12.sp, color = P.muted)
-                Segmented(listOf("complete" to "Until done", "day" to "24 hours", "week" to "7 days"), duration, { duration = it })
-                androidx.compose.material3.OutlinedTextField(allowed, { allowed = it }, Modifier.fillMaxWidth().padding(top = 8.dp), placeholder = { Text("Allowed work, e.g. builds and tests only") })
+            Column(Modifier.padding(vertical = 2.dp)) {
+                Text(title, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, color = if (danger) P.danger else P.ink)
+                if (detail != null) Text(detail, Modifier.padding(top = 1.dp), fontSize = 11.sp, lineHeight = 15.sp, color = P.muted)
             }
         },
-        confirmButton = {
-            androidx.compose.material3.TextButton(onClick = {
-                val now = System.currentTimeMillis()
-                val expires = when (duration) { "day" -> now + 86_400_000L; "week" -> now + 7 * 86_400_000L; "custom" -> existing?.expiresAtMs; else -> null }
-                container.contracts.set(sessionId, resume, expires, allowed)
-                onDismiss()
-            }) { Text("Save") }
-        },
-        dismissButton = {
-            androidx.compose.material3.TextButton(onClick = { container.contracts.revoke(sessionId); onDismiss() }) { Text(if (existing != null) "Remove" else "Cancel") }
-        },
+        onClick = onClick,
     )
 }
 
@@ -357,6 +389,7 @@ private fun ChatList(
 ) {
     val container = LocalContext.current.container
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val list = rememberLazyListState()
     val items = conversation.items.filter { it !is ChatItem.ToolResult }
     val resultImages = remember(conversation.items) { conversation.items.filterIsInstance<ChatItem.ToolResult>().filter { it.images.isNotEmpty() }.associate { it.toolCallId to it.images } }
@@ -376,8 +409,8 @@ private fun ChatList(
         if (items.isEmpty()) item(key = "empty") {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 FoldedOrb(Modifier.fillMaxWidth().height(150.dp), working = conversation.working)
-                Subtle(if (session.state == SessionState.CREATED) "This session has not started. Send a message." else "The conversation appears here once the agent has started.")
-                if (session.request.isNotBlank() && session.state != SessionState.CREATED) Subtle("Request: ${session.request}", Modifier.padding(top = 6.dp))
+                Subtle(stringResource(if (session.state == SessionState.CREATED) R.string.cur_empty_new else R.string.cur_empty_wait))
+                if (session.request.isNotBlank() && session.state != SessionState.CREATED) Subtle(stringResource(R.string.cur_request, session.request), Modifier.padding(top = 6.dp))
             }
         }
         items(items, key = { it.key }) { item ->
@@ -395,15 +428,15 @@ private fun ChatList(
         }
         conversation.retry?.let { r ->
             item(key = "retry") {
-                Callout("The provider failed (${r.error}). Retrying, attempt ${r.attempt} of ${r.maxAttempts}.", Tone.Warn)
+                Callout(stringResource(R.string.cur_retrying, r.error, r.attempt, r.maxAttempts), Tone.Warn)
                 Gap(6.dp)
-                PButton("Stop retrying", { ops.launch("Stopping the retries") { it.abortRetry() } }, style = ButtonStyle.Alt, tiny = true)
+                PButton(stringResource(R.string.cur_stop_retrying), { ops.launch("Stopping the retries") { it.abortRetry() } }, style = ButtonStyle.Alt, tiny = true)
             }
         }
-        if (conversation.compacting) item(key = "compacting") { Callout("Compacting the conversation…", Tone.Neutral) }
+        if (conversation.compacting) item(key = "compacting") { Callout(stringResource(R.string.cur_compacting), Tone.Neutral) }
         items(approvals, key = { it.id }) { r -> ApprovalPanel(r, null, onDecision = { container.approvals.resolve(r.id, it) }) }
         items(questions, key = { it.request.id }) { q -> QuestionPanel(q, null, onAnswer = { container.questions.answer(q.request.id, it) }) }
-        if (session.state == SessionState.FAILED) item(key = "failed") { Callout(session.lastError ?: "The task failed.", Tone.Danger) }
+        if (session.state == SessionState.FAILED) item(key = "failed") { Callout(session.lastError ?: stringResource(R.string.cur_failed), Tone.Danger) }
     }
 }
 
@@ -415,7 +448,7 @@ private fun branchAt(ops: SessionOps, user: ChatItem.User, conversation: Convers
         val points = client.branchMessages()
         // Match by position among the user messages of this branch; fall back to the text.
         val entry = points.getOrNull(index)?.takeIf { it.second.trim() == user.text.trim() } ?: points.lastOrNull { it.second.trim() == user.text.trim() }
-            ?: error("that message is not on the current branch")
+            ?: error(ops.string(R.string.ops_not_on_branch))
         if (fork) { client.fork(entry.first); null } else client.branch(entry.first)
     }
 }
@@ -427,7 +460,18 @@ private fun ActivityList(sessionId: String) {
     val records by remember(sessionId) { container.sessionStore.eventFlow(sessionId) }.collectAsStateWithLifecycle(emptyList())
     val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
     val session = sessions.firstOrNull { it.id == sessionId }
-    val items = remember(records) { TimelineBuilder.build(records) }
+    val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
+    val labels = remember(context) {
+        TimelineBuilder.Labels(
+            problemIn = { resources.getString(R.string.tl_problem, it) },
+            recovered = resources.getString(R.string.tl_recovered),
+            recoveryFailed = resources.getString(R.string.tl_recovery_failed),
+            appEvent = { resources.getString(R.string.tl_app_event, it) },
+            notice = resources.getString(R.string.tl_notice),
+        )
+    }
+    val items = remember(records, labels) { TimelineBuilder.build(records, labels) }
     val plan = remember(records) { TimelineBuilder.latestPlan(records) ?: session?.plan.orEmpty() }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp, 10.dp, 18.dp, 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (plan.isNotEmpty()) item(key = "plan") { PlanCard(plan) }
@@ -440,8 +484,8 @@ private fun ActivityList(sessionId: String) {
                 is TimelineItem.Approval -> ApprovalLogRow(item)
                 is TimelineItem.StateChange -> StateDivider(item.to, item.reason)
                 is TimelineItem.Notice -> NoticeRow(item.level, item.title, item.text)
-                is TimelineItem.Subagent -> NoticeRow("info", "Helper ${item.id}: ${item.kind}", item.summary.orEmpty())
-                is TimelineItem.Decision -> NoticeRow("info", "Quick decision (${item.engine ?: "local"})", "${item.question} → ${item.answer}")
+                is TimelineItem.Subagent -> NoticeRow("info", stringResource(R.string.act_helper, item.id, item.kind), item.summary.orEmpty())
+                is TimelineItem.Decision -> NoticeRow("info", stringResource(R.string.act_quick, item.engine ?: stringResource(R.string.act_local)), "${item.question} → ${item.answer}")
             }
         }
     }

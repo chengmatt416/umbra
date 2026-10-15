@@ -1,5 +1,7 @@
 package app.umbra.agent.ui.current
 
+import app.umbra.agent.R
+import androidx.compose.ui.res.stringResource
 import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.animation.animateContentSize
@@ -84,16 +86,16 @@ fun UserMessage(item: ChatItem.User, actions: MessageActions) {
                     .combinedClickable(onClick = {}, onLongClick = { menu = true })
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
-                if (item.steering) Text("Steered while working", fontSize = 10.sp, color = P.amber, fontWeight = FontWeight.SemiBold)
+                if (item.steering) Text(stringResource(R.string.chat_steered), fontSize = 10.sp, color = P.amber, fontWeight = FontWeight.SemiBold)
                 if (item.text.isNotBlank()) Text(item.text, fontSize = 15.sp, lineHeight = 22.sp, color = P.ink)
                 if (item.images.isNotEmpty()) Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     item.images.forEach { Base64Picture(it.base64, 96) }
                 }
             }
             DropdownMenu(menu, { menu = false }) {
-                DropdownMenuItem(text = { Text("Copy") }, onClick = { menu = false; actions.copy(item.text) })
-                actions.editFrom?.let { f -> DropdownMenuItem(text = { Text("Edit and resend from here") }, onClick = { menu = false; f(item) }) }
-                actions.forkFrom?.let { f -> DropdownMenuItem(text = { Text("Fork a new conversation from here") }, onClick = { menu = false; f(item) }) }
+                DropdownMenuItem(text = { Text(stringResource(R.string.chat_copy)) }, onClick = { menu = false; actions.copy(item.text) })
+                actions.editFrom?.let { f -> DropdownMenuItem(text = { Text(stringResource(R.string.chat_edit_from)) }, onClick = { menu = false; f(item) }) }
+                actions.forkFrom?.let { f -> DropdownMenuItem(text = { Text(stringResource(R.string.chat_fork_from)) }, onClick = { menu = false; f(item) }) }
             }
         }
     }
@@ -119,7 +121,7 @@ fun AssistantMessage(item: ChatItem.Assistant, tools: Map<String, ToolRun>, resu
             }
             if (item.streaming && item.blocks.isEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp, color = P.accent)
-                Text("  Thinking…", fontSize = 12.sp, color = P.muted)
+                Text("  " + stringResource(R.string.chat_thinking), fontSize = 12.sp, color = P.muted)
             }
             item.error?.takeIf { item.stopReason == "error" || item.stopReason == "aborted" }?.let { Callout(it, if (item.stopReason == "aborted") Tone.Warn else Tone.Danger) }
             if (!item.streaming && (item.outputTokens > 0 || item.cost > 0)) {
@@ -130,7 +132,7 @@ fun AssistantMessage(item: ChatItem.Assistant, tools: Map<String, ToolRun>, resu
             }
         }
         DropdownMenu(menu, { menu = false }) {
-            DropdownMenuItem(text = { Text("Copy") }, onClick = { menu = false; actions.copy(item.text) })
+            DropdownMenuItem(text = { Text(stringResource(R.string.chat_copy)) }, onClick = { menu = false; actions.copy(item.text) })
         }
     }
 }
@@ -143,7 +145,7 @@ private fun Thinking(block: Block.Thinking, live: Boolean) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (live) CircularProgressIndicator(Modifier.size(11.dp), strokeWidth = 1.2.dp, color = P.muted)
-            Text(if (block.redacted) "Thinking (hidden by the provider)" else if (live) "  Thinking…" else "Thought", fontSize = 12.sp, fontStyle = FontStyle.Italic, color = P.muted)
+            Text(if (block.redacted) stringResource(R.string.chat_thinking_hidden) else if (live) "  " + stringResource(R.string.chat_thinking) else stringResource(R.string.chat_thought), fontSize = 12.sp, fontStyle = FontStyle.Italic, color = P.muted)
         }
         if (open || live) Text(block.text.takeLast(if (open) 20_000 else 400), Modifier.padding(top = 4.dp), fontSize = 12.sp, lineHeight = 17.sp, color = P.sub, fontStyle = FontStyle.Italic)
     }
@@ -211,11 +213,11 @@ private fun EditDiff(arguments: kotlinx.serialization.json.JsonObject) {
 @Composable
 fun BashRun(item: ChatItem.Bash) {
     ConsolePane("! ${item.command}", status = when {
-        item.cancelled -> "cancelled"
-        item.exitCode == null -> "running"
-        else -> "exit ${item.exitCode}"
+        item.cancelled -> stringResource(R.string.chat_cmd_cancelled)
+        item.exitCode == null -> stringResource(R.string.chat_cmd_running)
+        else -> stringResource(R.string.chat_cmd_exit, item.exitCode.toString())
     }) {
-        Text(item.output.takeLast(20_000).ifBlank { "(no output)" }, Modifier.fillMaxWidth().heightIn(max = 320.dp).horizontalScroll(rememberScrollState()).padding(12.dp), fontSize = 11.sp, lineHeight = 17.sp, fontFamily = P.mono, color = P.codeText)
+        Text(item.output.takeLast(20_000).ifBlank { stringResource(R.string.chat_cmd_no_output) }, Modifier.fillMaxWidth().heightIn(max = 320.dp).horizontalScroll(rememberScrollState()).padding(12.dp), fontSize = 11.sp, lineHeight = 17.sp, fontFamily = P.mono, color = P.codeText)
     }
 }
 
@@ -226,7 +228,7 @@ fun SummaryMarker(item: ChatItem.Summary) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f).height(1.dp).background(P.line))
             Text(
-                "  " + (if (item.compaction) "Compacted" else "Branch summary") + (item.tokensBefore?.let { " · ${it / 1000}k tokens before" } ?: "") + "  ",
+                "  " + (if (item.compaction) stringResource(R.string.chat_compacted) else stringResource(R.string.chat_branch_summary)) + (item.tokensBefore?.let { " · " + stringResource(R.string.chat_tokens_before, (it / 1000).toInt()) } ?: "") + "  ",
                 fontSize = 11.sp, color = P.muted,
             )
             Box(Modifier.weight(1f).height(1.dp).background(P.line))
@@ -267,7 +269,7 @@ fun NoticeLine(item: ChatItem.Notice) {
 fun Base64Picture(data: String, height: Int) {
     if (data.isEmpty()) {
         Box(Modifier.size(height.dp * 0.75f, height.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFE3EBE0)), contentAlignment = Alignment.Center) {
-            Subtle("Picture", Modifier.padding(6.dp))
+            Subtle(stringResource(R.string.chat_picture), Modifier.padding(6.dp))
         }
         return
     }
@@ -285,6 +287,6 @@ fun Base64Picture(data: String, height: Int) {
             }
         }
     }
-    bitmap?.let { Image(it, "Picture", Modifier.height(height.dp).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.FillHeight) }
+    bitmap?.let { Image(it, stringResource(R.string.chat_picture), Modifier.height(height.dp).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.FillHeight) }
         ?: Box(Modifier.width(height.dp * 0.6f).height(height.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFE3EBE0)))
 }

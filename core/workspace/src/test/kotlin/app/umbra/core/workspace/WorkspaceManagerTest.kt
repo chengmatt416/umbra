@@ -91,6 +91,22 @@ class WorkspaceManagerTest {
     }
 
     @Test
+    fun onlyActiveSessionsBlockDeletingWhenIdle(): Unit = runBlocking {
+        val m = manager()
+        m.create("shared", sessionId = "done")
+        m.attachSession("shared", "working")
+        val refused = assertFailsWith<WorkspaceInUseException> { m.deleteIfIdle("shared") { it == "working" } }
+        assertTrue("working" in refused.message!!)
+        assertFalse("done" in refused.message!!)
+        assertTrue(layout().projectDir("shared").exists())
+
+        assertTrue(m.deleteIfIdle("shared") { false })
+        assertFalse(layout().projectDir("shared").exists())
+        assertNull(m.get("shared"))
+        assertFalse(m.deleteIfIdle("shared") { false })
+    }
+
+    @Test
     fun resolveStaysInsideTheWorkspace(): Unit = runBlocking {
         val m = manager()
         m.create("app")

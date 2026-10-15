@@ -7,22 +7,29 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.OutlinedTextField
+import androidx.annotation.StringRes
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.umbra.agent.R
 import app.umbra.agent.ui.porcelain.ButtonStyle
+import app.umbra.agent.ui.porcelain.PConfirm
+import app.umbra.agent.ui.porcelain.PField
+import app.umbra.agent.ui.porcelain.PIcon
+import app.umbra.agent.ui.porcelain.PIcons
+import app.umbra.agent.ui.riskCategoryRes
+import app.umbra.agent.ui.riskRes
 import app.umbra.agent.ui.porcelain.CardStyle
 import app.umbra.agent.ui.porcelain.Gap
 import app.umbra.agent.ui.porcelain.Kicker
@@ -32,11 +39,16 @@ import app.umbra.agent.ui.porcelain.PCard
 import app.umbra.agent.ui.porcelain.Subtle
 import app.umbra.agent.ui.porcelain.Tag
 import app.umbra.agent.ui.porcelain.Tone
-import app.umbra.agent.ui.rememberLabel
 import app.umbra.core.orchestrator.QuestionBroker
 import app.umbra.core.safety.ApprovalDecision
 import app.umbra.core.safety.ApprovalRequest
 import app.umbra.core.safety.RiskLevel
+import app.umbra.core.safety.ApprovalSurface
+import app.umbra.core.safety.ApproveGesture
+import app.umbra.core.safety.RememberScope
+import app.umbra.core.safety.approveGesture
+import app.umbra.core.safety.offeredRememberScope
+import kotlinx.coroutines.delay
 import app.umbra.runtime.omp.AskAnswer
 import app.umbra.runtime.omp.UiRequest
 import app.umbra.runtime.omp.UiResponse
@@ -47,41 +59,103 @@ fun riskTone(level: RiskLevel) = when (level) {
     RiskLevel.HIGH, RiskLevel.CRITICAL -> Tone.Danger
 }
 
+/** Milliseconds left before an unanswered approval is denied (fail closed), ticking once a second. */
+@Composable
+fun rememberRemainingMs(request: ApprovalRequest): Long {
+    val deadline = request.createdAtMs + request.timeoutMs
+    val remaining by produceState(deadline - System.currentTimeMillis(), request.id) {
+        while (true) {
+            value = (deadline - System.currentTimeMillis()).coerceAtLeast(0)
+            delay(1_000)
+        }
+    }
+    return remaining
+}
+
+fun formatRemaining(ms: Long): String {
+    val s = (ms + 999) / 1000
+    return "%d:%02d".format(s / 60, s % 60)
+}
+
+/** The countdown line every approval surface shows: amber, then clay red in its last minute. */
+@Composable
+fun ApprovalCountdown(request: ApprovalRequest, modifier: Modifier = Modifier, dark: Boolean = false) {
+    val left = rememberRemainingMs(request)
+    val urgent = left <= 60_000
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        val color = when {
+            dark && urgent -> androidx.compose.ui.graphics.Color(0xFFE7A493)
+            dark -> androidx.compose.ui.graphics.Color(0xFFF9E5C3)
+            urgent -> P.danger
+            else -> P.amber
+        }
+        PIcon(PIcons.clock, size = 13.dp, tint = color)
+        Text(stringResource(R.string.appr_countdown, formatRemaining(left)), fontSize = 12.sp, color = color, style = androidx.compose.ui.text.TextStyle(fontFeatureSettings = P.tabular))
+    }
+}
+
+@StringRes
+fun rememberLabel(scope: RememberScope) = when (scope) {
+    RememberScope.THIS_COMMAND_THIS_SESSION -> R.string.appr_remember_command
+    RememberScope.THIS_APP_THIS_SESSION -> R.string.appr_remember_app
+    RememberScope.THIS_CATEGORY_THIS_SESSION -> R.string.appr_remember_category
+}
+
 /**
- * One approval: exactly what will happen, why it is risky, and an answer that covers this one action only unless
- * the user picks a remembered scope (the reference's "Approve once").
+ * One approval, where the whole request is shown (Inbox, the session): exactly what will happen, why it is risky,
+ * how long is left, Deny and "Approve once". CRITICAL asks once more and says what that means. At most one remembered
+ * scope is offered, the narrowest the request allows, under the main answer.
  */
 @Composable
 fun ApprovalPanel(request: ApprovalRequest, sessionTitle: String?, onDecision: (ApprovalDecision) -> Unit, modifier: Modifier = Modifier) {
     val level = request.assessment.level
-    var more by remember(request.id) { mutableStateOf(false) }
+    val gesture = approveGesture(level, ApprovalSurface.FULL)
+    val offered = offeredRememberScope(request, ApprovalSurface.FULL)
+    var confirming by remember(request.id) { mutableStateOf(false) }
     PCard(modifier, style = CardStyle.Soft) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.weight(1f)) {
-                Kicker(sessionTitle ?: "Approval")
-                Text(request.description, Modifier.padding(top = 6.dp), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = P.ink,
-                    fontFamily = if (request.toolName == "shell" || request.toolName == "bash") P.mono else null)
+                Kicker(sessionTitle ?: stringResource(R.string.appr_kicker))
+                Text(
+                    request.description, Modifier.padding(top = 6.dp), fontSize = 15.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold, color = P.ink,
+                    fontFamily = if (request.toolName == "shell" || request.toolName == "bash") P.mono else null,
+                )
             }
-            Tag(level.name.lowercase().replaceFirstChar { it.uppercase() } + " risk", riskTone(level))
+            Tag(stringResource(riskRes(level)), riskTone(level))
         }
-        request.assessment.findings.forEach { Subtle("• ${it.category.title}: ${it.reason}", Modifier.padding(top = 4.dp)) }
-        request.details["why"]?.let { Subtle("Why: $it", Modifier.padding(top = 4.dp)) }
-        request.foregroundPackage?.let { Subtle("In: $it", Modifier.padding(top = 2.dp)) }
-        Subtle("This answers this one action. It does not grant lasting control.", Modifier.padding(top = 8.dp))
+        request.assessment.findings.forEach { Subtle("• ${stringResource(riskCategoryRes(it.category))}: ${it.reason}", Modifier.padding(top = 4.dp)) }
+        request.details["why"]?.let { Subtle(stringResource(R.string.appr_why, it), Modifier.padding(top = 4.dp)) }
+        request.foregroundPackage?.let { Subtle(stringResource(R.string.appr_in_app, it), Modifier.padding(top = 2.dp)) }
+        ApprovalCountdown(request, Modifier.padding(top = 10.dp))
         Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            PButton("Deny", { onDecision(ApprovalDecision.Denied("denied by the user")) }, style = ButtonStyle.Alt, tiny = true)
-            PButton("Approve once", { onDecision(ApprovalDecision.Approved()) }, tiny = true, style = if (level >= RiskLevel.HIGH) ButtonStyle.Warn else ButtonStyle.Primary)
-            if (request.rememberOptions.isNotEmpty() && level < RiskLevel.CRITICAL) {
-                Box {
-                    PButton("More", { more = true }, style = ButtonStyle.Ghost, tiny = true)
-                    DropdownMenu(more, { more = false }) {
-                        request.rememberOptions.forEach { scope ->
-                            DropdownMenuItem(text = { Text(rememberLabel(scope)) }, onClick = { more = false; onDecision(ApprovalDecision.Approved(scope)) })
-                        }
-                    }
-                }
-            }
+            PButton(stringResource(R.string.appr_deny), { onDecision(ApprovalDecision.Denied("denied by the user")) }, Modifier.weight(1f), style = ButtonStyle.Alt)
+            PButton(
+                stringResource(R.string.appr_approve_once),
+                { if (gesture == ApproveGesture.CONFIRM) confirming = true else onDecision(ApprovalDecision.Approved()) },
+                Modifier.weight(1f),
+                style = if (level >= RiskLevel.HIGH) ButtonStyle.Warn else ButtonStyle.Primary,
+            )
         }
+        if (offered != null) {
+            PButton(stringResource(rememberLabel(offered)), { onDecision(ApprovalDecision.Approved(offered)) }, Modifier.fillMaxWidth().padding(top = 8.dp), style = ButtonStyle.Ghost, tiny = true)
+        }
+        Subtle(stringResource(R.string.appr_once_note), Modifier.padding(top = 10.dp))
+    }
+    if (confirming) {
+        PConfirm(
+            title = stringResource(R.string.appr_critical_title),
+            body = stringResource(R.string.appr_critical_body),
+            confirmLabel = stringResource(R.string.appr_critical_confirm),
+            onDismiss = { confirming = false },
+            onConfirm = { confirming = false; onDecision(ApprovalDecision.Approved()) },
+            extra = {
+                Text(
+                    request.description, Modifier.fillMaxWidth().padding(top = 2.dp), fontSize = 13.sp, lineHeight = 19.sp, color = P.ink,
+                    fontFamily = if (request.toolName == "shell" || request.toolName == "bash") P.mono else null, maxLines = 8,
+                )
+                request.assessment.findings.filter { it.level >= RiskLevel.HIGH }.forEach { Subtle("• ${stringResource(riskCategoryRes(it.category))}: ${it.reason}") }
+            },
+        )
     }
 }
 
@@ -89,7 +163,7 @@ fun ApprovalPanel(request: ApprovalRequest, sessionTitle: String?, onDecision: (
 @Composable
 fun QuestionPanel(pending: QuestionBroker.Pending, sessionTitle: String?, onAnswer: (UiResponse) -> Unit, modifier: Modifier = Modifier) {
     PCard(modifier, style = CardStyle.Soft) {
-        Kicker(sessionTitle ?: "Question")
+        Kicker(sessionTitle ?: stringResource(R.string.q_kicker))
         Gap(6.dp)
         when (val r = pending.request) {
             is UiRequest.Select -> {
@@ -103,8 +177,8 @@ fun QuestionPanel(pending: QuestionBroker.Pending, sessionTitle: String?, onAnsw
                 Text(r.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = P.ink)
                 if (r.message.isNotBlank()) Subtle(r.message, Modifier.padding(top = 4.dp))
                 Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PButton("No", { onAnswer(UiResponse.Confirmed(false)) }, style = ButtonStyle.Alt, tiny = true)
-                    PButton("Yes", { onAnswer(UiResponse.Confirmed(true)) }, tiny = true)
+                    PButton(stringResource(R.string.q_no), { onAnswer(UiResponse.Confirmed(false)) }, style = ButtonStyle.Alt, tiny = true)
+                    PButton(stringResource(R.string.q_yes), { onAnswer(UiResponse.Confirmed(true)) }, tiny = true)
                 }
             }
             is UiRequest.Input -> TextAnswer(r.title, r.placeholder, null, onAnswer)
@@ -112,7 +186,7 @@ fun QuestionPanel(pending: QuestionBroker.Pending, sessionTitle: String?, onAnsw
             is UiRequest.Ask -> AskAnswerForm(r, onAnswer)
         }
         Gap(6.dp)
-        PButton("Skip", { onAnswer(UiResponse.Cancelled()) }, style = ButtonStyle.Ghost, tiny = true)
+        PButton(stringResource(R.string.q_skip), { onAnswer(UiResponse.Cancelled()) }, style = ButtonStyle.Ghost, tiny = true)
     }
 }
 
@@ -120,9 +194,9 @@ fun QuestionPanel(pending: QuestionBroker.Pending, sessionTitle: String?, onAnsw
 private fun TextAnswer(title: String, placeholder: String?, prefill: String?, onAnswer: (UiResponse) -> Unit) {
     var text by remember(title) { mutableStateOf(prefill.orEmpty()) }
     Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = P.ink)
-    OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth().padding(top = 8.dp), placeholder = placeholder?.let { { Text(it) } }, minLines = if (prefill != null) 3 else 1)
+    PField(text, { text = it }, Modifier.padding(top = 8.dp), placeholder = placeholder, minLines = if (prefill != null) 3 else 1)
     Gap(8.dp)
-    PButton("Send", { onAnswer(UiResponse.Value(text)) }, tiny = true)
+    PButton(stringResource(R.string.q_send), { onAnswer(UiResponse.Value(text)) }, tiny = true)
 }
 
 @Composable
@@ -144,15 +218,15 @@ private fun AskAnswerForm(request: UiRequest.Ask, onAnswer: (UiResponse) -> Unit
             ) {
                 RadioButton(selected = on, onClick = null)
                 Column(Modifier.padding(start = 8.dp, top = 4.dp, bottom = 4.dp)) {
-                    Text(option.label + if (q.recommended == q.options.indexOf(option)) "  (suggested)" else "", fontSize = 14.sp, color = P.ink)
+                    Text(option.label + if (q.recommended == q.options.indexOf(option)) "  " + stringResource(R.string.q_suggested) else "", fontSize = 14.sp, color = P.ink)
                     option.description?.let { Subtle(it) }
                 }
             }
         }
-        OutlinedTextField(custom.value[q.id].orEmpty(), { custom.value = custom.value + (q.id to it) }, Modifier.fillMaxWidth().padding(top = 4.dp), placeholder = { Text("Or write your own answer") }, singleLine = true)
+        PField(custom.value[q.id].orEmpty(), { custom.value = custom.value + (q.id to it) }, Modifier.padding(top = 4.dp), placeholder = stringResource(R.string.q_own_answer), singleLine = true)
         Gap(8.dp)
     }
-    PButton("Send answers", {
+    PButton(stringResource(R.string.q_send_answers), {
         onAnswer(UiResponse.Answers(request.questions.map { q -> AskAnswer(q.id, picked.value[q.id].orEmpty().toList(), custom.value[q.id]?.takeIf { it.isNotBlank() }) }))
     }, tiny = true)
 }

@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.resources
 
+import androidx.compose.ui.res.pluralStringResource
 import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,10 +23,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.umbra.agent.R
 import app.umbra.agent.container
+import app.umbra.agent.ui.pressureLevelRes
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.Callout
 import app.umbra.agent.ui.porcelain.CardStyle
@@ -73,27 +77,29 @@ fun ResourceScreen() {
     var error by remember { mutableStateOf<String?>(null) }
     val editing = draft?.policy ?: published?.policy ?: ResourcePolicy()
     val keys = listOf(ResourcePolicy.INDEPENDENT) + projects.values.sortedBy { it.createdAtMs }.map { it.id }
-    fun nameOf(key: String) = if (key == ResourcePolicy.INDEPENDENT) "Independent sessions" else projects[key]?.name ?: key
+    // Short enough for the narrow budget columns (L-07): it never wraps onto two lines.
+    val independentName = stringResource(R.string.res_independent)
+    fun nameOf(key: String) = if (key == ResourcePolicy.INDEPENDENT) independentName else projects[key]?.name ?: key
     val sample = container.governor.latestSample
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 18.dp)) {
-        Eyebrow("Capacity · leases · policy")
-        Headline("Resource governance,", "made legible.", Modifier.padding(top = 6.dp, bottom = 12.dp), size = 26)
+        Eyebrow(stringResource(R.string.res_eyebrow))
+        Headline(stringResource(R.string.res_headline), stringResource(R.string.res_headline_tail), Modifier.padding(top = 6.dp, bottom = 12.dp), size = 26)
 
         PCard {
             Row {
                 Column(Modifier.weight(1f)) {
-                    Kicker("This device now")
-                    Text("${decision.maxConcurrentSessions} agents at most", Modifier.padding(top = 4.dp), fontSize = 18.sp, color = P.ink)
+                    Kicker(stringResource(R.string.res_now))
+                    Text(pluralStringResource(R.plurals.res_agents_max, decision.maxConcurrentSessions, decision.maxConcurrentSessions), Modifier.padding(top = 4.dp), fontSize = 18.sp, color = P.ink)
                 }
-                Tag(decision.level.name.lowercase().replaceFirstChar { it.uppercase() }, if (decision.level >= PressureLevel.HIGH) Tone.Warn else Tone.Good)
+                Tag(stringResource(pressureLevelRes(decision.level)), if (decision.level >= PressureLevel.HIGH) Tone.Warn else Tone.Good)
             }
             sample?.let { s ->
-                Subtle(listOfNotNull(s.memAvailMb?.let { "RAM free ${it} MB" + (s.memTotalMb?.let { t -> " of $t" } ?: "") }, s.storageFreeMb?.let { "storage free ${it} MB" }).joinToString(" · "), Modifier.padding(top = 4.dp))
+                Subtle(listOfNotNull(s.memAvailMb?.let { a -> s.memTotalMb?.let { t -> stringResource(R.string.res_ram_free_of, a, t) } ?: stringResource(R.string.res_ram_free, a) }, s.storageFreeMb?.let { stringResource(R.string.res_storage_free, it) }).joinToString(" · "), Modifier.padding(top = 4.dp))
             }
             if (decision.reasons.isNotEmpty()) Subtle(decision.reasons.joinToString("; "), Modifier.padding(top = 2.dp))
             Gap(6.dp)
-            Subtle("Measured, not promised: when the phone runs short, new agents wait and finished ones release their processes first.")
+            Subtle(stringResource(R.string.res_measured))
         }
         Gap(12.dp)
 
@@ -103,13 +109,13 @@ fun ResourceScreen() {
         PCard {
             Row {
                 Column(Modifier.weight(1f)) {
-                    Kicker(if (draft != null) "Draft · not in force" else "Budget board")
-                    Text("Guaranteed · maximum · running", Modifier.padding(top = 4.dp), fontSize = 18.sp, color = P.ink)
+                    Kicker(if (draft != null) stringResource(R.string.res_draft) else stringResource(R.string.res_board))
+                    Text(stringResource(R.string.res_board_title), Modifier.padding(top = 4.dp), fontSize = 18.sp, color = P.ink)
                 }
-                Tag(if (draft != null) "Unpublished draft" else "Rev. ${published?.number ?: 0}", if (draft != null) Tone.Warn else Tone.Neutral)
+                Tag(if (draft != null) stringResource(R.string.res_unpublished) else stringResource(R.string.res_rev, published?.number ?: 0), if (draft != null) Tone.Warn else Tone.Neutral)
             }
             Gap(6.dp)
-            PSetting("Slots shared out", "One slot is one running agent process", divider = true) {
+            PSetting(stringResource(R.string.res_slots), stringResource(R.string.res_slots_d), divider = true) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     PButton("−", { container.policies.saveDraft(editing.copy(slots = (editing.slots - 1).coerceAtLeast(1))) }, style = ButtonStyle.Alt, tiny = true)
                     Text("${editing.slots}", fontSize = 16.sp, color = P.ink, modifier = Modifier.padding(top = 6.dp))
@@ -121,12 +127,12 @@ fun ResourceScreen() {
                 val now = running[if (key == ResourcePolicy.INDEPENDENT) null else key] ?: 0
                 Column(Modifier.padding(top = 10.dp)) {
                     Row {
-                        Text(nameOf(key), Modifier.weight(1f), fontSize = 14.sp, color = P.ink)
-                        Text("${b.guaranteed} guaranteed · ${if (b.max == 0) "no max" else "max ${b.max}"} · $now running", fontSize = 12.sp, color = P.sub)
+                        Text(nameOf(key), Modifier.weight(1f), fontSize = 14.sp, color = P.ink, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        Text(stringResource(R.string.res_budget_line, b.guaranteed, if (b.max == 0) stringResource(R.string.res_no_max) else stringResource(R.string.res_max, b.max), now), fontSize = 12.sp, color = P.sub)
                     }
                     Slider(b.guaranteed.toFloat(), { v -> container.policies.saveDraft(editing.copy(budgets = editing.budgets + (key to b.copy(guaranteed = v.toInt())))) }, valueRange = 0f..editing.slots.toFloat(), steps = (editing.slots - 1).coerceAtLeast(0))
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Maximum", fontSize = 12.sp, color = P.muted, modifier = Modifier.padding(top = 6.dp))
+                        Text(stringResource(R.string.res_maximum), fontSize = 12.sp, color = P.muted, modifier = Modifier.padding(top = 6.dp))
                         PButton("−", { container.policies.saveDraft(editing.copy(budgets = editing.budgets + (key to b.copy(max = (b.max - 1).coerceAtLeast(0))))) }, style = ButtonStyle.Ghost, tiny = true)
                         PButton("+", { container.policies.saveDraft(editing.copy(budgets = editing.budgets + (key to b.copy(max = (b.max + 1).coerceAtMost(editing.slots))))) }, style = ButtonStyle.Ghost, tiny = true)
                     }
@@ -135,27 +141,27 @@ fun ResourceScreen() {
             }
             val guaranteed = editing.budgets.values.sumOf { it.guaranteed }
             Gap(10.dp)
-            Subtle("Total guaranteed $guaranteed of ${editing.slots}" + if (guaranteed > editing.slots) " — overcommit, cannot be published" else " · headroom ${editing.slots - guaranteed}")
+            Subtle(stringResource(R.string.res_total, guaranteed, editing.slots) + " " + if (guaranteed > editing.slots) stringResource(R.string.res_overcommit) else stringResource(R.string.res_headroom, editing.slots - guaranteed))
             Gap(10.dp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PButton("Dry-run simulator", {
+                PButton(stringResource(R.string.res_simulate), {
                     simulation = container.policies.simulate(editing, running, decision.maxConcurrentSessions, projects.keys)
                 }, style = ButtonStyle.Alt, tiny = true, enabled = draft != null)
-                PButton("Publish revision", {
+                PButton(stringResource(R.string.res_publish), {
                     val sim = container.policies.simulate(editing, running, decision.maxConcurrentSessions, projects.keys)
                     simulation = sim
                     runCatching { container.policies.publish(sim) }.onFailure { error = it.message }.onSuccess { error = null }
                 }, tiny = true, enabled = draft != null)
-                if (draft != null) PButton("Discard", { container.policies.discardDraft() }, style = ButtonStyle.Ghost, tiny = true)
+                if (draft != null) PButton(stringResource(R.string.res_discard), { container.policies.discardDraft() }, style = ButtonStyle.Ghost, tiny = true)
             }
             simulation?.let { sim ->
                 Gap(10.dp)
                 Callout(
-                    if (!sim.valid) "Rejected: " + sim.problems.joinToString("; ")
-                    else "Valid. " + (if (sim.converging.isEmpty()) "Nothing running exceeds it." else "Converging: " + sim.converging.joinToString("; ") + "."),
+                    if (!sim.valid) stringResource(R.string.res_rejected, sim.problems.joinToString("; "))
+                    else stringResource(R.string.res_valid) + " " + (if (sim.converging.isEmpty()) stringResource(R.string.res_nothing_exceeds) else stringResource(R.string.res_converging, sim.converging.joinToString("; "))),
                     if (sim.valid) Tone.Good else Tone.Warn,
                 )
-                sim.shortfalls.forEach { Gap(6.dp); Callout("Shortfall: $it", Tone.Warn) }
+                sim.shortfalls.forEach { Gap(6.dp); Callout(stringResource(R.string.res_shortfall, it), Tone.Warn) }
                 sim.notes.forEach { Subtle(it, Modifier.padding(top = 6.dp)) }
             }
             error?.let { Gap(6.dp); Callout(it, Tone.Danger) }
@@ -163,24 +169,24 @@ fun ResourceScreen() {
         Gap(12.dp)
 
         PCard(style = CardStyle.Soft) {
-            Kicker("Policy studio")
+            Kicker(stringResource(R.string.res_studio))
             Steps(
                 listOf(
-                    StepItem("Draft", "Edits stay apart from the scheduler", if (draft != null) StepState.Active else StepState.Done),
-                    StepItem("Simulate", "Against what runs now and the device's capacity", if (simulation != null) StepState.Done else StepState.Wait),
-                    StepItem("Apply", "A new revision; running work converges as it finishes", if (draft == null && published != null) StepState.Done else StepState.Wait),
+                    StepItem(stringResource(R.string.res_step_draft), stringResource(R.string.res_step_draft_d), if (draft != null) StepState.Active else StepState.Done),
+                    StepItem(stringResource(R.string.res_step_sim), stringResource(R.string.res_step_sim_d), if (simulation != null) StepState.Done else StepState.Wait),
+                    StepItem(stringResource(R.string.res_step_apply), stringResource(R.string.res_step_apply_d), if (draft == null && published != null) StepState.Done else StepState.Wait),
                 ),
             )
-            PSetting("Published revision", "Policy history is append-only") { Text("Rev. ${published?.number ?: 0}", fontSize = 13.sp, color = P.ink) }
-            PSetting("Effective status", "Published can lead what is in force while sessions finish", divider = false) {
-                Tag(if (published == null) "Defaults" else if (status.effective) "Effective" else "Converging", if (status.effective) Tone.Good else Tone.Warn)
+            PSetting(stringResource(R.string.res_published), stringResource(R.string.res_published_d)) { Text(stringResource(R.string.res_rev, published?.number ?: 0), fontSize = 13.sp, color = P.ink) }
+            PSetting(stringResource(R.string.res_effective), stringResource(R.string.res_effective_d), divider = false) {
+                Tag(if (published == null) stringResource(R.string.res_defaults) else if (status.effective) stringResource(R.string.res_effective_tag) else stringResource(R.string.res_converging_tag), if (status.effective) Tone.Good else Tone.Warn)
             }
-            if (!status.effective) Subtle("Converging: " + status.converging.joinToString { nameOf(it) }, Modifier.padding(top = 4.dp))
+            if (!status.effective) Subtle(stringResource(R.string.res_converging, status.converging.joinToString { nameOf(it) }), Modifier.padding(top = 4.dp))
             Gap(8.dp)
             revisions.values.sortedByDescending { it.number }.take(6).forEach { r ->
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-                    Text("Rev. ${r.number} · ${r.policy.slots} slots · ${DateUtils.getRelativeTimeSpanString(r.publishedAtMs)}", Modifier.weight(1f), fontSize = 12.sp, color = P.sub)
-                    PButton("Restore as draft", { container.policies.restoreAsDraft(r.number) }, style = ButtonStyle.Ghost, tiny = true)
+                    Text(stringResource(R.string.res_rev_line, r.number, r.policy.slots, DateUtils.getRelativeTimeSpanString(r.publishedAtMs).toString()), Modifier.weight(1f), fontSize = 12.sp, color = P.sub)
+                    PButton(stringResource(R.string.res_restore), { container.policies.restoreAsDraft(r.number) }, style = ButtonStyle.Ghost, tiny = true)
                 }
             }
         }
@@ -211,29 +217,29 @@ private fun AdmissionCard(sessions: List<app.umbra.core.session.Session>, runnin
     PCard {
         Row {
             Column(Modifier.weight(1f)) {
-                Kicker("Admission")
-                Text("${running.values.sum()} running · ${queued.size} queued", Modifier.padding(top = 4.dp), fontSize = 18.sp, color = P.ink)
+                Kicker(stringResource(R.string.res_admission))
+                Text(stringResource(R.string.res_running_queued, running.values.sum(), queued.size), Modifier.padding(top = 4.dp), fontSize = 18.sp, color = P.ink)
             }
-            Tag("$slots slot(s)", Tone.Neutral)
+            Tag(pluralStringResource(R.plurals.res_slot_tag, slots, slots), Tone.Neutral)
         }
         val owners = (running.keys + queued.map { it.projectId }).distinct()
         owners.forEach { p ->
-            PSetting(owner(p), "${running[p] ?: 0} running · ${queued.count { it.projectId == p }} waiting" +
-                (queued.filter { it.projectId == p }.minOfOrNull { it.queuedAtMs!! }?.let { " · oldest waiting since ${android.text.format.DateUtils.getRelativeTimeSpanString(it)}" } ?: ""), divider = false) {}
+            PSetting(owner(p), stringResource(R.string.res_owner_line, running[p] ?: 0, queued.count { it.projectId == p }) +
+                (queued.filter { it.projectId == p }.minOfOrNull { it.queuedAtMs!! }?.let { " " + stringResource(R.string.res_oldest, android.text.format.DateUtils.getRelativeTimeSpanString(it).toString()) } ?: ""), divider = false) {}
         }
-        if (queued.isEmpty()) Subtle("Nothing waits. A request the phone cannot run now waits here as a logical agent, without a process, and starts by itself.", Modifier.padding(top = 6.dp))
+        if (queued.isEmpty()) Subtle(stringResource(R.string.res_nothing_waits), Modifier.padding(top = 6.dp))
         else {
-            reason?.let { Subtle("Waiting because: $it", Modifier.padding(top = 6.dp)) }
-            Subtle("Next to start, if nothing running finishes first (the owner with the fewest running goes first, then the longest-waiting):", Modifier.padding(top = 6.dp))
+            reason?.let { Subtle(stringResource(R.string.res_waiting, it), Modifier.padding(top = 6.dp)) }
+            Subtle(stringResource(R.string.res_next), Modifier.padding(top = 6.dp))
             order.take(8).forEachIndexed { i, s ->
                 Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("${i + 1}. ${s.title}", Modifier.weight(1f), fontSize = 13.sp, color = P.ink, maxLines = 1)
                     Text(owner(s.projectId), fontSize = 11.sp, color = P.sub, maxLines = 1)
-                    PButton("Remove", { scope.launch { container.supervisor.dequeue(s.id) } }, Modifier.padding(start = 6.dp), style = ButtonStyle.Ghost, tiny = true)
+                    PButton(stringResource(R.string.res_remove), { scope.launch { container.supervisor.dequeue(s.id) } }, Modifier.padding(start = 6.dp), style = ButtonStyle.Ghost, tiny = true)
                 }
             }
-            if (order.size > 8) Subtle("…and ${order.size - 8} more.", Modifier.padding(top = 4.dp))
+            if (order.size > 8) Subtle(stringResource(R.string.res_more, order.size - 8), Modifier.padding(top = 4.dp))
         }
-        Subtle("At most ${app.umbra.core.orchestrator.AgentSupervisor.QUEUE_LIMIT} wait; beyond that a request is refused, so the queue cannot grow without bound. Success here is the queue draining, not the phone surviving a flood.", Modifier.padding(top = 6.dp))
+        Subtle(stringResource(R.string.res_queue_limit, app.umbra.core.orchestrator.AgentSupervisor.QUEUE_LIMIT), Modifier.padding(top = 6.dp))
     }
 }

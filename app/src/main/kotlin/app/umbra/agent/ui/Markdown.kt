@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -57,9 +58,31 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier, color: Color = Mat
                         Text(MarkdownParser.inline(block.text, inlineCode), style = MaterialTheme.typography.bodyMedium, color = color)
                     }
                     is MarkdownParser.Block.Paragraph -> Text(MarkdownParser.inline(block.text, inlineCode), style = MaterialTheme.typography.bodyMedium, color = color)
+                    is MarkdownParser.Block.Table -> MarkdownTable(block, color, inlineCode)
                     MarkdownParser.Block.Rule -> androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 }
             }
+        }
+    }
+}
+
+/** A table that keeps its columns: it scrolls sideways on a phone instead of squeezing every cell. */
+@Composable
+private fun MarkdownTable(table: MarkdownParser.Block.Table, color: Color, inlineCode: Color) {
+    val columns = maxOf(table.header.size, table.rows.maxOfOrNull { it.size } ?: 0)
+    Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(Color(0x66F2F6EF), RoundedCornerShape(10.dp)).padding(vertical = 4.dp)) {
+        (listOf(table.header) + table.rows).forEachIndexed { r, cells ->
+            Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
+                for (c in 0 until columns) {
+                    Text(
+                        MarkdownParser.inline(cells.getOrElse(c) { "" }, inlineCode),
+                        Modifier.width(if (c == 0) 120.dp else 168.dp).padding(end = 10.dp),
+                        style = MaterialTheme.typography.bodySmall, color = color,
+                        fontWeight = if (r == 0) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                }
+            }
+            if (r == 0) androidx.compose.material3.HorizontalDivider(Modifier.padding(horizontal = 8.dp))
         }
     }
 }
@@ -70,12 +93,15 @@ internal object MarkdownParser {
         data class Heading(val level: Int, val text: String) : Block
         data class Bullet(val text: String, val depth: Int, val ordered: Int?) : Block
         data class Code(val text: String) : Block
+        /** A pipe table: the header row, then the body rows; the |---| separator line is dropped. */
+        data class Table(val header: List<String>, val rows: List<List<String>>) : Block
         data object Rule : Block
     }
 
     private val BULLET = Regex("""^(\s*)([-*+])\s+(.*)$""")
     private val ORDERED = Regex("""^(\s*)(\d+)[.)]\s+(.*)$""")
     private val HEADING = Regex("""^(#{1,6})\s+(.*)$""")
+    private val TABLE_SEPARATOR = Regex("""^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$""")
 
     fun parse(text: String): List<Block> {
         val blocks = ArrayList<Block>()
@@ -85,7 +111,20 @@ internal object MarkdownParser {
         }
         var inCode = false
         val code = StringBuilder()
+        val table = ArrayList<List<String>>()
+        fun flushTable() {
+            if (table.isEmpty()) return
+            blocks += Block.Table(table.first(), table.drop(1))
+            table.clear()
+        }
         for (line in text.lines()) {
+            val trimmed = line.trim()
+            if (!inCode && trimmed.startsWith("|") && trimmed.length > 1) {
+                flush()
+                if (!TABLE_SEPARATOR.matches(trimmed)) table += trimmed.removePrefix("|").removeSuffix("|").split("|").map { it.trim() }
+                continue
+            }
+            flushTable()
             if (line.trimStart().startsWith("```")) {
                 if (inCode) {
                     blocks += Block.Code(code.toString().trimEnd('\n'))
@@ -114,6 +153,7 @@ internal object MarkdownParser {
             }
         }
         if (inCode) blocks += Block.Code(code.toString().trimEnd('\n'))
+        flushTable()
         flush()
         return blocks
     }

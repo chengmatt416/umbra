@@ -1,5 +1,8 @@
 package app.umbra.agent.ui
 
+import androidx.compose.ui.res.pluralStringResource
+import app.umbra.agent.R
+import androidx.compose.ui.res.stringResource
 import android.graphics.BitmapFactory
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
@@ -64,15 +67,8 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-fun stateLabel(state: SessionState) = when (state) {
-    SessionState.CREATED -> "New"
-    SessionState.RUNNING -> "Working"
-    SessionState.PAUSED -> "Paused"
-    SessionState.WAITING_APPROVAL -> "Needs you"
-    SessionState.STOPPED -> "Stopped"
-    SessionState.COMPLETED -> "Done"
-    SessionState.FAILED -> "Failed"
-}
+@Composable
+fun stateLabel(state: SessionState) = app.umbra.agent.ui.sessions.stateText(state)
 
 fun stateColor(state: SessionState): Color = when (state) {
     SessionState.RUNNING -> Semantic.info
@@ -102,22 +98,6 @@ fun riskColor(level: RiskLevel): Color = when (level) {
     RiskLevel.HIGH, RiskLevel.CRITICAL -> Semantic.danger
 }
 
-@Composable
-fun SectionTitle(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-}
-
-@Composable
-fun Banner(text: String, modifier: Modifier = Modifier, actionLabel: String? = null, onAction: (() -> Unit)? = null, tone: Color = Semantic.warn) {
-    Row(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(tone.copy(alpha = 0.13f)).padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(text, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        if (actionLabel != null && onAction != null) TextButton(onClick = onAction) { Text(actionLabel) }
-    }
-}
-
 // ---- timeline pieces ----
 
 @Composable
@@ -130,7 +110,7 @@ fun UserBubble(text: String, imageCount: Int) {
         ) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                 Text(text, color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodyMedium)
-                if (imageCount > 0) Text("$imageCount image${if (imageCount > 1) "s" else ""} attached", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f))
+                if (imageCount > 0) Text(pluralStringResource(R.plurals.tl_images_attached, imageCount, imageCount), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f))
             }
         }
     }
@@ -221,7 +201,7 @@ fun Screenshot(path: String, height: Int = 160) {
     }
     bitmap?.let {
         Image(
-            it, contentDescription = "Screenshot",
+            it, contentDescription = stringResource(R.string.tl_screenshot),
             modifier = Modifier.height(height.dp).clip(RoundedCornerShape(8.dp)),
             contentScale = ContentScale.FillHeight,
         )
@@ -269,12 +249,12 @@ fun StateDivider(state: SessionState, reason: String?) {
 @Composable
 fun ApprovalLogRow(item: TimelineItem.Approval) {
     val (label, color) = when (item.kind) {
-        "approved" -> "You approved" to Semantic.ok
-        "auto_allowed" -> "Allowed by your settings" to Semantic.ok
-        "denied" -> "You denied" to Semantic.danger
-        "auto_denied" -> "Blocked by policy" to Semantic.danger
-        "timed_out" -> "No answer, not done" to Semantic.warn
-        else -> "Approval ${item.kind.replace('_', ' ')}" to Semantic.idle
+        "approved" -> stringResource(R.string.tl_you_approved) to Semantic.ok
+        "auto_allowed" -> stringResource(R.string.tl_auto_allowed) to Semantic.ok
+        "denied" -> stringResource(R.string.tl_you_denied) to Semantic.danger
+        "auto_denied" -> stringResource(R.string.tl_auto_denied) to Semantic.danger
+        "timed_out" -> stringResource(R.string.tl_timed_out) to Semantic.warn
+        else -> stringResource(R.string.tl_approval_other, item.kind.replace('_', ' ')) to Semantic.idle
     }
     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(8.dp).clip(CircleShape).background(color))
@@ -293,7 +273,7 @@ fun PlanCard(steps: List<PlanStep>, modifier: Modifier = Modifier) {
     Card(modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column(Modifier.clickable { expanded = !expanded }.animateContentSize().padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Plan", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.tl_plan), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.width(8.dp))
                 Text("$done/${steps.size}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.width(10.dp))
@@ -316,150 +296,6 @@ fun PlanCard(steps: List<PlanStep>, modifier: Modifier = Modifier) {
     }
 }
 
-// ---- approvals ----
-
-@Composable
-fun ApprovalCard(request: ApprovalRequest, onDecision: (ApprovalDecision) -> Unit, modifier: Modifier = Modifier) {
-    val level = request.assessment.level
-    val color = riskColor(level)
-    var menu by remember(request.id) { mutableStateOf(false) }
-    Card(
-        modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.10f)),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.5f)),
-    ) {
-        Column(Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Approval needed", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = color)
-                Spacer(Modifier.weight(1f))
-                Text(level.name.lowercase().replaceFirstChar { it.uppercase() } + " risk", style = MaterialTheme.typography.labelMedium, color = color)
-            }
-            Text(request.description, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodyMedium, fontFamily = if (request.toolName == "shell") FontFamily.Monospace else null)
-            request.assessment.findings.forEach {
-                Text("• ${it.category.title}: ${it.reason}", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            request.details["why"]?.let { Text("Why: $it", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall) }
-            request.foregroundPackage?.let { Text("In: $it", Modifier.padding(top = 2.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { onDecision(ApprovalDecision.Denied("denied by the user")) }, Modifier.weight(1f)) { Text("Deny") }
-                Box(Modifier.weight(1.4f)) {
-                    Row {
-                        Button(onClick = { onDecision(ApprovalDecision.Approved()) }, Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = color)) { Text("Approve") }
-                        if (request.rememberOptions.isNotEmpty() && level < RiskLevel.CRITICAL) {
-                            TextButton(onClick = { menu = true }) { Text("▾") }
-                        }
-                    }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        request.rememberOptions.forEach { scope ->
-                            DropdownMenuItem(
-                                text = { Text(rememberLabel(scope)) },
-                                onClick = { menu = false; onDecision(ApprovalDecision.Approved(scope)) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fun rememberLabel(scope: RememberScope) = when (scope) {
-    RememberScope.THIS_APP_THIS_SESSION -> "Approve, and allow this in this app for this task"
-    RememberScope.THIS_COMMAND_THIS_SESSION -> "Approve, and allow this command for this task"
-    RememberScope.THIS_CATEGORY_THIS_SESSION -> "Approve, and allow this kind of action for this task"
-}
-
-// ---- questions from the agent ----
-
-@Composable
-fun QuestionCard(pending: QuestionBroker.Pending, onAnswer: (UiResponse) -> Unit, modifier: Modifier = Modifier) {
-    Card(modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f))) {
-        Column(Modifier.padding(14.dp)) {
-            when (val request = pending.request) {
-                is UiRequest.Select -> SelectQuestion(request, onAnswer)
-                is UiRequest.Confirm -> {
-                    Text(request.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    if (request.message.isNotBlank()) Text(request.message, Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodyMedium)
-                    Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { onAnswer(UiResponse.Confirmed(false)) }, Modifier.weight(1f)) { Text("No") }
-                        Button(onClick = { onAnswer(UiResponse.Confirmed(true)) }, Modifier.weight(1f)) { Text("Yes") }
-                    }
-                }
-                is UiRequest.Input -> TextQuestion(request.title, request.placeholder, null, onAnswer)
-                is UiRequest.Editor -> TextQuestion(request.title, null, request.prefill, onAnswer)
-                is UiRequest.Ask -> AskQuestion(request, onAnswer)
-            }
-            TextButton(onClick = { onAnswer(UiResponse.Cancelled()) }, Modifier.align(Alignment.End)) { Text("Skip") }
-        }
-    }
-}
-
-@Composable
-private fun SelectQuestion(request: UiRequest.Select, onAnswer: (UiResponse) -> Unit) {
-    Text(request.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-    request.options.forEachIndexed { index, option ->
-        OutlinedButton(onClick = { onAnswer(UiResponse.Value(option)) }, Modifier.fillMaxWidth().padding(top = 6.dp)) {
-            Column(Modifier.fillMaxWidth()) {
-                Text(option)
-                request.optionDescriptions.getOrNull(index)?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TextQuestion(title: String, placeholder: String?, prefill: String?, onAnswer: (UiResponse) -> Unit) {
-    var text by remember(title) { mutableStateOf(prefill.orEmpty()) }
-    Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-    OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth().padding(top = 8.dp), placeholder = placeholder?.let { { Text(it) } }, minLines = if (prefill != null) 3 else 1)
-    Button(onClick = { onAnswer(UiResponse.Value(text)) }, Modifier.padding(top = 8.dp)) { Text("Send") }
-}
-
-@Composable
-private fun AskQuestion(request: UiRequest.Ask, onAnswer: (UiResponse) -> Unit) {
-    val picked = remember(request.id) { mutableStateOf(request.questions.associate { it.id to emptySet<String>() }) }
-    val custom = remember(request.id) { mutableStateOf(request.questions.associate { it.id to "" }) }
-    request.questions.forEach { q ->
-        q.header?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) }
-        Text(q.question, Modifier.padding(top = 2.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        q.options.forEach { option ->
-            val on = option.label in picked.value[q.id].orEmpty()
-            Row(
-                Modifier.fillMaxWidth().clickable {
-                    val current = picked.value[q.id].orEmpty()
-                    val next = if (q.multi) (if (on) current - option.label else current + option.label) else setOf(option.label)
-                    picked.value = picked.value + (q.id to next)
-                },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = on, onClick = null)
-                Column(Modifier.padding(start = 8.dp, top = 4.dp, bottom = 4.dp)) {
-                    Text(option.label + if (q.recommended == q.options.indexOf(option)) "  (suggested)" else "", style = MaterialTheme.typography.bodyMedium)
-                    option.description?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                }
-            }
-        }
-        OutlinedTextField(
-            custom.value[q.id].orEmpty(), { custom.value = custom.value + (q.id to it) },
-            Modifier.fillMaxWidth().padding(top = 4.dp), placeholder = { Text("Or write your own answer") }, singleLine = true,
-        )
-        Spacer(Modifier.height(8.dp))
-    }
-    Button(onClick = {
-        onAnswer(UiResponse.Answers(request.questions.map { q -> AskAnswer(q.id, picked.value[q.id].orEmpty().toList(), custom.value[q.id]?.takeIf { it.isNotBlank() }) }))
-    }) { Text("Send answers") }
-}
-
-@Composable
-fun EmptyState(title: String, body: String, modifier: Modifier = Modifier, content: @Composable () -> Unit = {}) {
-    Column(modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text(body, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(16.dp))
-        content()
-    }
-}
-
 /** What the task currently holds: helpers, processes, apps and displays (spec §24, §25). Hidden when there is nothing to show. */
 @Composable
 fun ActivityCard(session: app.umbra.core.session.Session, modifier: Modifier = Modifier) {
@@ -467,19 +303,19 @@ fun ActivityCard(session: app.umbra.core.session.Session, modifier: Modifier = M
     if (subagents.isEmpty() && session.processes.isEmpty() && session.activeApps.isEmpty() && session.displays.isEmpty()) return
     var expanded by remember(session.id) { mutableStateOf(false) }
     val parts = buildList {
-        if (subagents.isNotEmpty()) add("${subagents.size} helper${if (subagents.size > 1) "s" else ""}")
-        if (session.processes.isNotEmpty()) add("${session.processes.size} process${if (session.processes.size > 1) "es" else ""}")
-        if (session.activeApps.isNotEmpty()) add("${session.activeApps.size} app${if (session.activeApps.size > 1) "s" else ""}")
-        if (session.displays.isNotEmpty()) add("${session.displays.size} background display${if (session.displays.size > 1) "s" else ""}")
+        if (subagents.isNotEmpty()) add(pluralStringResource(R.plurals.tl_helpers, subagents.size, subagents.size))
+        if (session.processes.isNotEmpty()) add(pluralStringResource(R.plurals.tl_processes, session.processes.size, session.processes.size))
+        if (session.activeApps.isNotEmpty()) add(pluralStringResource(R.plurals.tl_apps, session.activeApps.size, session.activeApps.size))
+        if (session.displays.isNotEmpty()) add(pluralStringResource(R.plurals.tl_displays, session.displays.size, session.displays.size))
     }
     Card(modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column(Modifier.clickable { expanded = !expanded }.animateContentSize().padding(12.dp)) {
-            Text("Running: " + parts.joinToString(" · "), style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.tl_running, parts.joinToString(" · ")), style = MaterialTheme.typography.labelLarge)
             if (expanded) {
-                subagents.forEach { Text("Helper ${it.id}${it.role?.let { r -> " ($r)" } ?: ""}", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall) }
+                subagents.forEach { Text(stringResource(R.string.tl_helper, it.id) + (it.role?.let { r -> " ($r)" } ?: ""), Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall) }
                 session.processes.take(12).forEach { Text("${it.name}  pid ${it.pid}", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
                 session.activeApps.forEach { Text(it, Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
-                session.displays.forEach { Text("display $it", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+                session.displays.forEach { Text(stringResource(R.string.tl_display, it), Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
             }
         }
     }

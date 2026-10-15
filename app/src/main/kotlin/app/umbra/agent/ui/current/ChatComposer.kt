@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,6 +48,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.umbra.agent.R
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.P
 import app.umbra.agent.ui.porcelain.PButton
@@ -110,8 +112,8 @@ fun ChatComposer(
         }
         if (conversation.queuedSteering.isNotEmpty() || conversation.queuedFollowUp.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                conversation.queuedSteering.forEach { q -> QueueChip("Steer", q, onRemove = { actions.removeQueued(q, "steering") }) }
-                conversation.queuedFollowUp.forEach { q -> QueueChip("Queued", q, onRemove = { actions.removeQueued(q, "followUp") }, onPromote = { actions.promoteQueued(q) }) }
+                conversation.queuedSteering.forEach { q -> QueueChip(stringResource(R.string.comp_steer), q, onRemove = { actions.removeQueued(q, "steering") }) }
+                conversation.queuedFollowUp.forEach { q -> QueueChip(stringResource(R.string.comp_queued), q, onRemove = { actions.removeQueued(q, "followUp") }, onPromote = { actions.promoteQueued(q) }) }
             }
         }
 
@@ -138,34 +140,37 @@ fun ChatComposer(
                     }
                 }
             }
-            if (!takesImages) Subtle("The current model does not read pictures; switch to one that does or they are ignored.", Modifier.padding(bottom = 6.dp))
+            if (!takesImages) Subtle(stringResource(R.string.comp_no_images), Modifier.padding(bottom = 6.dp))
         }
 
         val shape = RoundedCornerShape(20.dp)
         Column(Modifier.fillMaxWidth().clip(shape).background(Color(0xFFF7FAF4)).border(1.dp, Color(0xB5FFFFFF), shape).padding(horizontal = 12.dp, vertical = 8.dp)) {
             Box(Modifier.fillMaxWidth().heightIn(min = 40.dp)) {
                 if (text.isEmpty()) Text(
-                    when {
-                        working -> "Steer, queue a follow-up, or type / for commands…"
-                        paused -> "Message to resume…"
-                        else -> "Message, / for commands, ! for a shell command…"
-                    },
+                    stringResource(when {
+                        working -> R.string.comp_hint_working
+                        paused -> R.string.comp_hint_paused
+                        else -> R.string.comp_hint
+                    }),
                     fontSize = 15.sp, color = Color(0xFF9AAA98),
                 )
-                BasicTextField(field, { v -> field = v; if (v.text != text) onText(v.text) }, Modifier.fillMaxWidth().semantics { contentDescription = "Message" }, textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = P.ink, fontFamily = if (text.startsWith("!")) P.mono else null), cursorBrush = SolidColor(P.accent2), maxLines = 8)
+                val messageLabel = stringResource(R.string.cap_message)
+                BasicTextField(field, { v -> field = v; if (v.text != text) onText(v.text) }, Modifier.fillMaxWidth().semantics { contentDescription = messageLabel }, textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = P.ink, fontFamily = if (text.startsWith("!")) P.mono else null), cursorBrush = SolidColor(P.accent2), maxLines = 8)
             }
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                PButton("", { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.plus, contentDescription = "Attach pictures")
-                if (working) {
-                    Box(Modifier.padding(start = 6.dp)) { Segmented(listOf(WhileWorking.Steer to "Steer", WhileWorking.Queue to "Queue"), mode, { mode = it }) }
+                PButton("", { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.plus, contentDescription = stringResource(R.string.comp_attach))
+                // While the agent works, a message reaches it now (steer) or after this turn (queue); the choice only
+                // shows once there is something to send.
+                if (working && text.isNotBlank()) {
+                    Box(Modifier.padding(start = 6.dp)) { Segmented(listOf(WhileWorking.Steer to stringResource(R.string.comp_now), WhileWorking.Queue to stringResource(R.string.comp_later)), mode, { mode = it }) }
                 }
                 Box(Modifier.weight(1f))
                 if (working) {
                     Box {
-                        PButton("Stop", { stopMenu = true }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.stop)
+                        PButton(stringResource(R.string.comp_pause), { stopMenu = true }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.pause)
                         DropdownMenu(stopMenu, { stopMenu = false }) {
-                            DropdownMenuItem(text = { Text("Stop this turn (keep the session)") }, onClick = { stopMenu = false; actions.stop() })
-                            if (text.isNotBlank()) DropdownMenuItem(text = { Text("Interrupt and send this now") }, onClick = {
+                            DropdownMenuItem(text = { Text(stringResource(R.string.comp_pause_task)) }, onClick = { stopMenu = false; actions.stop() })
+                            if (text.isNotBlank()) DropdownMenuItem(text = { Text(stringResource(R.string.comp_interrupt)) }, onClick = {
                                 stopMenu = false
                                 actions.send(text.trim(), images.toList(), WhileWorking.Interrupt)
                                 onText(""); images.clear()
@@ -182,7 +187,7 @@ fun ChatComposer(
                         t.isNotEmpty() || images.isNotEmpty() -> actions.send(t, images.toList(), mode)
                     }
                     onText(""); images.clear()
-                }, tiny = true, icon = PIcons.send, enabled = text.isNotBlank() || images.isNotEmpty(), contentDescription = "Send")
+                }, tiny = true, icon = PIcons.send, enabled = text.isNotBlank() || images.isNotEmpty(), contentDescription = stringResource(R.string.cap_send))
             }
         }
         if (conversation.statuses.isNotEmpty()) {
@@ -202,8 +207,8 @@ private fun QueueChip(kind: String, text: String, onRemove: () -> Unit, onPromot
     ) {
         Text("$kind: ", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF956F44))
         Text(text.take(40), fontSize = 11.sp, color = Color(0xFF956F44), maxLines = 1)
-        if (onPromote != null) Box(Modifier.padding(start = 6.dp).clip(RoundedCornerShape(50)).clickable(onClickLabel = "Send now", onClick = onPromote).padding(4.dp)) { PIcon(PIcons.arrowRight, size = 12.dp, tint = Color(0xFF956F44)) }
-        Box(Modifier.clip(RoundedCornerShape(50)).clickable(onClickLabel = "Take back", onClick = onRemove).padding(4.dp)) { PIcon(PIcons.close, size = 12.dp, tint = Color(0xFF956F44)) }
+        if (onPromote != null) Box(Modifier.padding(start = 6.dp).clip(RoundedCornerShape(50)).clickable(onClickLabel = stringResource(R.string.comp_send_now), onClick = onPromote).padding(4.dp)) { PIcon(PIcons.arrowRight, size = 12.dp, tint = Color(0xFF956F44)) }
+        Box(Modifier.clip(RoundedCornerShape(50)).clickable(onClickLabel = stringResource(R.string.comp_take_back), onClick = onRemove).padding(4.dp)) { PIcon(PIcons.close, size = 12.dp, tint = Color(0xFF956F44)) }
     }
 }
 

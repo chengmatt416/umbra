@@ -1,37 +1,23 @@
 package app.umbra.agent.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,146 +25,157 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.material3.Checkbox
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.umbra.agent.R
 import app.umbra.agent.container
 import app.umbra.agent.data.CatalogModel
 import app.umbra.agent.data.ModelCatalog
 import app.umbra.agent.data.ProviderConfig
 import app.umbra.agent.data.ProviderPresets
+import app.umbra.agent.ui.porcelain.ButtonStyle
+import app.umbra.agent.ui.porcelain.Callout
+import app.umbra.agent.ui.porcelain.DisabledReason
+import app.umbra.agent.ui.porcelain.Eyebrow
+import app.umbra.agent.ui.porcelain.P
+import app.umbra.agent.ui.porcelain.PButton
+import app.umbra.agent.ui.porcelain.PConfirm
+import app.umbra.agent.ui.porcelain.PEmpty
+import app.umbra.agent.ui.porcelain.PField
+import app.umbra.agent.ui.porcelain.PIcons
+import app.umbra.agent.ui.porcelain.PObject
+import app.umbra.agent.ui.porcelain.SectionHead
+import app.umbra.agent.ui.porcelain.Segmented
+import app.umbra.agent.ui.porcelain.Subtle
+import app.umbra.agent.ui.porcelain.Tone
+import app.umbra.agent.ui.shell.PorcelainPage
 import app.umbra.core.session.ModelRef
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/** The AI providers, their keys and the default model; listing models needs Linux, and says so beside the button. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ModelsScreen(onBack: () -> Unit) {
-    val container = LocalContext.current.container
+fun ModelsScreen(onBack: () -> Unit, onSetup: () -> Unit) {
+    val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
+    val container = context.container
     val scope = rememberCoroutineScope()
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
+    val guestState by container.guest.state.collectAsStateWithLifecycle()
+    val linuxReady = guestState == app.umbra.agent.data.GuestManager.State.Ready || guestState == app.umbra.agent.data.GuestManager.State.Installed
     var adding by remember { mutableStateOf(false) }
+    var removing by remember { mutableStateOf<ProviderConfig?>(null) }
     var catalog by remember { mutableStateOf<List<CatalogModel>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var manual by remember(prefs.defaultModel) { mutableStateOf(prefs.defaultModel?.let { "${it.provider}/${it.modelId}" }.orEmpty()) }
     var filter by remember { mutableStateOf("") }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Models") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-                actions = { IconButton(onClick = { adding = true }) { Icon(Icons.Default.Add, "Add provider") } },
+    PorcelainPage(
+        stringResource(R.string.dest_models), onBack,
+        actions = { if (prefs.providers.isNotEmpty()) PButton(stringResource(R.string.models_add), { adding = true }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.plus) },
+    ) {
+        if (prefs.providers.isEmpty()) {
+            PEmpty(
+                stringResource(R.string.models_empty_title), stringResource(R.string.models_empty_body), icon = PIcons.spark,
+                action = { PButton(stringResource(R.string.models_add_provider), { adding = true }, icon = PIcons.plus) },
             )
-        },
-    ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            message?.let { item { Banner(it, tone = Semantic.danger, actionLabel = "Dismiss", onAction = { message = null }) } }
-            if (prefs.providers.isEmpty()) item {
-                EmptyState("No provider yet", "Add the AI provider you want Umbra to use. Your key stays on this phone, encrypted.") {
-                    Button(onClick = { adding = true }) { Text("Add provider") }
-                }
-            }
+        } else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp, 6.dp, 18.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item { Eyebrow(stringResource(R.string.models_eyebrow)) }
+            message?.let { item { Callout(it, Tone.Danger) } }
             items(prefs.providers, key = { it.id }) { provider ->
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(provider.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                            val keyed = provider.apiKeyEnv?.let { container.secrets.has(it) } ?: true
-                            Text(
-                                when {
-                                    provider.custom -> provider.baseUrl.orEmpty()
-                                    keyed -> "Key saved"
-                                    else -> "No key saved"
-                                },
-                                style = MaterialTheme.typography.bodySmall, color = if (keyed) MaterialTheme.colorScheme.onSurfaceVariant else Semantic.danger,
-                            )
-                        }
-                        TextButton(onClick = {
-                            provider.apiKeyEnv?.let { container.secrets.remove(it) }
-                            container.settings.update { p -> p.copy(providers = p.providers - provider, defaultModel = p.defaultModel?.takeIf { it.provider != provider.id }) }
-                        }) { Text("Remove") }
-                    }
-                }
+                val keyed = provider.apiKeyEnv?.let { container.secrets.has(it) } ?: true
+                PObject(
+                    provider.label,
+                    when {
+                        provider.custom -> provider.baseUrl.orEmpty()
+                        keyed -> stringResource(R.string.models_key_saved)
+                        else -> stringResource(R.string.models_no_key)
+                    },
+                    PIcons.key,
+                    trailing = { PButton(stringResource(R.string.models_remove), { removing = provider }, style = ButtonStyle.Ghost, tiny = true) },
+                )
             }
-            if (prefs.providers.isNotEmpty()) {
-                item {
-                    Text("Default model", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        prefs.defaultModel?.let { "Using ${it.provider}/${it.modelId}" } ?: "Choose the model new tasks use.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            item {
+                SectionHead(
+                    stringResource(R.string.models_default), Modifier.padding(top = 10.dp),
+                    body = prefs.defaultModel?.let { stringResource(R.string.models_using, "${it.provider}/${it.modelId}") } ?: stringResource(R.string.models_choose),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PField(manual, { manual = it }, Modifier.weight(1f), label = stringResource(R.string.models_manual), singleLine = true, mono = true)
+                    PButton(
+                        stringResource(R.string.models_use),
+                        { container.settings.update { it.copy(defaultModel = ModelRef(manual.substringBefore('/'), manual.substringAfter('/'))) } },
+                        enabled = manual.contains('/') && manual.substringBefore('/').isNotBlank() && manual.substringAfter('/').isNotBlank(),
                     )
                 }
-                item {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(manual, { manual = it }, Modifier.weight(1f), label = { Text("provider/model") }, singleLine = true)
-                        Button(
-                            enabled = manual.contains('/') && manual.substringBefore('/').isNotBlank() && manual.substringAfter('/').isNotBlank(),
-                            onClick = { container.settings.update { it.copy(defaultModel = ModelRef(manual.substringBefore('/'), manual.substringAfter('/'))) } },
-                        ) { Text("Use") }
-                    }
-                }
-                item {
-                    OutlinedButton(
-                        enabled = !loading,
-                        onClick = {
-                            loading = true
-                            scope.launch {
-                                try {
-                                    catalog = ModelCatalog(container).fetch()
-                                    if (catalog.isEmpty()) message = "No models found. The Linux environment must be installed to list models; you can still type one above."
-                                } catch (e: Exception) {
-                                    message = e.message
-                                }
-                                loading = false
+            }
+            item {
+                PButton(
+                    stringResource(R.string.models_list),
+                    {
+                        loading = true
+                        scope.launch {
+                            try {
+                                catalog = ModelCatalog(container).fetch()
+                                message = if (catalog.isEmpty()) resources.getString(R.string.models_none_found) else null
+                            } catch (e: Exception) {
+                                message = e.message
                             }
-                        },
-                    ) {
-                        if (loading) CircularProgressIndicator(Modifier.padding(end = 8.dp).size(16.dp), strokeWidth = 2.dp)
-                        Text("List available models")
-                    }
-                }
-                if (catalog.isNotEmpty()) {
-                    item { OutlinedTextField(filter, { filter = it }, Modifier.fillMaxWidth(), label = { Text("Filter") }, singleLine = true) }
-                    val shown = catalog.filter { filter.isBlank() || it.selector.contains(filter, ignoreCase = true) || it.name.contains(filter, ignoreCase = true) }.take(80)
-                    items(shown, key = { it.selector }) { model ->
-                        val selected = prefs.defaultModel?.let { it.provider == model.provider && it.modelId == model.id } == true
-                        Row(
-                            Modifier.fillMaxWidth().clickable { container.settings.update { it.copy(defaultModel = ModelRef(model.provider, model.id)) }; manual = model.selector },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(selected = selected, onClick = null)
-                            Column(Modifier.padding(start = 10.dp, top = 6.dp, bottom = 6.dp)) {
-                                Text(model.name, style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    buildString {
-                                        append(model.selector)
-                                        model.contextWindow?.let { append(" · ${it / 1000}K context") }
-                                        if (model.reasoning) append(" · thinking")
-                                        if (model.images) append(" · images")
-                                    },
-                                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
+                            loading = false
                         }
-                    }
+                    },
+                    style = ButtonStyle.Alt, tiny = true, icon = PIcons.search, enabled = !loading && linuxReady,
+                )
+                if (!linuxReady) {
+                    DisabledReason(stringResource(R.string.models_needs_linux))
+                    Box(Modifier.padding(top = 6.dp)) { PButton(stringResource(R.string.models_install_linux), onSetup, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.download) }
                 }
-                item {
-                    Text("Thinking effort", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(null to "Default", "low" to "Low", "medium" to "Medium", "high" to "High").forEach { (level, label) ->
-                            FilterChip(selected = prefs.thinkingLevel == level, onClick = { container.settings.update { it.copy(thinkingLevel = level) } }, label = { Text(label) })
-                        }
-                    }
+                if (loading) CircularProgressIndicator(Modifier.padding(top = 8.dp).size(18.dp), strokeWidth = 2.dp, color = P.accent2)
+            }
+            if (catalog.isNotEmpty()) {
+                item { PField(filter, { filter = it }, label = stringResource(R.string.models_filter), singleLine = true) }
+                val shown = catalog.filter { filter.isBlank() || it.selector.contains(filter, ignoreCase = true) || it.name.contains(filter, ignoreCase = true) }.take(80)
+                items(shown, key = { it.selector }) { model ->
+                    val selected = prefs.defaultModel?.let { it.provider == model.provider && it.modelId == model.id } == true
+                    val tags = buildList {
+                        add(model.selector)
+                        model.contextWindow?.let { add(stringResource(R.string.models_context, it / 1000)) }
+                        if (model.reasoning) add(stringResource(R.string.models_thinking_tag))
+                        if (model.images) add(stringResource(R.string.models_images_tag))
+                    }.joinToString(" · ")
+                    PObject(
+                        model.name, tags, if (selected) PIcons.check else PIcons.spark, selected = selected,
+                        onClick = { container.settings.update { it.copy(defaultModel = ModelRef(model.provider, model.id)) }; manual = model.selector },
+                    )
                 }
+            }
+            item {
+                SectionHead(stringResource(R.string.models_effort), Modifier.padding(top = 10.dp))
+                Segmented(
+                    listOf<Pair<String?, String>>(null to stringResource(R.string.effort_default), "low" to stringResource(R.string.effort_low), "medium" to stringResource(R.string.effort_medium), "high" to stringResource(R.string.effort_high)),
+                    prefs.thinkingLevel, { level -> container.settings.update { it.copy(thinkingLevel = level) } }, fill = true,
+                )
             }
         }
     }
 
+    removing?.let { provider ->
+        PConfirm(
+            stringResource(R.string.models_remove_title, provider.label), stringResource(R.string.models_remove_body), stringResource(R.string.models_remove),
+            onDismiss = { removing = null },
+            onConfirm = {
+                removing = null
+                provider.apiKeyEnv?.let { container.secrets.remove(it) }
+                container.settings.update { p -> p.copy(providers = p.providers - provider, defaultModel = p.defaultModel?.takeIf { it.provider != provider.id }) }
+            },
+        )
+    }
     if (adding) AddProviderDialog(
         existing = prefs.providers.map { it.id }.toSet(),
         onDismiss = { adding = false },
@@ -208,18 +205,20 @@ private fun AddProviderDialog(existing: Set<String>, onDismiss: () -> Unit, onSa
     val custom = choice == "custom"
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add provider") },
+        containerColor = androidx.compose.ui.graphics.Color(0xFFF2F6EF),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(P.radius),
+        title = { Text(stringResource(R.string.models_add_provider), fontFamily = P.serif, fontSize = 22.sp, color = P.ink) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ProviderPresets.all.forEach { preset -> FilterChip(selected = choice == preset.id, onClick = { choice = preset.id }, label = { Text(preset.label) }) }
-                    FilterChip(selected = custom, onClick = { choice = "custom" }, label = { Text("Other (OpenAI-compatible)") })
+                    FilterChip(selected = custom, onClick = { choice = "custom" }, label = { Text(stringResource(R.string.provider_other)) })
                 }
                 if (custom) {
-                    OutlinedTextField(id, { id = it.filter { c -> c.isLetterOrDigit() || c in "._-" } }, label = { Text("Name (letters, digits, - _ .)") }, singleLine = true)
-                    OutlinedTextField(url, { url = it }, label = { Text("Base URL, e.g. https://host/v1") }, singleLine = true)
-                    OutlinedTextField(models, { models = it }, label = { Text("Model ids, comma separated") }, singleLine = true)
+                    PField(id, { id = it.filter { c -> c.isLetterOrDigit() || c in "._-" } }, label = stringResource(R.string.provider_name), singleLine = true)
+                    PField(url, { url = it }, label = stringResource(R.string.provider_url), singleLine = true, mono = true)
+                    PField(models, { models = it }, label = stringResource(R.string.provider_models), singleLine = true, mono = true)
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf("openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai").forEach {
@@ -228,16 +227,16 @@ private fun AddProviderDialog(existing: Set<String>, onDismiss: () -> Unit, onSa
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(images, { images = it })
-                        Text("Its models accept images (screen selections, photos)", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.provider_images), fontSize = 12.sp, color = P.sub)
                     }
                 }
                 if (choice != null) {
-                    OutlinedTextField(
-                        key, { key = it }, label = { Text(if (custom) "API key (optional)" else "API key") }, singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        placeholder = { Text(ProviderPresets.byId(choice.orEmpty())?.hint.orEmpty()) },
+                    PField(
+                        key, { key = it }, label = stringResource(if (custom) R.string.provider_key_optional else R.string.provider_key), singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(), mono = true,
+                        placeholder = ProviderPresets.byId(choice.orEmpty())?.hint,
                     )
-                    Text("Stored encrypted on this phone. Only the agent process sees it.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Subtle(stringResource(R.string.provider_key_note))
                 }
             }
         },
@@ -247,7 +246,8 @@ private fun AddProviderDialog(existing: Set<String>, onDismiss: () -> Unit, onSa
                 custom -> id.isNotBlank() && id !in ProviderPresets.all.map { it.id } && url.startsWith("http") && models.isNotBlank()
                 else -> key.isNotBlank()
             }
-            TextButton(
+            PButton(
+                stringResource(R.string.action_save),
                 enabled = valid,
                 onClick = {
                     val preset = ProviderPresets.byId(choice.orEmpty())
@@ -262,8 +262,8 @@ private fun AddProviderDialog(existing: Set<String>, onDismiss: () -> Unit, onSa
                     }
                     onSave(config, key)
                 },
-            ) { Text("Save") }
+            )
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { PButton(stringResource(R.string.action_cancel), onDismiss, style = ButtonStyle.Ghost) },
     )
 }

@@ -45,8 +45,17 @@ sealed interface TimelineItem {
 }
 
 object TimelineBuilder {
+    /** The words the timeline adds of its own; English unless the screen passes the user's language. */
+    data class Labels(
+        val problemIn: (String) -> String = { "Problem in $it" },
+        val recovered: String = "Recovered",
+        val recoveryFailed: String = "Recovery failed",
+        val appEvent: (String) -> String = { "App $it" },
+        val notice: String = "Notice",
+    )
+
     /** Folds [records] (oldest first) into display items; tool results and screenshots join their call. */
-    fun build(records: List<EventRecord>): List<TimelineItem> {
+    fun build(records: List<EventRecord>, labels: Labels = Labels()): List<TimelineItem> {
         val items = ArrayList<TimelineItem>()
         val toolIndex = HashMap<String, Int>()
         for (r in records) {
@@ -74,10 +83,10 @@ object TimelineBuilder {
                 }
                 is SessionEvent.Approval -> if (e.kind != "requested") items += TimelineItem.Approval(r.seq, e.kind, e.summary, e.level)
                 is SessionEvent.StateChanged -> items += TimelineItem.StateChange(r.seq, e.to, e.reason)
-                is SessionEvent.Failure -> items += TimelineItem.Notice(r.seq, "error", "Problem in ${e.subsystem}", e.message)
-                is SessionEvent.Recovery -> items += TimelineItem.Notice(r.seq, if (e.success) "info" else "warning", if (e.success) "Recovered" else "Recovery failed", "${e.subsystem}: ${e.action}${e.detail?.let { " — $it" } ?: ""}")
-                is SessionEvent.AppEvent -> items += TimelineItem.Notice(r.seq, "error", "App ${e.kind.replace('_', ' ')}", e.summary)
-                is SessionEvent.Notice -> items += TimelineItem.Notice(r.seq, e.level, e.source ?: "Notice", e.message)
+                is SessionEvent.Failure -> items += TimelineItem.Notice(r.seq, "error", labels.problemIn(e.subsystem), e.message)
+                is SessionEvent.Recovery -> items += TimelineItem.Notice(r.seq, if (e.success) "info" else "warning", if (e.success) labels.recovered else labels.recoveryFailed, "${e.subsystem}: ${e.action}${e.detail?.let { " — $it" } ?: ""}")
+                is SessionEvent.AppEvent -> items += TimelineItem.Notice(r.seq, "error", labels.appEvent(e.kind.replace('_', ' ')), e.summary)
+                is SessionEvent.Notice -> items += TimelineItem.Notice(r.seq, e.level, e.source ?: labels.notice, e.message)
                 is SessionEvent.Subagent -> items += TimelineItem.Subagent(r.seq, e.subagentId, e.kind, e.summary)
                 is SessionEvent.Decision -> items += TimelineItem.Decision(r.seq, e.question, e.answer, e.engine)
                 is SessionEvent.PlanUpdated -> Unit // shown pinned above the timeline

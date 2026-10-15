@@ -38,8 +38,8 @@ class AppApprovalLedger(private val file: File, private val sessions: SessionSto
         }
     }
 
-    /** The newest [limit] entries, newest first. */
-    fun read(limit: Int = 300): List<ApprovalLedgerEntry> = synchronized(lock) {
+    /** The newest [limit] entries recorded after [sinceMs], newest first. */
+    fun read(limit: Int = 300, sinceMs: Long = 0): List<ApprovalLedgerEntry> = synchronized(lock) {
         if (!file.exists()) return emptyList()
         file.useLines { lines ->
             lines.toList().takeLast(limit).mapNotNull { line ->
@@ -48,9 +48,15 @@ class AppApprovalLedger(private val file: File, private val sessions: SessionSto
                 } catch (_: Exception) {
                     null
                 }
-            }.asReversed()
+            }.filter { it.timestampMs > sinceMs }.asReversed()
         }
     }
 
-    fun clear() = synchronized(lock) { file.delete() }
+    /** How many entries were recorded at or before [ms]: the ones a list starting after [ms] leaves out. */
+    fun countUntil(ms: Long): Int = synchronized(lock) {
+        if (!file.exists()) return 0
+        file.useLines { lines ->
+            lines.count { line -> runCatching { UmbraJson.decodeFromString(ApprovalLedgerEntry.serializer(), line).timestampMs <= ms }.getOrDefault(false) }
+        }
+    }
 }

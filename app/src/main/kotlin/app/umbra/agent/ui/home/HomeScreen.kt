@@ -40,12 +40,18 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.umbra.agent.R
 import app.umbra.agent.container
 import app.umbra.agent.ui.CapabilityProbe
 import app.umbra.agent.ui.porcelain.ButtonStyle
@@ -69,12 +75,7 @@ import app.umbra.agent.ui.softly
 import app.umbra.core.session.SessionState
 import kotlinx.coroutines.launch
 
-private val EXAMPLES = listOf(
-    "Turn on Do Not Disturb and tell me what changed",
-    "Find out which apps use the most storage",
-    "Create a small Python script that renames my photos by date, and test it",
-    "Check my battery health and summarise what is draining it",
-)
+private val EXAMPLES = listOf(R.string.home_example1, R.string.home_example2, R.string.home_example3, R.string.home_example4)
 
 /**
  * Home: the Folded Orb, the question "What shall we make possible?", the Smart Composer that starts new work, and
@@ -83,6 +84,7 @@ private val EXAMPLES = listOf(
 @Composable
 fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: () -> Unit) {
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val container = context.container
     val scope = rememberCoroutineScope()
     val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
@@ -104,20 +106,26 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: ()
     var sending by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 18.dp)) {
-        Eyebrow("Your AI companion", Modifier.padding(top = 6.dp))
-        Box(Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.BottomCenter) {
-            FoldedOrb(Modifier.fillMaxSize(), working = working)
-            Text(if (working) "Working in the background" else "At your pace", fontSize = 11.sp, letterSpacing = 1.sp, color = Color(0xFF73886F))
+        // One left edge for all text; the orb sits to the right of the status, so the page reads as one column.
+        Eyebrow(stringResource(R.string.home_eyebrow), Modifier.padding(top = 6.dp))
+        Row(Modifier.fillMaxWidth().height(150.dp), verticalAlignment = Alignment.Bottom) {
+            Column(Modifier.weight(1f).padding(bottom = 18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.size(7.dp).clip(androidx.compose.foundation.shape.CircleShape).background(if (working) P.accent else Color(0xFFA9BAA6)))
+                    Text(stringResource(if (working) R.string.home_working else R.string.home_rest), fontSize = 12.sp, letterSpacing = 0.4.sp, color = Color(0xFF73886F))
+                }
+            }
+            FoldedOrb(Modifier.fillMaxHeight().aspectRatio(1.15f), working = working)
         }
-        Gap(10.dp)
-        SerifTitle("What shall we\nmake possible?", size = 30)
-        Subtle("Ask something, or continue a long-running session. Umbra works in the background and asks before anything risky.", Modifier.padding(top = 8.dp))
+        Gap(6.dp)
+        SerifTitle(stringResource(R.string.home_title), Modifier.fillMaxWidth(0.82f), size = 31)
+        Subtle(stringResource(R.string.home_body), Modifier.padding(top = 8.dp))
         Gap(14.dp)
 
         if (missing.isNotEmpty()) {
-            Callout("Finish setting up so Umbra can work on this phone. Missing: ${missing.joinToString()}.", Tone.Warn)
+            Callout(stringResource(R.string.home_missing, missing.joinToString()), Tone.Warn)
             Gap(8.dp)
-            PButton("Set up", onSetup, style = ButtonStyle.Alt, tiny = true)
+            PButton(stringResource(R.string.home_setup), onSetup, style = ButtonStyle.Alt, tiny = true)
             Gap(14.dp)
         }
 
@@ -129,7 +137,7 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: ()
             onSnapshot = {
                 // Circle something in the app behind Umbra: step aside, select, and come back to the composer there.
                 if (!android.provider.Settings.canDrawOverlays(context) && !app.umbra.platform.android.UmbraAccessibilityService.connected.value) {
-                    error = "Selecting from the screen needs the draw-over-apps permission or Umbra's accessibility service."
+                    error = resources.getString(R.string.home_select_needs)
                 } else {
                     (context as? Activity)?.moveTaskToBack(true)
                     container.capsule.startSelection(delayMs = 450)
@@ -153,7 +161,8 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: ()
         error?.let { Gap(10.dp); Callout(it, Tone.Danger) }
         if (sessions.isEmpty()) {
             Gap(12.dp)
-            EXAMPLES.forEach { example ->
+            EXAMPLES.forEach { id ->
+                val example = stringResource(id)
                 Gap(6.dp)
                 PObject(example, null, PIcons.spark, onClick = { container.ui.saveDraft(example) })
             }
@@ -164,8 +173,8 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: ()
             val n = approvals.size + questions.size
             PCard(style = CardStyle.Soft, onClick = onInbox) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("$n thing${if (n > 1) "s" else ""} waiting for you", Modifier.weight(1f), fontSize = 14.sp, color = P.ink)
-                    Tag("Inbox", Tone.Warn)
+                    Text(pluralStringResource(R.plurals.home_waiting, n, n), Modifier.weight(1f), fontSize = 14.sp, color = P.ink)
+                    Tag(stringResource(R.string.home_inbox), Tone.Warn)
                 }
             }
         }
@@ -174,15 +183,15 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: ()
             Gap(14.dp)
             PCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Active task", Modifier.weight(1f), fontSize = 12.sp, color = P.sub)
+                    Text(stringResource(R.string.home_active), Modifier.weight(1f), fontSize = 12.sp, color = P.sub)
                     Tag(stateText(s), sessionTone(s))
                 }
                 Text(s.title, Modifier.padding(top = 8.dp), fontSize = 16.sp, color = P.ink)
                 val step = s.plan.firstOrNull { it.status == "active" } ?: s.plan.lastOrNull { it.status == "done" }
                 (step?.text ?: s.lastError ?: s.request.takeIf { it != s.title })?.let { Subtle(it, Modifier.padding(top = 4.dp), maxLines = 2) }
                 Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PButton("View session", { onOpenSession(s.id) }, style = ButtonStyle.Alt, tiny = true)
-                    if (approvals.any { it.sessionId == s.id } || questions.any { it.sessionId == s.id }) PButton("Review approval", onInbox, style = ButtonStyle.Alt, tiny = true)
+                    PButton(stringResource(R.string.home_view), { onOpenSession(s.id) }, style = ButtonStyle.Alt, tiny = true)
+                    if (approvals.any { it.sessionId == s.id } || questions.any { it.sessionId == s.id }) PButton(stringResource(R.string.home_review), onInbox, style = ButtonStyle.Alt, tiny = true)
                 }
             }
         }
@@ -190,7 +199,7 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: ()
         val recent = sessions.filter { it.state.isTerminal || it.state == SessionState.CREATED }.take(3)
         if (recent.isNotEmpty()) {
             Gap(20.dp)
-            Eyebrow("Recent")
+            Eyebrow(stringResource(R.string.home_recent))
             recent.forEach { s ->
                 Gap(8.dp)
                 PObject(s.title, stateText(s), PIcons.bot, onClick = { onOpenSession(s.id) })
@@ -216,6 +225,7 @@ fun SmartComposer(
 ) {
     val container = LocalContext.current.container
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val draft by container.ui.draft.collectAsStateWithLifecycle()
     val chips by container.ui.draftContext.collectAsStateWithLifecycle()
     var projectMenu by remember { mutableStateOf(false) }
@@ -235,11 +245,12 @@ fun SmartComposer(
         chips.forEach { chip -> app.umbra.agent.capsule.ChipRow(chip) { container.ui.removeContext(chip.id) } }
         if (chips.isNotEmpty()) Gap(8.dp)
         Box(Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
-            if (draft.isEmpty()) Text("Ask Umbra to do anything…", fontSize = 15.sp, color = Color(0xFF9AAA98))
+            if (draft.isEmpty()) Text(stringResource(R.string.composer_hint), fontSize = 15.sp, color = Color(0xFF9AAA98))
+            val messageLabel = stringResource(R.string.cap_message)
             BasicTextField(
                 draft,
                 { container.ui.saveDraft(it) },
-                Modifier.fillMaxWidth().semantics { contentDescription = "Message" },
+                Modifier.fillMaxWidth().semantics { contentDescription = messageLabel },
                 textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = P.ink),
                 cursorBrush = SolidColor(P.accent2),
                 maxLines = 8,
@@ -247,22 +258,22 @@ fun SmartComposer(
         }
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Box {
-                PButton(projectName ?: "Independent", { projectMenu = true }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.layers)
+                PButton(projectName ?: stringResource(R.string.composer_independent), { projectMenu = true }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.layers)
                 DropdownMenu(projectMenu, { projectMenu = false }) {
-                    DropdownMenuItem(text = { Text("Independent session") }, onClick = { projectMenu = false; onProject(null) })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.composer_independent_session)) }, onClick = { projectMenu = false; onProject(null) })
                     projects.forEach { (id, name) -> DropdownMenuItem(text = { Text(name) }, onClick = { projectMenu = false; onProject(id) }) }
                 }
             }
             Box(Modifier.weight(1f))
-            PButton("", onSnapshot, style = ButtonStyle.Alt, tiny = true, icon = PIcons.target, contentDescription = "Select from the screen")
+            PButton("", onSnapshot, style = ButtonStyle.Alt, tiny = true, icon = PIcons.target, contentDescription = stringResource(R.string.cap_select_screen))
             Box(Modifier.padding(start = 6.dp))
             if (canListen) {
                 PButton("", {
                     speech.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))
-                }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.mic, contentDescription = "Speak")
+                }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.mic, contentDescription = stringResource(R.string.cap_speak))
                 Box(Modifier.padding(start = 6.dp))
             }
-            PButton("", { if (draft.isNotBlank()) onSend(draft.trim()) }, tiny = true, icon = PIcons.send, enabled = draft.isNotBlank() && !sending, contentDescription = "Send")
+            PButton("", { if (draft.isNotBlank()) onSend(draft.trim()) }, tiny = true, icon = PIcons.send, enabled = draft.isNotBlank() && !sending, contentDescription = stringResource(R.string.cap_send))
         }
     }
 }

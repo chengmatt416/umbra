@@ -65,6 +65,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
@@ -75,6 +79,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.umbra.agent.AppContainer
+import app.umbra.agent.R
+import app.umbra.agent.ui.inbox.ApprovalCountdown
+import app.umbra.agent.ui.localizedDescription
+import app.umbra.core.safety.ApprovalSurface
+import app.umbra.core.safety.ApproveGesture
+import app.umbra.core.safety.approveGesture
 import app.umbra.agent.data.ContextChip
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.P
@@ -121,7 +131,7 @@ private fun CapDot(working: Boolean, attention: Boolean) {
 }
 
 /** The capsule itself: collapsed orb + task (or a mini island at rest), expanded Previous / Current / Next. */
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsState(emptyList())
@@ -148,13 +158,18 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     LaunchedEffect(failed?.id) { if (failed != null && !container.ui.appVisible.value) capsule.expanded.value = true }
 
     val label = when {
-        locked -> "Lockdown · input held"
-        approvals.isNotEmpty() -> "Needs your decision"
-        questions.isNotEmpty() -> "A question for you"
-        failed != null && current == null -> "Stopped with an error"
+        locked -> stringResource(R.string.cap_lockdown)
+        approvals.isNotEmpty() -> stringResource(R.string.cap_needs_decision)
+        questions.isNotEmpty() -> stringResource(R.string.cap_question)
+        failed != null && current == null -> stringResource(R.string.cap_stopped_error)
         current != null -> (steps.current?.text ?: current.title).let { if (it.length > 30) it.take(29).trimEnd() + "…" else it }
-        else -> "At rest"
+        else -> stringResource(R.string.cap_at_rest)
     }
+    val collapseLabel = stringResource(R.string.cap_collapse)
+    val composerLabel = stringResource(R.string.cap_open_composer)
+    val expandLabel = stringResource(R.string.cap_expand)
+    val selectLabel = stringResource(R.string.cap_select_screen)
+    val capsuleDescription = stringResource(R.string.cap_description, label)
     val shape = RoundedCornerShape(24.dp)
     Column(
         Modifier.then(if (expanded) Modifier.fillMaxWidth() else Modifier)
@@ -168,11 +183,11 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
         val gap = around?.let { with(density) { it.gapPx.toDp() } }
         Row(
             Modifier.combinedClickable(
-                onClickLabel = if (expanded) "Collapse" else if (atRest) "Open the composer" else "Expand",
-                onLongClickLabel = "Select from the screen",
+                onClickLabel = if (expanded) collapseLabel else if (atRest) composerLabel else expandLabel,
+                onLongClickLabel = selectLabel,
                 onLongClick = { capsule.startSelection() },
                 onClick = { if (expanded) capsule.expanded.value = false else if (atRest) capsule.openComposer(null) else capsule.expanded.value = true },
-            ).semantics { contentDescription = "Umbra capsule: $label" }
+            ).semantics { contentDescription = capsuleDescription }
                 .then(around?.let { Modifier.heightIn(min = with(density) { it.heightPx.toDp() }) } ?: Modifier)
                 .padding(vertical = if (atRest && !expanded) 6.dp else 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -181,7 +196,7 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
             CapDot(working = current?.state == SessionState.RUNNING, attention = needsYou || locked || failed != null)
             Box(Modifier.width(8.dp))
             Text(
-                if (expanded) (current?.let { "${it.title} · ${stateText(it).lowercase()}" } ?: "Smart Composer") else label,
+                if (expanded) (current?.let { "${it.title} · ${stateText(it).lowercase()}" } ?: stringResource(R.string.cap_smart_composer)) else label,
                 Modifier.then(if (expanded) Modifier.weight(1f) else Modifier.widthIn(max = around?.let { a -> with(density) { a.labelMaxPx.toDp() } }?.coerceAtMost(180.dp) ?: 180.dp)),
                 fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Label, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
@@ -193,79 +208,82 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
         Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x24FFFFFF)))
         Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 14.dp)) {
             if (locked) {
-                Text("Emergency lockdown: every agent's input is held. ${emergency.reason ?: ""}".trim(), Modifier.padding(vertical = 4.dp), fontSize = 12.sp, color = Attention)
-                PButton("Emergency Control", { capsule.open("emergency", null) }, style = ButtonStyle.Alt, tiny = true)
+                Text((stringResource(R.string.cap_lockdown_text) + " " + (emergency.reason ?: "")).trim(), Modifier.padding(vertical = 4.dp), fontSize = 12.sp, color = Attention)
+                PButton(stringResource(R.string.dest_emergency), { capsule.open("emergency", null) }, style = ButtonStyle.Alt, tiny = true)
                 SectionGap()
             }
             approvals.firstOrNull()?.let { request ->
                 Text(request.description, Modifier.padding(vertical = 4.dp), fontSize = 12.sp, color = Attention, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                Text(request.assessment.describe(), fontSize = 11.sp, color = if (request.assessment.level >= RiskLevel.HIGH) Color(0xFFE7A493) else Small, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Text(request.assessment.localizedDescription(), fontSize = 11.sp, color = if (request.assessment.level >= RiskLevel.HIGH) Color(0xFFE7A493) else Small, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                ApprovalCountdown(request, Modifier.padding(top = 6.dp), dark = true)
                 Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PButton("Deny", { container.approvals.resolve(request.id, ApprovalDecision.Denied("denied from the capsule")) }, style = ButtonStyle.Alt, tiny = true)
-                    if (request.assessment.level < RiskLevel.CRITICAL) PButton("Approve once", { container.approvals.resolve(request.id, ApprovalDecision.Approved()) }, tiny = true)
-                    else PButton("Review in Inbox", { capsule.open("inbox", null) }, tiny = true)
+                    PButton(stringResource(R.string.appr_deny), { container.approvals.resolve(request.id, ApprovalDecision.Denied("denied from the capsule")) }, style = ButtonStyle.Alt, tiny = true)
+                    when (approveGesture(request.assessment.level, ApprovalSurface.CAPSULE)) {
+                        ApproveGesture.ONE_TAP -> PButton(stringResource(R.string.appr_approve_once), { container.approvals.resolve(request.id, ApprovalDecision.Approved()) }, tiny = true)
+                        else -> PButton(stringResource(R.string.appr_review_inbox), { capsule.open("inbox", null) }, tiny = true)
+                    }
                 }
-                if (approvals.size > 1) Text("${approvals.size - 1} more waiting in Inbox", Modifier.padding(top = 4.dp), fontSize = 11.sp, color = Small)
+                if (approvals.size > 1) Text(stringResource(R.string.appr_more_waiting, approvals.size - 1), Modifier.padding(top = 4.dp), fontSize = 11.sp, color = Small)
                 SectionGap()
             }
             if (questions.isNotEmpty()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("${questions.size} question${if (questions.size > 1) "s" else ""} from the agent", Modifier.weight(1f), fontSize = 12.sp, color = Attention)
-                    PButton("Answer", { capsule.open("inbox", null) }, style = ButtonStyle.Alt, tiny = true)
+                    Text(pluralStringResource(R.plurals.cap_questions, questions.size, questions.size), Modifier.weight(1f), fontSize = 12.sp, color = Attention)
+                    PButton(stringResource(R.string.cap_answer), { capsule.open("inbox", null) }, style = ButtonStyle.Alt, tiny = true)
                 }
                 SectionGap()
             }
             failed?.let { f ->
-                Text("“${f.title}” stopped with an error" + (f.lastError?.let { ": $it" } ?: ""), fontSize = 12.sp, color = Attention, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Text(stringResource(R.string.cap_failed, f.title) + (f.lastError?.let { ": $it" } ?: ""), fontSize = 12.sp, color = Attention, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PButton("Open", { capsule.open(null, f.id) }, style = ButtonStyle.Alt, tiny = true)
-                    PButton("Dismiss", { capsule.dismissedFailures.value = dismissed + f.id }, style = ButtonStyle.Ghost, tiny = true)
+                    PButton(stringResource(R.string.cap_open), { capsule.open(null, f.id) }, style = ButtonStyle.Alt, tiny = true)
+                    PButton(stringResource(R.string.cap_dismiss), { capsule.dismissedFailures.value = dismissed + f.id }, style = ButtonStyle.Ghost, tiny = true)
                 }
                 SectionGap()
             }
 
-            SectionTitle("Session · previous / current / next")
-            TrailRow("Previous", trail.previous?.let { "${it.title} · ${stateText(it).lowercase()}" }, false)
-            TrailRow("Current", current?.title, true)
-            TrailRow("Next", trail.next?.title ?: "Nothing queued", false)
+            SectionTitle(stringResource(R.string.cap_section_sessions))
+            TrailRow(stringResource(R.string.cap_previous), trail.previous?.let { "${it.title} · ${stateText(it).lowercase()}" }, false)
+            TrailRow(stringResource(R.string.cap_current), current?.title, true)
+            TrailRow(stringResource(R.string.cap_next), trail.next?.title ?: stringResource(R.string.cap_nothing_queued), false)
             SectionGap()
-            SectionTitle("Step · previous / current / next")
-            TrailRow("Previous", steps.previous?.text, false)
-            TrailRow("Current", steps.current?.text ?: if (current != null && current.plan.isEmpty()) "No plan steps reported yet" else null, true)
-            TrailRow("Next", steps.next?.text, false)
+            SectionTitle(stringResource(R.string.cap_section_steps))
+            TrailRow(stringResource(R.string.cap_previous), steps.previous?.text, false)
+            TrailRow(stringResource(R.string.cap_current), steps.current?.text ?: if (current != null && current.plan.isEmpty()) stringResource(R.string.cap_no_steps) else null, true)
+            TrailRow(stringResource(R.string.cap_next), steps.next?.text, false)
 
             Row(Modifier.padding(top = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(
                     Modifier.weight(1f).heightIn(min = 40.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x18FFFFFF)).border(1.dp, Color(0x2BFFFFFF), RoundedCornerShape(10.dp))
-                        .clickable(onClickLabel = "Write a message") { capsule.openComposer(current?.id) }.padding(horizontal = 10.dp, vertical = 9.dp),
+                        .clickable(onClickLabel = stringResource(R.string.cap_write)) { capsule.openComposer(current?.id) }.padding(horizontal = 10.dp, vertical = 9.dp),
                 ) {
                     Text(
-                        draft.ifBlank { if (current != null) "Ask the agent…" else "Ask Umbra to do anything…" } + if (chips.isNotEmpty()) "  · ${chips.size} attached" else "",
+                        draft.ifBlank { stringResource(if (current != null) R.string.cap_ask_agent else R.string.cap_ask_umbra) } + if (chips.isNotEmpty()) "  · " + pluralStringResource(R.plurals.cap_attached, chips.size, chips.size) else "",
                         fontSize = 12.sp, color = if (draft.isBlank()) Color(0xFFC5D8C5) else Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     )
                 }
-                PButton("", { capsule.startSelection() }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.target, contentDescription = "Select from the screen")
+                PButton("", { capsule.startSelection() }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.target, contentDescription = selectLabel)
             }
             if (current != null) {
                 val screenLease = leases.values.firstOrNull { it.resourceId == "display:0" }
                 val userHolds = screenLease?.owner == Principal.User && screenLease.state == LeaseState.ACTIVE
-                Row(Modifier.padding(top = 9.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    PButton("Open", { capsule.open(null, current.id) }, style = ButtonStyle.Alt, tiny = true)
-                    if (current.state == SessionState.PAUSED) PButton("Resume", { capsule.launch { container.supervisor.resume(current.id) } }, style = ButtonStyle.Alt, tiny = true)
-                    else PButton("Pause", { capsule.launch { container.supervisor.pause(current.id) } }, style = ButtonStyle.Alt, tiny = true)
-                    PButton("Stop", { capsule.launch { container.supervisor.stop(current.id) } }, style = ButtonStyle.Danger, tiny = true)
-                    if (!userHolds) PButton("Take Back", { container.inputLeases.takeBack("display:0") }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.hand)
-                    else PButton("Return", { container.inputLeases.release("display:0", Principal.User, "returned by the user") }, style = ButtonStyle.Ghost, tiny = true)
+                FlowRow(Modifier.padding(top = 9.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    PButton(stringResource(R.string.cap_open), { capsule.open(null, current.id) }, style = ButtonStyle.Alt, tiny = true)
+                    if (current.state == SessionState.PAUSED) PButton(stringResource(R.string.cap_resume), { capsule.launch { container.supervisor.resume(current.id) } }, style = ButtonStyle.Alt, tiny = true)
+                    else PButton(stringResource(R.string.cap_pause), { capsule.launch { container.supervisor.pause(current.id) } }, style = ButtonStyle.Alt, tiny = true)
+                    PButton(stringResource(R.string.cap_stop), { capsule.launch { container.supervisor.stop(current.id) } }, style = ButtonStyle.Danger, tiny = true)
+                    if (!userHolds) PButton(stringResource(R.string.cap_take_back), { container.inputLeases.takeBack("display:0") }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.hand)
+                    else PButton(stringResource(R.string.cap_return), { container.inputLeases.release("display:0", Principal.User, "returned by the user") }, style = ButtonStyle.Ghost, tiny = true)
                 }
             } else {
                 Row(Modifier.padding(top = 9.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    PButton("Open Umbra", { capsule.open(null, null) }, style = ButtonStyle.Alt, tiny = true)
+                    PButton(stringResource(R.string.cap_open_umbra), { capsule.open(null, null) }, style = ButtonStyle.Alt, tiny = true)
                 }
             }
             notice?.let {
                 Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(it, Modifier.weight(1f), fontSize = 11.sp, color = Attention, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    PButton("", { capsule.notice.value = null }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.close, contentDescription = "Dismiss")
+                    PButton("", { capsule.notice.value = null }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.close, contentDescription = stringResource(R.string.cap_dismiss))
                 }
             }
         }
@@ -335,39 +353,40 @@ internal fun QuickComposerView(capsule: Capsule, container: AppContainer, screen
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Box(Modifier.weight(1f)) {
                 PButton(
-                    targetSession?.let { "To: ${it.title}" } ?: ("New task" + (project?.let { " · ${it.name}" } ?: "")),
+                    targetSession?.let { stringResource(R.string.cap_to, it.title) } ?: (project?.let { stringResource(R.string.cap_new_task_in, it.name) } ?: stringResource(R.string.cap_new_task)),
                     { menu = true }, style = ButtonStyle.Ghost, tiny = true, icon = if (targetSession != null) PIcons.bot else PIcons.spark,
                 )
                 DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem(text = { Text("New task" + (project?.let { " in ${it.name}" } ?: "")) }, onClick = { menu = false; container.ui.composerTarget.value = null })
-                    live.forEach { s -> DropdownMenuItem(text = { Text("To: ${s.title}", maxLines = 1, overflow = TextOverflow.Ellipsis) }, onClick = { menu = false; container.ui.composerTarget.value = s.id }) }
+                    DropdownMenuItem(text = { Text(project?.let { stringResource(R.string.cap_new_task_menu_in, it.name) } ?: stringResource(R.string.cap_new_task)) }, onClick = { menu = false; container.ui.composerTarget.value = null })
+                    live.forEach { s -> DropdownMenuItem(text = { Text(stringResource(R.string.cap_to, s.title), maxLines = 1, overflow = TextOverflow.Ellipsis) }, onClick = { menu = false; container.ui.composerTarget.value = s.id }) }
                 }
             }
             PButton(
-                if (settings.liveContext) "Live context on" else "Live context off",
+                stringResource(if (settings.liveContext) R.string.cap_live_on else R.string.cap_live_off),
                 { container.settings.update { it.copy(liveContext = !it.liveContext) } },
                 style = if (settings.liveContext) ButtonStyle.Warn else ButtonStyle.Ghost, tiny = true,
             )
-            PButton("", { capsule.closeComposer() }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.close, contentDescription = "Close")
+            PButton("", { capsule.closeComposer() }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.close, contentDescription = stringResource(R.string.action_close))
         }
         chips.forEach { chip -> ChipRow(chip) { container.ui.removeContext(chip.id) } }
         Box(Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 48.dp)) {
-            if (draft.isEmpty()) Text(if (targetSession != null) "Message the agent…" else "Ask Umbra to do anything…", fontSize = 15.sp, color = Color(0xFF9AAA98))
+            if (draft.isEmpty()) Text(stringResource(if (targetSession != null) R.string.cap_message_agent else R.string.cap_ask_umbra), fontSize = 15.sp, color = Color(0xFF9AAA98))
+            val messageLabel = stringResource(R.string.cap_message)
             BasicTextField(
                 draft, { container.ui.saveDraft(it) },
-                Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = "Message" },
+                Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = messageLabel },
                 textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = P.ink), cursorBrush = SolidColor(P.accent2), maxLines = 6,
             )
             // The keyboard opens only when the field is tapped (§3.1): until then the window cannot take focus at all.
-            if (!focused) Box(Modifier.matchParentSize().clickable(onClickLabel = "Type a message") { capsule.focusComposer(true) })
+            if (!focused) Box(Modifier.matchParentSize().clickable(onClickLabel = stringResource(R.string.cap_type)) { capsule.focusComposer(true) })
         }
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PButton("", { capsule.startSelection() }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.target, contentDescription = "Select from the screen")
+            PButton("", { capsule.startSelection() }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.target, contentDescription = stringResource(R.string.cap_select_screen))
             if (canListen) PButton("", {
                 context.startActivity(Intent(context, VoiceInputActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.mic, contentDescription = "Speak")
+            }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.mic, contentDescription = stringResource(R.string.cap_speak))
             Box(Modifier.weight(1f)) { busy?.let { Text(it, fontSize = 12.sp, color = P.sub) } }
-            PButton("", { capsule.send(draft.trim(), project?.id) }, tiny = true, icon = PIcons.send, enabled = draft.isNotBlank() && busy == null, contentDescription = "Send")
+            PButton("", { capsule.send(draft.trim(), project?.id) }, tiny = true, icon = PIcons.send, enabled = draft.isNotBlank() && busy == null, contentDescription = stringResource(R.string.cap_send))
         }
         notice?.let { Text(it, Modifier.padding(top = 6.dp), fontSize = 12.sp, color = P.danger, maxLines = 4, overflow = TextOverflow.Ellipsis) }
     }
@@ -387,9 +406,9 @@ internal fun ChipRow(chip: ContextChip, onRemove: () -> Unit) {
         else PIcon(PIcons.target, size = 16.dp, tint = P.accent2)
         Column(Modifier.weight(1f, fill = false)) {
             Text(chip.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = P.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("Snapshot · not live", fontSize = 10.sp, color = P.sub)
+            Text(stringResource(R.string.cap_snapshot_not_live), fontSize = 10.sp, color = P.sub)
         }
-        PButton("", onRemove, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.close, contentDescription = "Remove ${chip.label}")
+        PButton("", onRemove, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.close, contentDescription = stringResource(R.string.cap_remove, chip.label))
     }
 }
 
@@ -405,6 +424,7 @@ internal fun SelectionView(capture: ScreenContext.Capture, topInsetPx: Int, bott
     var origin by remember { mutableStateOf(Offset.Zero) }
     val density = LocalDensity.current
     val dim = Color(0x550C2414)
+    val selectionDescription = stringResource(R.string.sel_description)
     Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionOnScreen() }) {
         Canvas(
             Modifier.fillMaxSize()
@@ -412,7 +432,7 @@ internal fun SelectionView(capture: ScreenContext.Capture, topInsetPx: Int, bott
                     detectDragGestures(onDragStart = { at -> points.clear(); points.add(at) }, onDrag = { change, _ -> points.add(change.position) })
                 }
                 .pointerInput(Unit) { detectTapGestures { at -> points.clear(); points.add(at); points.add(at + Offset(1f, 1f)) } }
-                .semantics { contentDescription = "Screenshot. Draw around what you mean, or tap it." },
+                .semantics { contentDescription = selectionDescription },
         ) {
             drawImage(image, topLeft = Offset(-origin.x, -origin.y))
             if (points.size >= 3) {
@@ -435,22 +455,29 @@ internal fun SelectionView(capture: ScreenContext.Capture, topInsetPx: Int, bott
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             PIcon(PIcons.target, size = 14.dp, tint = Label)
-            Text("Screen selection · snapshot, not live", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Label)
+            Text(stringResource(R.string.sel_banner), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Label)
         }
         if (points.isEmpty()) Text(
-            "Draw around what you mean, or tap it",
+            stringResource(R.string.sel_hint),
             Modifier.align(Alignment.Center).clip(RoundedCornerShape(14.dp)).background(Color(0xAA17251D)).padding(horizontal = 14.dp, vertical = 9.dp),
             fontSize = 14.sp, color = Color.White,
         )
+        // A solid glaze base under the three buttons: nothing of the screenshot shows between them, and Clear is always
+        // there (unavailable until something is selected), so no button moves on the first touch.
         Row(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = with(density) { bottomInsetPx.toDp() } + 16.dp),
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                .padding(start = 12.dp, end = 12.dp, bottom = with(density) { bottomInsetPx.toDp() } + 12.dp)
+                .shadow(12.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x4020372C), spotColor = Color(0x4020372C))
+                .clip(RoundedCornerShape(22.dp)).background(Glaze).border(1.dp, Rim, RoundedCornerShape(22.dp))
+                .padding(8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            PButton("Cancel", onCancel, Modifier.weight(1f), style = ButtonStyle.Alt)
-            if (points.isNotEmpty()) PButton("Clear", { points.clear() }, Modifier.weight(1f), style = ButtonStyle.Alt)
-            PButton("Done · Attach", {
+            PButton(stringResource(R.string.sel_cancel), onCancel, Modifier.weight(1f), style = ButtonStyle.Ghost)
+            PButton(stringResource(R.string.sel_clear), { points.clear() }, Modifier.weight(1f), style = ButtonStyle.Alt, enabled = points.isNotEmpty())
+            PButton(stringResource(R.string.sel_done), {
                 onDone(points.map { Point((it.x + origin.x).toInt(), (it.y + origin.y).toInt()) })
-            }, Modifier.weight(1.4f), enabled = points.isNotEmpty())
+            }, Modifier.weight(1.3f), enabled = points.isNotEmpty(), icon = PIcons.check)
         }
     }
 }

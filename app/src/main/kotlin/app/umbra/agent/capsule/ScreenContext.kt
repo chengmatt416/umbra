@@ -7,6 +7,7 @@ import android.provider.Settings
 import android.util.Base64
 import app.umbra.agent.AgentService
 import app.umbra.agent.AppContainer
+import app.umbra.agent.R
 import app.umbra.agent.data.ContextChip
 import app.umbra.core.model.action.ErrorCode
 import app.umbra.core.model.Point
@@ -45,7 +46,7 @@ class ScreenContext(private val context: Context, private val container: AppCont
         val tree = if (UmbraAccessibilityService.connected.value) runCatching { container.accessibility.snapshot(SnapshotOptions(displayId = 0)) }.getOrNull() else null
         val shot = screenshot()
         val image = BitmapFactory.decodeByteArray(shot.bytes, 0, shot.bytes.size)
-            ?: throw ScreenContextException("The screenshot could not be read (${shot.bytes.size} bytes of ${shot.mime}).")
+            ?: throw ScreenContextException(context.getString(R.string.sc_unreadable, shot.bytes.size, shot.mime))
         Capture(image, tree, Rect(0, 0, image.width, image.height), System.currentTimeMillis())
     }
 
@@ -58,15 +59,15 @@ class ScreenContext(private val context: Context, private val container: AppCont
                 return backend.capture(0)
             } catch (e: BackendException) {
                 // An app that protects its screen is respected: no other way around it is tried.
-                if (e.code == ErrorCode.PERMISSION_DENIED && "secure" in (e.message ?: "")) throw ScreenContextException("This app protects its screen; it cannot be captured.")
+                if (e.code == ErrorCode.PERMISSION_DENIED && "secure" in (e.message ?: "")) throw ScreenContextException(context.getString(R.string.sc_secure))
                 last = e
             } catch (e: Exception) {
                 last = e
             }
         }
         throw ScreenContextException(
-            last?.let { "The screenshot failed: ${it.message}" }
-                ?: "Selecting from the screen needs Umbra's accessibility service (or the helper) to take the screenshot. Turn it on in Set up.",
+            last?.let { context.getString(R.string.sc_failed, it.message.orEmpty()) }
+                ?: context.getString(R.string.sc_needs_service),
         )
     }
 
@@ -83,7 +84,7 @@ class ScreenContext(private val context: Context, private val container: AppCont
         val text = Lasso.describe(selection, capture.screen, ::appName, treeAvailable = capture.tree != null)
         ContextChip(
             id = "selection-${capture.atMs}",
-            label = if (app != null) "Screen selection · $app" else "Screen selection",
+            label = if (app != null) context.getString(R.string.sc_selection_app, app) else context.getString(R.string.sc_selection),
             kind = ContextChip.SNAPSHOT,
             imagePath = file.absolutePath,
             text = text,

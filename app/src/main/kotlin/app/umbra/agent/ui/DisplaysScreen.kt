@@ -12,18 +12,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -40,9 +30,24 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.umbra.agent.AppContainer
+import app.umbra.agent.R
+import app.umbra.agent.ui.porcelain.ButtonStyle
+import app.umbra.agent.ui.porcelain.Callout
+import app.umbra.agent.ui.porcelain.CardStyle
+import app.umbra.agent.ui.porcelain.Eyebrow
+import app.umbra.agent.ui.porcelain.P
+import app.umbra.agent.ui.porcelain.PButton
+import app.umbra.agent.ui.porcelain.PCard
+import app.umbra.agent.ui.porcelain.PEmpty
+import app.umbra.agent.ui.porcelain.PIcons
+import app.umbra.agent.ui.porcelain.Subtle
+import app.umbra.agent.ui.porcelain.Tone
+import app.umbra.agent.ui.shell.PorcelainPage
 import app.umbra.agent.container
 import app.umbra.core.model.action.Environment
 import app.umbra.core.model.observation.DisplayInfo
@@ -52,7 +57,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Live view of the displays the agent works on, so the user can watch background work (spec §10, §25). */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DisplaysScreen(onBack: () -> Unit) {
     val container = LocalContext.current.container
@@ -64,35 +68,28 @@ fun DisplaysScreen(onBack: () -> Unit) {
         displays = try { container.displays.list() } catch (e: Exception) { error = e.message; emptyList() }
     }
     LaunchedEffect(Unit) { while (true) { delay(3_000); tick++ } }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Displays") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-            )
-        },
-    ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            error?.let { item { Banner(it, tone = Semantic.danger) } }
-            if (displays.isEmpty()) item { EmptyState("No displays", "Nothing to show yet.") }
+    PorcelainPage(stringResource(R.string.dest_displays), onBack) {
+        if (displays.isEmpty() && error == null) {
+            PEmpty(stringResource(R.string.disp_empty_title), stringResource(R.string.disp_empty_body), icon = PIcons.monitor)
+        } else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp, 6.dp, 18.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            item { Eyebrow(stringResource(R.string.disp_eyebrow)) }
+            error?.let { item { Callout(it, Tone.Danger) } }
             items(displays, key = { it.id }) { d ->
                 val lease = container.leases.holder(d.id)
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                    Column(Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(if (d.id == 0) "Phone screen" else d.name ?: "Display ${d.id}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    "${d.width}×${d.height} · ${if (d.isVirtual) "background" else "built in"}" + (lease?.let { " · in use by a task" } ?: ""),
-                                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (d.isVirtual && lease == null && d.ownerPackage == "com.android.shell") {
-                                OutlinedButton(onClick = { scope.launch { runCatching { container.displays.destroy(d.id) }; tick++ } }) { Text("Remove") }
-                            }
+                PCard(style = CardStyle.Soft) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(if (d.id == 0) stringResource(R.string.disp_phone) else d.name ?: stringResource(R.string.disp_named, d.id), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = P.ink)
+                            Subtle(
+                                "${d.width}×${d.height} · " + stringResource(if (d.isVirtual) R.string.disp_background else R.string.disp_builtin) +
+                                    (lease?.let { " · " + stringResource(R.string.disp_in_use) } ?: ""),
+                            )
                         }
-                        DisplayPreview(container, d.id, tick)
+                        if (d.isVirtual && lease == null && d.ownerPackage == "com.android.shell") {
+                            PButton(stringResource(R.string.disp_remove), { scope.launch { runCatching { container.displays.destroy(d.id) }; tick++ } }, style = ButtonStyle.Alt, tiny = true)
+                        }
                     }
+                    DisplayPreview(container, d.id, tick)
                 }
             }
         }
@@ -112,6 +109,6 @@ private fun DisplayPreview(container: AppContainer, displayId: Int, tick: Int) {
         } ?: value
     }
     image?.let {
-        Image(it, contentDescription = "Display $displayId", modifier = Modifier.fillMaxWidth().height(220.dp).padding(top = 8.dp).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Fit)
+        Image(it, contentDescription = stringResource(R.string.disp_preview, displayId), modifier = Modifier.fillMaxWidth().height(220.dp).padding(top = 10.dp).clip(RoundedCornerShape(14.dp)), contentScale = ContentScale.Fit)
     }
 }

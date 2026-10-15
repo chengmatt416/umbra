@@ -28,9 +28,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.umbra.agent.R
+import app.umbra.agent.ui.porcelain.PEmpty
+import androidx.compose.foundation.layout.widthIn
 import app.umbra.agent.container
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.Callout
@@ -56,12 +60,13 @@ import app.umbra.core.orchestrator.terminal.TerminalStatus
 import app.umbra.runtime.linux.tmux.ScreenLine
 import kotlinx.coroutines.launch
 
+@Composable
 fun statusLabel(s: TerminalState): Pair<String, Tone> = when (s.status) {
-    TerminalStatus.ATTACHED -> "Attached" to Tone.Good
-    TerminalStatus.DETACHED -> "Detached · not verified" to Tone.Warn
-    TerminalStatus.PANE_EXITED -> "Exited" + (s.exitStatus?.let { " ($it)" } ?: "") to Tone.Neutral
-    TerminalStatus.SERVER_LOST -> "tmux server lost" to Tone.Danger
-    TerminalStatus.HISTORY_GAP -> "History gap" to Tone.Warn
+    TerminalStatus.ATTACHED -> stringResource(R.string.term_attached) to Tone.Good
+    TerminalStatus.DETACHED -> stringResource(R.string.term_detached) to Tone.Warn
+    TerminalStatus.PANE_EXITED -> stringResource(R.string.term_exited) + (s.exitStatus?.let { " ($it)" } ?: "") to Tone.Neutral
+    TerminalStatus.SERVER_LOST -> stringResource(R.string.term_server_lost) to Tone.Danger
+    TerminalStatus.HISTORY_GAP -> stringResource(R.string.term_history_gap) to Tone.Warn
 }
 
 /**
@@ -86,34 +91,45 @@ fun TerminalsScreen(sessionId: String? = null, cwd: String? = null, embedded: Bo
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
             .padding(horizontal = if (embedded) 0.dp else 18.dp),
     ) {
+        val context = LocalContext.current
+        val resources = androidx.compose.ui.platform.LocalResources.current
+        val newTerminal: () -> Unit = {
+            busy = true
+            scope.launch {
+                try {
+                    val dir = cwd ?: sessionId?.let { container.workspaces.sessionDirs(it) }?.let { container.workspaceLayout.toGuest(it.files) } ?: "/home/agent"
+                    val t = container.terminals.open(if (sessionId != null) "shell" else "Linux shell", dir, group = "user", sessionId = sessionId)
+                    open = t.id
+                    error = null
+                } catch (e: Exception) {
+                    error = resources.getString(R.string.term_open_failed, e.message ?: "")
+                } finally { busy = false }
+            }
+        }
+        if (list.isEmpty() && !embedded) {
+            PEmpty(
+                stringResource(R.string.term_empty_title), stringResource(R.string.term_empty_body), icon = PIcons.terminal,
+                action = { PButton(stringResource(R.string.term_new), newTerminal, icon = PIcons.plus, enabled = !busy) },
+            )
+            return@Column
+        }
         if (!embedded) {
-            Eyebrow("Runtime · tmux")
-            SerifTitle("Terminals", Modifier.padding(top = 6.dp, bottom = 6.dp), size = 26)
+            Eyebrow(stringResource(R.string.term_eyebrow))
+            SerifTitle(stringResource(R.string.dest_terminals), Modifier.padding(top = 6.dp, bottom = 6.dp), size = 26)
         }
         error?.let { Callout(it, Tone.Danger); Gap(6.dp) }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            PButton("New terminal", {
-                busy = true
-                scope.launch {
-                    try {
-                        val dir = cwd ?: sessionId?.let { container.workspaces.sessionDirs(it) }?.let { container.workspaceLayout.toGuest(it.files) } ?: "/home/agent"
-                        val t = container.terminals.open(if (sessionId != null) "shell" else "Linux shell", dir, group = "user", sessionId = sessionId)
-                        open = t.id
-                        error = null
-                    } catch (e: Exception) {
-                        error = "Could not open a terminal: ${e.message}"
-                    } finally { busy = false }
-                }
-            }, tiny = true, icon = PIcons.plus, enabled = !busy)
+        app.umbra.agent.ui.porcelain.FadingRow(Modifier.fillMaxWidth()) {
+            PButton(stringResource(R.string.term_new), newTerminal, tiny = true, icon = PIcons.plus, enabled = !busy)
             list.forEach { t ->
                 val (label, tone) = statusLabel(t)
-                PButton(t.record.title.take(18), { open = t.record.id }, style = if (t.record.id == focused?.record?.id) ButtonStyle.Primary else ButtonStyle.Alt, tiny = true)
+                // The whole title, ellipsized by width rather than cut at a fixed character count (L-01).
+                PButton(t.record.title, { open = t.record.id }, Modifier.widthIn(max = 168.dp), style = if (t.record.id == focused?.record?.id) ButtonStyle.Primary else ButtonStyle.Alt, tiny = true)
                 if (t.record.id == focused?.record?.id) Tag(label, tone)
             }
         }
         Gap(8.dp)
         if (focused == null) {
-            if (list.isEmpty()) Subtle(if (sessionId != null) "No terminals for this session yet. A terminal is a tmux pane in the Linux environment: it keeps running when you leave this screen." else "No terminals yet.")
+            if (list.isEmpty()) Subtle(stringResource(R.string.term_session_empty))
             else list.forEach { t ->
                 val (label, tone) = statusLabel(t)
                 PObject(t.record.title, "${t.record.group} · ${t.record.cwd}", PIcons.terminal, onClick = { open = t.record.id }, trailing = { Tag(label, tone) })
@@ -126,7 +142,7 @@ fun TerminalsScreen(sessionId: String? = null, cwd: String? = null, embedded: Bo
             var details by remember(t.record.id) { mutableStateOf(false) }
             OwnershipBar(t, lease, onError = { error = it }, onDetails = { details = true })
             Gap(6.dp)
-            TerminalPane(container.terminals, t.record.id, ownsInput = mine && t.status == TerminalStatus.ATTACHED, modifier = Modifier.weight(1f), onFenced = { error = "Not sent: $it" })
+            TerminalPane(container.terminals, t.record.id, ownsInput = mine && t.status == TerminalStatus.ATTACHED, modifier = Modifier.weight(1f), onFenced = { error = resources.getString(R.string.term_not_sent, it) })
             if (details) TerminalDetailsSheet(t, onClose = { details = false })
         }
     }
@@ -137,7 +153,7 @@ fun TerminalsScreen(sessionId: String? = null, cwd: String? = null, embedded: Bo
 private fun TerminalDetailsSheet(t: TerminalState, onClose: () -> Unit) {
     androidx.compose.material3.ModalBottomSheet(onDismissRequest = onClose, containerColor = androidx.compose.ui.graphics.Color(0xFFEEF2EA)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
-            Eyebrow("Terminal details")
+            Eyebrow(stringResource(R.string.term_details_eyebrow))
             SerifTitle(t.record.title, Modifier.padding(top = 6.dp, bottom = 8.dp), size = 22)
             TerminalExtras(t)
         }
@@ -148,27 +164,33 @@ private fun TerminalDetailsSheet(t: TerminalState, onClose: () -> Unit) {
 private fun OwnershipBar(t: TerminalState, lease: app.umbra.core.control.InputLease?, onError: (String) -> Unit, onDetails: () -> Unit) {
     val container = LocalContext.current.container
     val scope = rememberCoroutineScope()
+    val closeFailed = stringResource(R.string.term_close_failed)
     val owner = lease?.owner
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Kicker("Input")
+    app.umbra.agent.ui.porcelain.FadingRow(Modifier.fillMaxWidth()) {
+        Kicker(stringResource(R.string.term_input))
         Tag(
             when {
-                lease == null || owner == null -> "nobody"
-                lease.state == LeaseState.UNCERTAIN -> "uncertain"
-                lease.state == LeaseState.HANDOFF_PENDING -> "$owner · handover asked"
+                lease == null || owner == null -> stringResource(R.string.term_nobody)
+                lease.state == LeaseState.UNCERTAIN -> stringResource(R.string.term_uncertain)
+                lease.state == LeaseState.HANDOFF_PENDING -> stringResource(R.string.term_handover_asked, owner.toString())
+                owner == Principal.User -> stringResource(R.string.term_you)
                 else -> owner.toString()
             } + (lease?.let { " · gen ${it.generation}" } ?: ""),
             if (owner == Principal.User) Tone.Good else if (lease?.state == LeaseState.UNCERTAIN) Tone.Danger else Tone.Warn,
         )
+        // Two ways to get input, named by what happens; returning it is offered only while you hold it (X-07).
         if (owner != Principal.User && t.status == TerminalStatus.ATTACHED) {
-            PButton("Take control", { container.terminals.takeControl(t.record.id) }, tiny = true)
-            if (owner != null && lease.state == LeaseState.ACTIVE) PButton("Ask to hand over", { container.terminals.requestHandoff(t.record.id) }, style = ButtonStyle.Alt, tiny = true)
+            PButton(stringResource(R.string.term_take_over), { container.terminals.takeControl(t.record.id) }, tiny = true)
+            if (owner != null && lease.state == LeaseState.ACTIVE) PButton(stringResource(R.string.term_ask_handover), { container.terminals.requestHandoff(t.record.id) }, style = ButtonStyle.Alt, tiny = true)
         }
-        if (owner == Principal.User && t.record.sessionId != null && t.record.purpose != "omp-tui") PButton("Return to agent", { container.terminals.returnControl(t.record.id) }, style = ButtonStyle.Alt, tiny = true)
-        PButton("Details", onDetails, style = ButtonStyle.Ghost, tiny = true)
-        PButton("Close", { scope.launch { runCatching { container.terminals.close(t.record.id) }.onFailure { onError(it.message ?: "close failed") } } }, style = ButtonStyle.Ghost, tiny = true)
+        if (owner == Principal.User && t.record.sessionId != null && t.record.purpose != "omp-tui") PButton(stringResource(R.string.term_return), { container.terminals.returnControl(t.record.id) }, style = ButtonStyle.Alt, tiny = true)
+        PButton(stringResource(R.string.term_details), onDetails, style = ButtonStyle.Ghost, tiny = true)
+        PButton(stringResource(R.string.term_close), { scope.launch { runCatching { container.terminals.close(t.record.id) }.onFailure { onError(it.message ?: closeFailed) } } }, style = ButtonStyle.Ghost, tiny = true)
     }
-    if (owner != null && owner != Principal.User) Subtle("Read-only: $owner holds input. Taking control stops new input from the agent; it does not stop a command that is already running.", Modifier.padding(top = 4.dp))
+    when {
+        owner == Principal.User -> Subtle(stringResource(R.string.term_you_hold), Modifier.padding(top = 4.dp))
+        owner != null && t.status == TerminalStatus.ATTACHED -> Subtle(stringResource(R.string.term_choice_note), Modifier.padding(top = 4.dp))
+    }
 }
 
 /** Size authority, history and the saved log of one terminal. */
@@ -181,21 +203,21 @@ private fun TerminalExtras(t: TerminalState) {
     var found by remember { mutableStateOf<List<String>>(emptyList()) }
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         PCard(style = CardStyle.Soft) {
-            PSetting("Size", "The view that holds input sets the size; without one the pane keeps a stable ${t.cols}×${t.rows}.") {
-                Segmented(listOf("owner" to "Owner", "fixed" to "Fixed"), t.record.sizeMode, { container.terminals.setSizeMode(t.record.id, it) })
+            PSetting(stringResource(R.string.term_size), stringResource(R.string.term_size_d, t.cols, t.rows)) {
+                Segmented(listOf("owner" to stringResource(R.string.term_owner), "fixed" to stringResource(R.string.term_fixed)), t.record.sizeMode, { container.terminals.setSizeMode(t.record.id, it) })
             }
-            PSetting("Where", "group ${t.record.group} · ${t.record.windowId} ${t.record.paneId} · epoch ${t.record.serverEpoch.substringBefore(':')}", divider = false) {}
+            PSetting(stringResource(R.string.term_where), stringResource(R.string.term_where_line, t.record.group, t.record.windowId, t.record.paneId, t.record.serverEpoch.substringBefore(':')), divider = false) {}
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                PButton(if (history == null) "History" else "Hide history", {
+                PButton(if (history == null) stringResource(R.string.term_history) else stringResource(R.string.term_hide_history), {
                     if (history != null) history = null else scope.launch { history = runCatching { container.terminals.scrollback(t.record.id) }.getOrDefault(emptyList()) }
                 }, style = ButtonStyle.Alt, tiny = true)
             }
             history?.let { Gap(6.dp); ScrollbackView(it) }
             Gap(8.dp)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(query, { query = it }, Modifier.weight(1f), singleLine = true, placeholder = { Text("Search the saved log", fontSize = 13.sp) })
+                OutlinedTextField(query, { query = it }, Modifier.weight(1f), singleLine = true, placeholder = { Text(stringResource(R.string.term_search_log), fontSize = 13.sp) })
                 Box(Modifier.padding(start = 6.dp)) {
-                    PButton("Search", { scope.launch { found = container.terminals.searchLog(t.record.id, query) } }, style = ButtonStyle.Alt, tiny = true, enabled = query.isNotBlank())
+                    PButton(stringResource(R.string.term_search), { scope.launch { found = container.terminals.searchLog(t.record.id, query) } }, style = ButtonStyle.Alt, tiny = true, enabled = query.isNotBlank())
                 }
             }
             found.take(50).forEach { Text(it, fontFamily = P.mono, fontSize = 11.sp, color = P.sub, maxLines = 2) }

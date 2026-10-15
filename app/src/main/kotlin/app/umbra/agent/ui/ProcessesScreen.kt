@@ -1,26 +1,11 @@
 package app.umbra.agent.ui
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,14 +14,23 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.umbra.agent.R
+import app.umbra.agent.ui.porcelain.ButtonStyle
+import app.umbra.agent.ui.porcelain.Callout
+import app.umbra.agent.ui.porcelain.Eyebrow
+import app.umbra.agent.ui.porcelain.PButton
+import app.umbra.agent.ui.porcelain.PIconButton
+import app.umbra.agent.ui.porcelain.PIcons
+import app.umbra.agent.ui.porcelain.PObject
+import app.umbra.agent.ui.porcelain.SectionHead
+import app.umbra.agent.ui.porcelain.Subtle
+import app.umbra.agent.ui.porcelain.Tone
+import app.umbra.agent.ui.shell.PorcelainPage
 import app.umbra.agent.container
 import app.umbra.agent.data.GuestManager
 import app.umbra.platform.api.exec
@@ -46,7 +40,6 @@ import kotlinx.coroutines.launch
 private data class GuestProcess(val pid: Int, val ageSeconds: Long, val rssKb: Long, val command: String)
 
 /** What is running on behalf of the agent: processes in the Linux environment and apps opened by tasks (spec §25). */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProcessesScreen(onBack: () -> Unit) {
     val container = LocalContext.current.container
@@ -74,42 +67,28 @@ fun ProcessesScreen(onBack: () -> Unit) {
     LaunchedEffect(Unit) { while (true) { delay(5_000); tick++ } }
 
     val apps = sessions.filter { !it.state.isTerminal }.flatMap { s -> s.activeApps.map { app -> s.title to app } }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Running now") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-                actions = { IconButton(onClick = { tick++ }) { Icon(Icons.Default.Refresh, "Refresh") } },
-            )
-        },
-    ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            error?.let { item { Banner(it, tone = Semantic.danger) } }
-            item { SectionTitle("Apps opened by tasks") }
-            if (apps.isEmpty()) item { Text("None.", Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    PorcelainPage(
+        stringResource(R.string.dest_processes), onBack,
+        actions = { PIconButton(PIcons.refresh, stringResource(R.string.proc_refresh), { tick++ }, size = 36.dp) },
+    ) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp, 6.dp, 18.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { Eyebrow(stringResource(R.string.proc_eyebrow)) }
+            error?.let { item { Callout(it, Tone.Danger) } }
+            item { SectionHead(stringResource(R.string.proc_apps)) }
+            if (apps.isEmpty()) item { Subtle(stringResource(R.string.proc_apps_none)) }
             items(apps, key = { "${it.first}/${it.second}" }) { (task, pkg) ->
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(pkg, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
-                            Text("for “$task”", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        OutlinedButton(onClick = { scope.launch { container.shellUser.exec("am force-stop $pkg"); tick++ } }) { Text("Close") }
-                    }
-                }
+                PObject(
+                    pkg, stringResource(R.string.proc_for, task), PIcons.phone,
+                    trailing = { PButton(stringResource(R.string.proc_close), { scope.launch { container.shellUser.exec("am force-stop $pkg"); tick++ } }, style = ButtonStyle.Alt, tiny = true) },
+                )
             }
-            item { SectionTitle("In the Linux environment") }
-            if (processes.isEmpty()) item { Text(if (guestState == GuestManager.State.Ready) "Nothing running." else "The Linux environment is not running.", Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { SectionHead(stringResource(R.string.proc_linux), Modifier.padding(top = 8.dp)) }
+            if (processes.isEmpty()) item { Subtle(stringResource(if (guestState == GuestManager.State.Ready) R.string.proc_linux_none else R.string.proc_linux_off)) }
             items(processes, key = { it.pid }) { p ->
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(p.command, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text("pid ${p.pid} · ${formatMs(p.ageSeconds * 1000)} · ${p.rssKb / 1024} MB", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        OutlinedButton(onClick = { scope.launch { container.guest.runtime.exec(listOf("kill", "-TERM", p.pid.toString())); delay(500); tick++ } }) { Text("End") }
-                    }
-                }
+                PObject(
+                    p.command, stringResource(R.string.proc_meta, p.pid, formatMs(p.ageSeconds * 1000), (p.rssKb / 1024).toInt()), PIcons.terminal,
+                    trailing = { PButton(stringResource(R.string.proc_end), { scope.launch { container.guest.runtime.exec(listOf("kill", "-TERM", p.pid.toString())); delay(500); tick++ } }, style = ButtonStyle.Alt, tiny = true) },
+                )
             }
         }
     }

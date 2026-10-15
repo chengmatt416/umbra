@@ -100,7 +100,6 @@ class AgentSupervisor(
         title: String? = null,
         workspaceId: String? = null,
         model: ModelRef? = null,
-        approvalMode: String? = null,
         projectId: String? = null,
     ): Session {
         val now = deps.clock.nowMs()
@@ -116,7 +115,6 @@ class AgentSupervisor(
             request = request,
             workspaceId = workspace,
             model = model,
-            approvalMode = approvalMode ?: deps.approvalMode().name.lowercase(),
             projectId = projectId,
         )
         return deps.store.create(session)
@@ -372,6 +370,17 @@ class AgentSupervisor(
         deps.store.get(sessionId)?.workspaceId?.let { runCatching { deps.workspaces.detachSession(it, sessionId) } }
         runCatching { deps.conversations.delete(sessionId) }
         deps.store.delete(sessionId)
+    }
+
+    /**
+     * Deletes a workspace's folder once none of its tasks is new, queued, working, waiting or paused; a finished task
+     * that still keeps its agent for follow-ups lets it go first. Throws WorkspaceInUseException naming the others.
+     */
+    suspend fun deleteWorkspace(workspaceId: String): Boolean {
+        suspend fun active(sessionId: String) = deps.store.get(sessionId)?.state?.isTerminal == false
+        val attached = deps.workspaces.get(workspaceId)?.sessionIds ?: return false
+        for (sessionId in attached) if (!active(sessionId)) live.remove(sessionId)?.releaseProcess()
+        return deps.workspaces.deleteIfIdle(workspaceId) { active(it) }
     }
 
     /** Stops every session and deletes all of them with their timelines and private files (spec §32: clear session data). */

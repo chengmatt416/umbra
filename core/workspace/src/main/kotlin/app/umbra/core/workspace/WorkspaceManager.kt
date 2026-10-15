@@ -104,6 +104,23 @@ class WorkspaceManager(
         }
     }
 
+    /**
+     * Deletes the workspace and its files unless one of its sessions is still [active]. Sessions that ended let go of
+     * it first: their timelines stay, only the folder goes. Throws [WorkspaceInUseException] naming the active ones.
+     */
+    suspend fun deleteIfIdle(id: String, active: suspend (sessionId: String) -> Boolean): Boolean = io {
+        mutex.withLock {
+            val registry = load().toMutableList()
+            val ws = registry.firstOrNull { it.id == id } ?: return@io false
+            val busy = ws.sessionIds.filter { active(it) }.toSet()
+            if (busy.isNotEmpty()) throw WorkspaceInUseException(id, busy)
+            deleteRecursively(layout.projectDir(id))
+            registry.removeAll { it.id == id }
+            save(registry)
+            true
+        }
+    }
+
     /** Host path of a file inside a workspace. Never escapes the workspace, even through symlinks. */
     suspend fun resolve(id: String, relative: String): Path = io {
         get(id) ?: throw WorkspaceNotFoundException(id)

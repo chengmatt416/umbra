@@ -1,5 +1,7 @@
 package app.umbra.agent.ui.vault
 
+import app.umbra.agent.R
+import androidx.compose.ui.res.stringResource
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -52,6 +54,7 @@ import kotlinx.serialization.json.put
 fun RecoveryCard(onMessage: (String) -> Unit) {
     val container = LocalContext.current.container
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val scope = rememberCoroutineScope()
     var code by remember { mutableStateOf<String?>(null) }
     var pending by remember { mutableStateOf<ByteArray?>(null) }
@@ -61,44 +64,44 @@ fun RecoveryCard(onMessage: (String) -> Unit) {
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
         val bytes = pending
         pending = null
-        if (uri == null || bytes == null) { onMessage("Not saved: no backup was written."); return@rememberLauncherForActivityResult }
+        if (uri == null || bytes == null) { onMessage(resources.getString(R.string.rc_not_saved)); return@rememberLauncherForActivityResult }
         scope.launch {
             onMessage(runCatching {
                 withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri)!!.use { it.write(bytes) } }
                 val digest = app.umbra.core.control.ControlStore.sha256(String(bytes)).take(16)
                 container.control.journal("credentials").append("vault.backup_exported", buildJsonObject { put("bytes", bytes.size); put("file_digest", digest) })
-                "Backup saved (${bytes.size} bytes, file fingerprint $digest). It opens only with the recovery code you wrote down."
-            }.getOrElse { "Could not write it: ${it.message}" })
+                resources.getString(R.string.rc_saved, android.text.format.Formatter.formatShortFileSize(context, bytes.size.toLong()), digest)
+            }.getOrElse { resources.getString(R.string.rc_write_failed, it.message.orEmpty()) })
         }
     }
     val open = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             opening = runCatching { withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)!!.use { it.readBytes() } } }
-                .getOrElse { onMessage("Could not read it: ${it.message}"); null }
+                .getOrElse { onMessage(resources.getString(R.string.rc_read_failed, it.message.orEmpty())); null }
         }
     }
 
     PCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Kicker("Recovery", Modifier.weight(1f))
-            Tag("Code-sealed backup", Tone.Neutral)
+            Kicker(stringResource(R.string.rc_recovery), Modifier.weight(1f))
+            Tag(stringResource(R.string.rc_tag), Tone.Neutral)
         }
-        Subtle("A backup of the stored keys and git credentials, sealed under a recovery code shown once and kept nowhere on this phone. Anyone with the file and the code has the keys; neither alone is enough.", Modifier.padding(top = 6.dp))
-        Subtle("Restoring keeps what is already stored and brings back no authority: git credentials return unable to publish until you grant it again; no promotion or capability is in a backup.", Modifier.padding(top = 4.dp))
+        Subtle(stringResource(R.string.rc_body), Modifier.padding(top = 6.dp))
+        Subtle(stringResource(R.string.rc_note), Modifier.padding(top = 4.dp))
         Row(Modifier.padding(top = 8.dp)) {
-            PButton("Make a backup…", { code = VaultBackup.newRecoveryCode() }, style = ButtonStyle.Alt, tiny = true)
-            PButton("Restore…", { open.launch(arrayOf("*/*")) }, Modifier.padding(start = 8.dp), style = ButtonStyle.Ghost, tiny = true)
+            PButton(stringResource(R.string.rc_make), { code = VaultBackup.newRecoveryCode() }, style = ButtonStyle.Alt, tiny = true)
+            PButton(stringResource(R.string.rc_restore), { open.launch(arrayOf("*/*")) }, Modifier.padding(start = 8.dp), style = ButtonStyle.Ghost, tiny = true)
         }
     }
 
     code?.let { c ->
         AlertDialog(
             onDismissRequest = { code = null },
-            title = { Text("Your recovery code") },
+            title = { Text(stringResource(R.string.rc_code_title)) },
             text = {
                 Column {
-                    Text("Write it down now, away from this phone. It is not stored anywhere and cannot be shown again; without it the backup cannot be opened.", fontSize = 13.sp)
+                    Text(stringResource(R.string.rc_code_body), fontSize = 13.sp)
                     SelectionContainer { Text(c, Modifier.padding(top = 10.dp), fontSize = 20.sp, fontFamily = P.mono, color = P.ink) }
                 }
             },
@@ -121,12 +124,12 @@ fun RecoveryCard(onMessage: (String) -> Unit) {
                             )
                         }
                         pending = withContext(Dispatchers.Default) { VaultBackup.seal(body, c) }
-                        onMessage("Sealed ${body.secrets.size} key(s) and ${body.git.size} git credential(s). Choose where to save the file.")
+                        onMessage(resources.getString(R.string.rc_sealed, body.secrets.size, body.git.size))
                         save.launch("umbra-vault-${System.currentTimeMillis() / 1000}.umbra-vault")
                     }
-                }) { Text("I wrote it down") }
+                }) { Text(stringResource(R.string.rc_wrote_down)) }
             },
-            dismissButton = { TextButton(onClick = { code = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { code = null }) { Text(stringResource(R.string.rc_cancel)) } },
         )
     }
 
@@ -135,28 +138,28 @@ fun RecoveryCard(onMessage: (String) -> Unit) {
         var problem by remember { mutableStateOf<String?>(null) }
         AlertDialog(
             onDismissRequest = { opening = null; preview = null },
-            title = { Text(if (preview == null) "Open the backup" else "Restore from the backup?") },
+            title = { Text(if (preview == null) stringResource(R.string.rc_open_title) else stringResource(R.string.rc_restore_title)) },
             text = {
                 Column {
                     val p = preview
                     if (p == null) {
-                        Text("Enter its recovery code. A wrong code or a changed file does not open.", fontSize = 13.sp)
-                        OutlinedTextField(typed, { typed = it; problem = null }, Modifier.padding(top = 8.dp), label = { Text("Recovery code") }, singleLine = true)
+                        Text(stringResource(R.string.rc_enter), fontSize = 13.sp)
+                        OutlinedTextField(typed, { typed = it; problem = null }, Modifier.padding(top = 8.dp), label = { Text(stringResource(R.string.rc_code)) }, singleLine = true)
                         problem?.let { Text(it, Modifier.padding(top = 6.dp), fontSize = 12.sp, color = P.danger) }
                     } else {
                         val stored = container.secrets.names()
-                        Text("Made ${android.text.format.DateUtils.getRelativeTimeSpanString(p.createdAtMs)}. The file opened and is unchanged.", fontSize = 13.sp)
-                        p.secrets.forEach { s -> Text("${s.label} (${s.name}): " + if (s.name in stored) "kept, one is stored" else "restored, ${s.scope.label.lowercase()}", Modifier.padding(top = 4.dp), fontSize = 12.sp, color = P.sub) }
-                        p.git.forEach { g -> Text("${g.label} (${g.url}): " + if (container.gitCredentials.forRemote(g.url) != null) "kept, one is held" else "restored, unable to publish until granted", Modifier.padding(top = 4.dp), fontSize = 12.sp, color = P.sub) }
+                        Text(stringResource(R.string.rc_made, android.text.format.DateUtils.getRelativeTimeSpanString(p.createdAtMs).toString()), fontSize = 13.sp)
+                        p.secrets.forEach { s -> Text(if (s.name in stored) stringResource(R.string.rc_item_kept, s.label, s.name) else stringResource(R.string.rc_item_restored, s.label, s.name, s.scope.label.lowercase()), Modifier.padding(top = 4.dp), fontSize = 12.sp, color = P.sub) }
+                        p.git.forEach { g -> Text(if (container.gitCredentials.forRemote(g.url) != null) stringResource(R.string.rc_git_kept, g.label, g.url) else stringResource(R.string.rc_git_restored, g.label, g.url), Modifier.padding(top = 4.dp), fontSize = 12.sp, color = P.sub) }
                     }
                 }
             },
             confirmButton = {
                 if (preview == null) TextButton(enabled = typed.isNotBlank(), onClick = {
                     scope.launch {
-                        preview = withContext(Dispatchers.Default) { runCatching { VaultBackup.open(bytes, typed) }.getOrElse { problem = "It does not open: a wrong code, or the file was changed."; null } }
+                        preview = withContext(Dispatchers.Default) { runCatching { VaultBackup.open(bytes, typed) }.getOrElse { problem = resources.getString(R.string.rc_no_open); null } }
                     }
-                }) { Text("Open") }
+                }) { Text(stringResource(R.string.rc_open)) }
                 else TextButton(onClick = {
                     val p = preview!!
                     opening = null
@@ -166,11 +169,11 @@ fun RecoveryCard(onMessage: (String) -> Unit) {
                             VaultBackup.restore(p, container.secrets.names(), { n, v -> container.secrets.put(n, v) }, container.vault, container.gitCredentials,
                                 { id, t -> container.gitSecrets.put(gitSecretName(id), t) }, container.control.journal("credentials"))
                         }
-                        onMessage("Restored ${r.restored.size} key(s) and ${r.gitRestored.size} git credential(s); kept ${r.kept.size + r.gitKept.size} already here. Restored git credentials cannot publish until you grant it in the git card.")
+                        onMessage(resources.getString(R.string.rc_restored, r.restored.size, r.gitRestored.size, r.kept.size + r.gitKept.size))
                     }
-                }) { Text("Restore") }
+                }) { Text(stringResource(R.string.rc_restore_go)) }
             },
-            dismissButton = { TextButton(onClick = { opening = null; preview = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { opening = null; preview = null }) { Text(stringResource(R.string.rc_cancel)) } },
         )
     }
 }
