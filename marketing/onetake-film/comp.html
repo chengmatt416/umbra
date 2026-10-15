@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Umbra · one take · a dive through scale</title>
+<style>
+  html, body { margin: 0; width: 1080px; height: 1920px; overflow: hidden; background: #e9ede5; }
+  canvas { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script src="motion.js"></script>   <!-- onetake lib/motion.js (copied next to this file by build.sh) → window.OM -->
+<script src="look.js"></script>     <!-- scripts/look.py apply look.json comp.html → colours + inlined faces -->
+<script>
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+// Umbra · ONE TAKE · "a dive through scale" (concept 2 of the concept round; look: porcelain).
+// One canvas, one camera, no cut. Every level is inside the one before:
+//   the phone → the sentence typed on it → (inside its last letter) the Linux machine → (inside the built apk) the app that runs
+//   → whip out → the same phone, now holding the one question only the person answers → the tap on Deny.
+// Everything is a pure function of t. Real material: the phone's screen is the recorded app (footage/frames/*), the strings in
+// the terminal and the app are the real ones from the on-device run (crashy-login fixture).
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+const W = 1080, H = 1920, FPS = 30, DUR = 29.0;
+const LANG = new URLSearchParams(location.search).get('lang') === 'zh' ? 'zh' : 'en';
+const STR = {
+  en: { ask: 'Ask.', build: 'Build.', decide: 'Decide.', tag: 'An autonomous agent that lives on your Android phone.', free: 'Free · open source · Android 16', rest: 'At rest', task: 'Check my Androi…' },
+  zh: { ask: '交辦。', build: '建置。', decide: '你決定。', tag: '住在你 Android 手機裡的自主代理', free: '免費開源 · Android 16', rest: 'At rest', task: 'Check my Androi…' },
+}[LANG];
+const REQ = 'Check my Android version, then remove the SIM toolkit app';
+window.__meta = { dur: DUR, fps: FPS, w: W, h: H };
+
+const { clamp, lerp, seg, sstep, ssstep, spring: spr, ring, ease } = OM;
+const cv = document.getElementById('c'), g = cv.getContext('2d');
+let C = null;                                   // LOOK.color once the faces are loaded
+
+// ────────────────────────────────────────── the world (phone level, units = pixels at zoom 1) ──────────────────────────────────────────
+const PH = { x: 190, y: 204, w: 700, h: 1512, r: 84 };                   // phone body
+const SC = { x: 208, y: 222, w: 664, h: 1476, r: 66 };                   // its screen
+const K = SC.w / 720;                                                    // footage px → world px
+const fw = (fx, fy) => [SC.x + fx * K, SC.y + fy * K];                   // footage pixel → world
+const HOLE = fw(540, 65), HOLE_R = 27 * K;                               // the punch-hole the capsule wraps
+const CAPS = { x0: fw(325, 0)[0], x1: fw(585, 0)[0], y0: fw(0, 20)[1], y1: fw(0, 111)[1] };
+const PHC = [540, 960];
+const COMP = fw(360, 1000);                                              // the composer's typed text
+const TP = fw(255, 1030);                                                // the last letter of the sentence ("p" of "app"): the terminal lives inside it
+const DENY = fw(120, 910);
+
+// level 1 · the Linux machine, inside the last letter. Terminal units; one terminal unit = ST world px.
+const ST = 0.01;
+const WIN = { x: -600, y: -380, w: 1200, h: 760 };
+const T_LINE1 = '…/crashy-login# ./build.sh';
+const T_LINE2 = 'javac · aapt2 · d8 · apksigner';
+const T_LINE3 = 'built build/crashy-login.apk';
+const T_LINE4 = 'Wall time: 4.25 seconds';
+const ICON = { x: 440, y: 110, h: 200 };                                  // the built app, as a phone-shaped icon after line 3 (centre x, y; height)
+// level 2 · the app inside the icon. App units (the app's own 720 × 1280 px); one app unit = SA terminal units.
+const SA = ICON.h / 1280;
+const toT = (u, v) => [TP[0] + u * ST, TP[1] + v * ST];                  // terminal → world
+const ICONW = toT(ICON.x, ICON.y);
+const toA = (a, b) => toT(ICON.x + (a - 360) * SA, ICON.y + (b - 640) * SA);   // app → world
+const Z_T = 78, Z_A = 800;
+const CAPC = [(CAPS.x0 + CAPS.x1) / 2, (CAPS.y0 + CAPS.y1) / 2];      // the capsule's centre
+
+// ────────────────────────────────────────── beats (seconds) ──────────────────────────────────────────
+const T_HOLE_HOLD = 1.1, T_PULL = 3.2, T_PUSH = 6.6, T_DIVE1 = 9.4, T_TERM = 10.4, T_DIVE2 = 14.2, T_APP = 17.1, T_WHIP = 19.5, T_BACK = 21.4;
+const F1 = { name: 'typing', n: 152, t0: 2.4 };                           // footage 1: the sentence typed (real take, raw 4.0 s →)
+const F2 = { name: 'approve', n: 226, t0: 20.7, off: 12 };                // footage 2: the approval, then Deny (real take, raw 41.2 s →)
+const DENY_T = F2.t0 + (125 - F2.off) / 30;                              // the recorded Deny tap
+const SEND_T = F1.t0 + 127 / 30;                                         // the recorded Send tap
+// terminal beats
+const TY0 = 10.55, TY_CPS = 36, L2_T = 12.05, L3_T = 12.45, L4_T = 12.95;
+// app beats
+const A_USER = 17.35, A_PASS = 18.0, A_PRESS = 18.65, A_WELCOME = 18.72;
+
+// ────────────────────────────────────────── the camera: where the anchor sits on screen + log zoom ──────────────────────────────────────────
+const ZE = ease.cubicInOut, EX = ease.expoInOut, SI = ease.sineInOut;
+// A key says where an anchor (a world point) sits on screen and the zoom. Where the anchor changes, `same()` writes the key that gives
+// the identical view for the new anchor, so the camera never jumps and the subject never leaves the frame at depth.
+const same = (k, A, t = k.t) => ({ t, A, S: [k.S[0] + (A[0] - k.A[0]) * k.z, k.S[1] + (A[1] - k.A[1]) * k.z], z: k.z });
+const KEYS = [];
+const key = (o) => { KEYS.push(o); return o; };
+key({ t: 0.0, A: HOLE, S: [540, 960], z: 60 });
+key({ t: T_HOLE_HOLD, A: HOLE, S: [540, 960], z: 60 });
+key({ t: 2.15, A: HOLE, S: [540, 960], z: 14, curve: EX });                             // out of the hole: the lens, its rings, then the capsule's edge
+key({ t: 2.85, A: CAPC, S: [540, 960], z: 3.6, curve: SI });                           // the whole capsule: orb, 'At rest', the hole
+key({ t: T_PULL, A: PHC, S: [540, 940], z: 0.86, curve: ZE });                         // pull out to the whole phone
+key({ t: 4.0, A: PHC, S: [540, 940], z: 0.88, curve: SI });
+let k_ = key({ t: T_PUSH, A: COMP, S: [540, 900], z: 2.3, curve: SI });                // follow the typing in
+key(same(k_, TP, 6.9));                                                                // hold, now anchored on the last letter
+key({ t: T_DIVE1, A: TP, S: [540, 960], z: Z_T, curve: ZE });                          // dive into the last letter
+k_ = key({ t: T_DIVE2, A: TP, S: [540, 960], z: Z_T });                                // inside the terminal: still
+key(same(k_, ICONW));
+key({ t: T_APP - 0.35, A: ICONW, S: [540, 960], z: Z_A, curve: ZE });                  // dive into the built app
+k_ = key({ t: T_WHIP, A: ICONW, S: [540, 960], z: Z_A });
+k_ = key({ t: T_BACK, A: ICONW, S: [540 + (ICONW[0] - PHC[0]) * 1.08, 960 + (ICONW[1] - PHC[1]) * 1.08], z: 1.08, curve: EX });   // the whip out: 1000× → 1× in 1.9 s
+key({ t: T_BACK, A: PHC, S: [540, 960], z: 1.08 });
+key({ t: 23.4, A: PHC, S: [540, 960], z: 1.4, curve: SI });
+key({ t: 24.2, A: DENY, S: [540, 1000], z: 2.6, curve: EX });
+key({ t: 24.95, A: DENY, S: [540, 1000], z: 2.6 });
+key({ t: 25.7, A: [540, 480], S: [540, 880], z: 1.9, curve: ZE });                    // the answer: "Nothing is waiting for you"
+key({ t: 26.5, A: [540, 480], S: [540, 880], z: 1.9 });
+k_ = key({ t: 27.7, A: [540, 1200], S: [540, 960], z: 0.64, curve: ZE });              // pull back: the ground has words
+key({ t: 29.0, A: [540, 1200], S: [540, 960], z: 0.64 });
+const HITS = [[SEND_T, 5, 11], [L3_T, 4, 12], [A_WELCOME, 3, 12], [T_BACK + 1.55, 8, 9], [DENY_T, 4, 10]];     // [t, px, decay]
+const handEnv = t => sstep(1.3, 1.9, t) * (1 - sstep(8.4, 9.0, t)) + sstep(19.9, 20.4, t) * (1 - sstep(24.9, 25.2, t));
+
+function camAt(t) {
+  let A, S, z;
+  if (t <= KEYS[0].t) { ({ A, S, z } = KEYS[0]); }
+  else {
+    let i = 0; while (i < KEYS.length - 2 && t > KEYS[i + 1].t) i++;
+    const a = KEYS[i], b = KEYS[i + 1], k = (b.curve || ZE)(seg(t, a.t, b.t));
+    A = [lerp(a.A[0], b.A[0], k), lerp(a.A[1], b.A[1], k)];
+    S = [lerp(a.S[0], b.S[0], k), lerp(a.S[1], b.S[1], k)];
+    z = Math.exp(lerp(Math.log(a.z), Math.log(b.z), k));            // zoom is interpolated in log space: one speed
+  }
+  // screen-space hand + shocks (they live on screen, so they stay visible at 1000×)
+  const e = handEnv(t) * 3.2;
+  let sx = S[0] + e * (Math.sin(1.7 * t) + 0.6 * Math.sin(2.9 * t + 1)), sy = S[1] + e * (Math.sin(1.3 * t + 2) + 0.5 * Math.sin(3.3 * t));
+  let rot = 0;
+  for (const [th, amp, decay] of HITS) { const s = OM.shake(t, th, { amp, decay, seed: Math.round(th * 100) }); sx += s.x; sy += s.y; rot += s.rot * 0.35; }
+  return { A, S: [sx, sy], z, rot };
+}
+const viewM = c => [c.z, 0, 0, c.z, c.S[0] - c.A[0] * c.z, c.S[1] - c.A[1] * c.z];
+const toScreen = (c, p) => { const M = viewM(c); return [M[0] * p[0] + M[4], M[3] * p[1] + M[5]]; };
+
+// ────────────────────────────────────────── footage ──────────────────────────────────────────
+const IMG = new Map();
+function frame(clip, idx) {
+  idx = clamp(Math.round(idx), 0, clip.n - 1);
+  const key = clip.name + idx;
+  let im = IMG.get(key);
+  if (!im) { im = new Image(); im.src = `footage/frames/${clip.name}/${String(idx + 1).padStart(4, '0')}.jpg`; IMG.set(key, im); }
+  return im;
+}
+function footageAt(t) {
+  if (t < F2.t0) return frame(F1, (t - F1.t0) * FPS);
+  return frame(F2, (t - F2.t0) * FPS + F2.off);
+}
+
+// ────────────────────────────────────────── drawing helpers ──────────────────────────────────────────
+function rr(x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+const mix = (c1, c2, k) => { const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)); const a = p(c1), b = p(c2); return `rgb(${a.map((v, i) => Math.round(lerp(v, b[i], k))).join(',')})`; };
+function setFont(role, px) { g.font = LOOK.font(role, px); g.letterSpacing = LOOK.track(role, px); }
+
+// ground in screen space: porcelain with a vignette and a fixed noise to keep the gradient from banding
+let NOISE = null;
+function ground(c, t) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = C.ground; g.fillRect(0, 0, W, H);
+  const gr = g.createRadialGradient(780, 380, 40, 780, 380, 1250);
+  gr.addColorStop(0, 'rgba(197,215,194,0.75)'); gr.addColorStop(1, 'rgba(233,237,229,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  const g2 = g.createRadialGradient(200, 1700, 20, 200, 1700, 1000);
+  g2.addColorStop(0, 'rgba(197,215,194,0.55)'); g2.addColorStop(1, 'rgba(233,237,229,0)');
+  g.fillStyle = g2; g.fillRect(0, 0, W, H);
+  // a far lattice to slide against (depth 1.2): dots a constant size on screen
+  const f = 1 / 2.2, s = 120, zz = Math.max(0.3, Math.min(6, Math.pow(c.z, f)));
+  const cx = c.A[0] + (c.S[0] - 540) * 0, cy = c.A[1];
+  const sp = s * zz;
+  if (sp > 30 && sp < 900) {
+    const ox = ((c.S[0] - c.A[0] * zz * 0.35) % sp + sp) % sp, oy = ((c.S[1] - cy * zz * 0.35) % sp + sp) % sp;
+    g.fillStyle = 'rgba(102,134,109,0.22)';
+    for (let x = ox - sp; x < W + sp; x += sp) for (let y = oy - sp; y < H + sp; y += sp) { g.beginPath(); g.arc(x, y, 3, 0, 7); g.fill(); }
+  }
+}
+function grain() {
+  if (!NOISE) {
+    const n = document.createElement('canvas'); n.width = n.height = 256; const q = n.getContext('2d'), d = q.createImageData(256, 256);
+    let s = 12345; const r = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+    for (let i = 0; i < d.data.length; i += 4) { const v = r() < 0.5 ? 255 : 0; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = r() * 7; }
+    q.putImageData(d, 0, 0); NOISE = g.createPattern(n, 'repeat');
+  }
+  g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = NOISE; g.fillRect(0, 0, W, H);
+}
+
+// ────────────────────────────────────────── level 0: the phone ──────────────────────────────────────────
+function drawPhone(c, t, img, pend) {
+  const M = viewM(c); g.setTransform(...M);
+  // shadow + body (canvas shadow units are device px: scale them by hand)
+  g.save(); g.shadowColor = 'rgba(25,45,33,0.45)'; g.shadowBlur = Math.min(160, 70 * c.z); g.shadowOffsetY = Math.min(120, 46 * c.z);
+  g.fillStyle = '#17211c'; rr(PH.x, PH.y, PH.w, PH.h, PH.r); g.fill(); g.restore();
+  g.setTransform(...M);
+  g.strokeStyle = 'rgba(255,255,255,0.12)'; g.lineWidth = 2 / Math.max(1, c.z * 0.5); rr(PH.x + 1, PH.y + 1, PH.w - 2, PH.h - 2, PH.r - 1); g.stroke();
+  // screen with the recorded app: it fades out as the camera falls into the sentence and is replaced by the levels
+  const sizeOnScreen = SC.w * c.z;
+  const footA = 1 - sstep(2200, 9000, sizeOnScreen);
+  g.save(); rr(SC.x, SC.y, SC.w, SC.h, SC.r); g.clip();
+  g.fillStyle = C.deep; g.fillRect(SC.x, SC.y, SC.w, SC.h);
+  if (footA > 0.01 && img && img.complete && img.naturalWidth) { g.globalAlpha = footA; g.drawImage(img, SC.x, SC.y, SC.w, SC.h); g.globalAlpha = 1; }
+  g.restore();
+}
+
+// the vector capsule + the hole, seen from inside the lens (LOD: drawn while the footage's own capsule is too coarse)
+function drawLens(c, t) {
+  const sz = HOLE_R * c.z;                                      // the hole's radius on screen
+  const lodVec = 1 - sstep(1.6, 4.5, c.z);                       // footage takes over below ~2×
+  const vec = 1 - lodVec;
+  if (vec <= 0.01) return;
+  g.setTransform(...viewM(c));
+  g.globalAlpha = vec;
+  // the capsule body
+  const cx0 = CAPS.x0, cx1 = CAPS.x1, cy0 = CAPS.y0, cy1 = CAPS.y1, ch = cy1 - cy0;
+  const grd = g.createLinearGradient(cx0, 0, cx1, 0); grd.addColorStop(0, '#2c4237'); grd.addColorStop(1, '#22342b');
+  g.fillStyle = grd; rr(cx0, cy0, cx1 - cx0, ch, ch / 2); g.fill();
+  g.strokeStyle = 'rgba(143,176,151,0.55)'; g.lineWidth = 1.2; rr(cx0, cy0, cx1 - cx0, ch, ch / 2); g.stroke();
+  // orb + label
+  const og = g.createRadialGradient(cx0 + 36, (cy0 + cy1) / 2 - 4, 1, cx0 + 36, (cy0 + cy1) / 2, 14); og.addColorStop(0, '#d3e6d6'); og.addColorStop(0.6, '#66866d'); og.addColorStop(1, '#476d54');
+  g.fillStyle = og; g.beginPath(); g.arc(cx0 + 38, (cy0 + cy1) / 2, 14, 0, 7); g.fill();
+  g.fillStyle = '#f1f6ee'; setFont('text', 24); g.textBaseline = 'middle';
+  const label = t < SEND_T + 0.25 ? STR.rest : STR.task; g.fillText(label, cx0 + 62, (cy0 + cy1) / 2 + 1);
+  // the camera hole: black, a thin ring, a lens glint that drifts
+  g.fillStyle = '#050807'; g.beginPath(); g.arc(HOLE[0], HOLE[1], HOLE_R, 0, 7); g.fill();
+  for (let i = 1; i <= 3; i++) { g.strokeStyle = `rgba(143,176,151,${0.28 / i})`; g.lineWidth = HOLE_R * 0.05; g.beginPath(); g.arc(HOLE[0], HOLE[1], HOLE_R * (1 - 0.13 * i), 0, 7); g.stroke(); }
+  const ga = 0.7 + 0.5 * Math.sin(t * 0.9);
+  g.strokeStyle = 'rgba(214,236,222,0.5)'; g.lineWidth = HOLE_R * 0.06; g.beginPath(); g.arc(HOLE[0], HOLE[1], HOLE_R * 0.62, ga, ga + 0.8); g.stroke();
+  { const gx = HOLE[0] - HOLE_R * 0.32, gy = HOLE[1] - HOLE_R * 0.3, gr = g.createRadialGradient(gx, gy, 0, gx, gy, HOLE_R * 0.18); gr.addColorStop(0, 'rgba(214,236,222,0.32)'); gr.addColorStop(1, 'rgba(214,236,222,0)'); g.fillStyle = gr; g.beginPath(); g.arc(gx, gy, HOLE_R * 0.18, 0, 7); g.fill(); }
+  g.globalAlpha = 1; g.textBaseline = 'alphabetic';
+}
+
+// words on the ground (phone level)
+function drawWords(c, t) {
+  g.setTransform(...viewM(c));
+  const early = t < 14;
+  const label = early ? STR.ask : STR.decide;
+  const a = early ? 1 - sstep(4.6, 5.4, t) : sstep(26.3, 27.4, t);
+  if (a > 0.01) {
+    g.globalAlpha = a; g.fillStyle = C.ink; setFont('display', LANG === 'zh' ? 140 : 150); g.textAlign = 'center';
+    const rise = early ? spr(t - 3.3, 0.7, 14) : spr(t - 26.3, 0.7, 14);
+    g.fillText(label, 540, 150 + (1 - rise) * 40);
+    g.textAlign = 'left'; g.globalAlpha = 1;
+  }
+  // the lockup lives on the ground below the phone; only a pulled-back camera sees it
+  const la = sstep(27.1, 28.1, t);
+  if (la > 0.01) {
+    g.globalAlpha = la; g.textAlign = 'center'; g.fillStyle = C.ink; setFont('display', 300); g.fillText('Umbra', 540, 2010);
+    g.fillStyle = C.mute; setFont('text', 44); g.fillText(STR.tag, 540, 2090);
+    setFont('text', 38); g.fillStyle = C.accent; g.fillText(STR.free, 540, 2170);
+    g.textAlign = 'left'; g.globalAlpha = 1;
+  }
+}
+
+// ────────────────────────────────────────── level 1: the Linux machine inside the last letter ──────────────────────────────────────────
+function terminalState(t) {
+  const a = typeOn(t, TY0, T_LINE1, { cps: TY_CPS });
+  return { l1: a.str, caret: a.caret, l2: t >= L2_T, l3: t >= L3_T, l4: t >= L4_T };
+}
+const typeOn = OM.typeOn;
+function drawTerminal(c, t) {
+  const onScreen = WIN.w * ST * c.z;                           // the window's width on screen
+  const lod = sstep(60, 260, onScreen) * (1 - sstep(60000, 160000, onScreen));
+  if (lod <= 0.005) return;
+  const M = viewM(c);
+  g.setTransform(M[0] * ST, 0, 0, M[3] * ST, M[0] * TP[0] + M[4], M[3] * TP[1] + M[5]);
+  g.globalAlpha = lod;
+  // window
+  g.save(); rr(WIN.x, WIN.y, WIN.w, WIN.h, 36); g.clip();
+  g.fillStyle = '#1d2c24'; g.fillRect(WIN.x, WIN.y, WIN.w, WIN.h);
+  const rg = g.createRadialGradient(0, -380, 20, 0, -380, 1100); rg.addColorStop(0, 'rgba(102,134,109,0.28)'); rg.addColorStop(1, 'rgba(29,44,36,0)'); g.fillStyle = rg; g.fillRect(WIN.x, WIN.y, WIN.w, WIN.h);
+  g.fillStyle = '#26382f'; g.fillRect(WIN.x, WIN.y, WIN.w, 70);
+  g.fillStyle = '#5b7a63'; for (let i = 0; i < 3; i++) { g.beginPath(); g.arc(WIN.x + 46 + i * 40, WIN.y + 35, 11, 0, 7); g.fill(); }
+  g.fillStyle = '#a9c4af'; setFont('mono', 26); g.textAlign = 'center'; g.fillText('Debian · Linux · umbra', 0, WIN.y + 44); g.textAlign = 'left';
+  // heading, in its level's own type
+  const hw = OM.maskRise(t, TY0 - 0.3, 0);
+  g.fillStyle = '#e7f0e3'; setFont('display', 130); g.globalAlpha = lod * clamp(hw.visible === false ? 0 : 1, 0, 1);
+  g.fillText(STR.build, -560, -190 + (1 - clamp(spr(t - (TY0 - 0.3), 0.7, 14), 0, 1.2)) * 50);
+  g.globalAlpha = lod;
+  // lines
+  const st = terminalState(t);
+  setFont('mono', 52);
+  g.fillStyle = '#9cc4a6'; g.fillText(st.l1, -560, -50);
+  if (st.caret && !st.l2) { const w = g.measureText(st.l1).width; g.fillStyle = '#e7f0e3'; g.fillRect(-560 + w + 6, -50 - 42, 22, 54); }
+  if (st.l2) { const k = clamp(spr(t - L2_T, 0.8, 18), 0, 1.1); g.globalAlpha = lod * clamp(k, 0, 1); setFont('mono', 40); g.fillStyle = '#7ea287'; g.fillText(T_LINE2, -560, 30 + (1 - k) * 12); g.globalAlpha = lod; }
+  if (st.l3) {
+    const im = OM.impact(t, L3_T, { decay: 8, omega: 24 });
+    setFont('mono', 52); g.save(); g.translate(-560, 128); g.scale(im.sx, im.sy); g.fillStyle = '#e7f0e3'; g.fillText(T_LINE3, 0, 0); g.restore();
+    // the built app, as an icon: a phone-shaped tile that is the next level
+    const ip = clamp(spr(t - (L3_T + 0.12), 0.55, 20), 0, 1.4);
+    const ih = ICON.h * ip, iw = ih * 0.5625;
+    g.save(); g.translate(ICON.x, ICON.y); g.fillStyle = '#f4f6f3'; rr(-iw / 2, -ih / 2, iw, ih, ih * 0.1); g.fill();
+    g.strokeStyle = '#66866d'; g.lineWidth = 1.5; rr(-iw / 2, -ih / 2, iw, ih, ih * 0.1); g.stroke(); g.restore();
+  }
+  if (st.l4) { const k = clamp(spr(t - L4_T, 0.8, 18), 0, 1.1); g.globalAlpha = lod * clamp(k, 0, 1); setFont('mono', 40); g.fillStyle = '#7ea287'; g.fillText(T_LINE4, -560, 208 + (1 - k) * 12); g.globalAlpha = lod; }
+  g.restore(); g.globalAlpha = 1;
+  // a faint seam while the window is still smaller than the letter that holds it
+  if (onScreen < 260) {
+    g.setTransform(...M); g.globalAlpha = (1 - sstep(60, 260, onScreen)) * 0.5; g.fillStyle = '#26382f'; g.beginPath(); g.arc(TP[0], TP[1], 7, 0, 7); g.fill(); g.globalAlpha = 1;
+  }
+}
+
+// ────────────────────────────────────────── level 2: the app that runs, inside the icon ──────────────────────────────────────────
+function drawApp(c, t) {
+  const sA = ST * SA;                                            // app unit → world
+  const M = viewM(c);
+  const onScreen = 720 * sA * c.z;                               // the app's width on screen
+  const lod = sstep(40, 200, onScreen);
+  if (lod <= 0.005) return;
+  const O = toA(360, 640);
+  g.setTransform(M[0] * sA, 0, 0, M[3] * sA, M[0] * O[0] + M[4] - 360 * M[0] * sA, M[3] * O[1] + M[5] - 640 * M[3] * sA);
+  g.globalAlpha = lod;
+  g.save(); rr(0, 0, 720, 1280, 30); g.clip();
+  g.fillStyle = '#fbfcfa'; g.fillRect(0, 0, 720, 1280);
+  g.fillStyle = '#3d3f3c'; g.fillRect(0, 0, 720, 76);
+  g.fillStyle = '#e8ebe6'; setFont('text', 30); g.fillText('3:14', 36, 50);
+  g.fillStyle = '#1f2421'; setFont('text', 58); g.fillText('Crashy Login', 56, 190);
+  // username + password
+  g.fillStyle = '#7b857e'; setFont('text', 28); g.fillText('Username', 56, 300);
+  const un = typeOn(t, A_USER, 'demo', { cps: 9 });
+  g.fillStyle = '#1f2421'; setFont('text', 44); g.fillText(un.str, 56, 360);
+  g.fillStyle = '#4c8f78'; g.fillRect(56, 380, 608, 4);
+  g.fillStyle = '#7b857e'; setFont('text', 28); g.fillText('Password', 56, 470);
+  const pw = clamp(Math.floor((t - A_PASS) * 16), 0, 8);
+  g.fillStyle = '#1f2421'; setFont('text', 44); g.fillText('•'.repeat(pw), 56, 530);
+  g.fillStyle = '#c9cfca'; g.fillRect(56, 550, 608, 3);
+  // the button
+  const pr = OM.press(t, A_PRESS, { depth: 0.07 });
+  g.save(); g.translate(360, 690); g.scale(pr.s, pr.s); g.fillStyle = t >= A_PRESS ? '#6f8f77' : '#d5dbd6'; rr(-304, -50, 608, 100, 8); g.fill();
+  g.fillStyle = t >= A_PRESS ? '#f5faf4' : '#3a423d'; setFont('text', 34); g.textAlign = 'center'; g.fillText('LOG IN', 0, 12); g.textAlign = 'left'; g.restore();
+  // the result
+  if (t >= A_WELCOME) {
+    const k = clamp(spr(t - A_WELCOME, 0.55, 20), 0, 1.3), im = OM.impact(t, A_WELCOME, { decay: 8, omega: 24 });
+    g.globalAlpha = lod * clamp(k * 1.5, 0, 1); g.fillStyle = '#1f2421'; setFont('text', 52);
+    g.save(); g.translate(56, 830); g.scale(im.sx, im.sy); g.fillText('Welcome, demo', 0, 0); g.restore();
+  }
+  g.restore(); g.globalAlpha = 1;
+}
+
+// ────────────────────────────────────────── seek ──────────────────────────────────────────
+let CAM = null;
+window.__seek = async (t) => {
+  t = clamp(t, 0, DUR);
+  CAM = camAt(t);
+  const img = footageAt(t);
+  const wait = [];
+  if (!(img.complete && img.naturalWidth)) wait.push(img.decode().catch(() => {}));
+  if (wait.length) await Promise.all(wait);
+  ground(CAM, t);
+  drawPhone(CAM, t, img);
+  drawLens(CAM, t);
+  drawWords(CAM, t);
+  drawTerminal(CAM, t);
+  drawApp(CAM, t);
+  grain();
+  if (new URLSearchParams(location.search).has('hud')) { g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = '#c00'; g.font = '22px monospace'; g.fillText(`t=${t.toFixed(2)} z=${CAM.z.toFixed(2)}`, 20, 30); }
+  return true;
+};
+window.__ready = LOOK.ready.then(() => { C = LOOK.color; return window.__seek(0); });
+
+// ────────────────────────────────────────── what the renderer, probe and score need ──────────────────────────────────────────
+// farthest on-screen travel between two times (the camera's share): corners of the phone and the three anchors
+window.__motion = (t0, t1) => {
+  const pts = [[PH.x, PH.y], [PH.x + PH.w, PH.y + PH.h], TP, ICONW, HOLE, DENY];
+  const c0 = camAt(t0), c1 = camAt(t1); let m = 0;
+  for (const p of pts) { const a = toScreen(c0, p), b = toScreen(c1, p); const d = Math.hypot(a[0] - b[0], a[1] - b[1]); if (d < 2e4) m = Math.max(m, d); }
+  return Math.min(m, 4000);
+};
+// no boxes to track: one continuous world. inFrame names what must never leave the frame.
+window.__track = (t) => ({});
+// zoom speed: d log zoom / dt, for the camera's air
+window.__zoomVel = (t) => { const h = 1 / 240; return (Math.log(camAt(t + h).z) - Math.log(camAt(t - h).z)) / (2 * h); };
+window.__events = () => {
+  const ev = [];
+  const add = (t, kind, v = 1) => ev.push({ t: +t.toFixed(3), kind, pan: 0, v });
+  // the sentence typed on the phone (the footage's own key presses: one in 2 chars)
+  for (let i = 0; i < REQ.length; i += 2) add(F1.t0 + 0.3 + i * 0.054, 'key', 0.5);
+  add(SEND_T, 'send');
+  add(SEND_T + 0.35, 'capsule');
+  for (let i = 0; i < T_LINE1.length; i += 2) add(TY0 + i / TY_CPS, 'key', 0.5);
+  add(L2_T, 'tick'); add(L3_T, 'built'); add(L4_T, 'tick');
+  for (let i = 0; i < 4; i++) add(A_USER + i / 9, 'key', 0.4);
+  for (let i = 0; i < 8; i += 2) add(A_PASS + i / 16, 'key', 0.4);
+  add(A_PRESS, 'press'); add(A_WELCOME, 'welcome');
+  add(T_BACK + 1.55, 'land');
+  add(DENY_T, 'deny'); add(DENY_T + 0.1, 'denied');
+  add(27.2, 'name');
+  return { T: DUR, events: ev };
+};
+window.__meta.inFrame = { };
+</script>
+</body>
+</html>

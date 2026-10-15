@@ -1,0 +1,20 @@
+{
+  "name": "porcelain",
+  "from": "app/src/main/kotlin/app/umbra/agent/ui/porcelain/Porcelain.kt (Umbra's own colours)",
+  "mood": "sage ceramic: soft ivory ground, deep green ink, one amber for the one button only the person presses",
+  "color": {
+    "ground": "#e9ede5",
+    "deep": "#dde5d9",
+    "card": "#f7faf3",
+    "line": "#c9d7c5",
+    "mute": "#6f8472",
+    "ink": "#32443a",
+    "accent": "#66866d",
+    "accent2": "#a17a45"
+  },
+  "type": {
+    "display": { "face": "Fraunces", "weight": 600, "tracking": -0.015 },
+    "text": { "face": "Inter", "weight": 500, "tracking": -0.01 },
+    "mono": { "face": "Geist Mono", "weight": 400, "tracking": 0 }
+  }
+}

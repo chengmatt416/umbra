@@ -31,3 +31,33 @@ bun.lockb
 
 # On-device verification reports
 reports/
+
+# marketing + website build products
+/marketing/raw/
+/marketing/reels/work/
+/marketing/reels/tmp/
+/website/dist/
+/website/node_modules/
+/website/.wrangler/
+/website/tools/r2-uploader/.wrangler/
+
+# onetake / brag toolchains and renders (third-party skills are fetched, not committed; see marketing/README.md)
+/marketing/.venv/
+/marketing/vendor/
+/marketing/onetake-film/footage/
+/marketing/onetake-film/_frames/
+/marketing/onetake-film/NotoSansTC.ttf
+/marketing/onetake-film/motion.js
+/marketing/onetake-film/look.js
+/marketing/onetake-film/*.wav
+/marketing/onetake-film/stills*.png
+/marketing/onetake-film/ana/
+/marketing/brag-output/composition/snapshots/
+/marketing/brag-output/composition/node_modules/
+/marketing/brag-output-tour/composition/snapshots/
+/marketing/brag-output-tour/composition/assets/video/
+# rendered marketing media (rebuilt from the sources here; the site's own clips live in website/public)
+/marketing/**/*.mp4
+/marketing/**/*.wav
+/marketing/**/*.mov
+*.bak

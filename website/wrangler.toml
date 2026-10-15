@@ -1,0 +1,10 @@
+name = "umbra-agent"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-10-01"
+
+[[r2_buckets]]
+binding = "RELEASES"
+bucket_name = "umbra-releases"
+
+[vars]
+LATEST_APK = "umbra-0.1.0.apk"

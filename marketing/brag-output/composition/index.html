@@ -1,0 +1,377 @@
+<!doctype html>
+<html
+  lang="en"
+  data-resolution="portrait"
+  data-composition-variables='[{"id":"lang","type":"enum","label":"Language","default":"en","options":[{"value":"en","label":"English"},{"value":"zh","label":"繁體中文"}]}]'
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script src="assets/audio-lite.js"></script>
+    <style>
+      :root {
+        --ivory: #e9ede5;
+        --ink: #32443a;
+        --accent: #66866d;
+        --deep: #476d54;
+        --night: #26372f;
+        --card: #f7faf3;
+        --sage-line: rgba(102, 134, 109, 0.4);
+        --amber: #a17a45;
+        --rose: #ad685e;
+        --serif: "Noto Serif", "Noto Serif TC", Georgia, serif;
+        --sans: "Roboto", "Noto Sans TC", system-ui, sans-serif;
+        --label: "Montserrat", "Noto Sans TC", system-ui, sans-serif;
+        --mono: "JetBrains Mono", ui-monospace, monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1080px; height: 1920px; overflow: hidden; background: var(--ivory); }
+      #root { position: relative; width: 100%; height: 100%; overflow: hidden; font-family: var(--sans); color: var(--ink); }
+      .abs { position: absolute; }
+
+      /* persistent layers */
+      #bg { position: absolute; inset: 0; background: var(--ivory); }
+      #glow { position: absolute; left: 380px; top: -340px; width: 1400px; height: 1400px; border-radius: 50%;
+        background: radial-gradient(circle, rgba(143, 176, 151, 0.55) 0%, rgba(197, 215, 194, 0.28) 38%, rgba(233, 237, 229, 0) 68%); }
+      #glow2 { position: absolute; left: -620px; top: 1180px; width: 1200px; height: 1200px; border-radius: 50%;
+        background: radial-gradient(circle, rgba(197, 215, 194, 0.55) 0%, rgba(233, 237, 229, 0) 66%); }
+      .ring { position: absolute; border-radius: 50%; border: 3px solid var(--sage-line); }
+      #ring1 { left: 140px; top: 560px; width: 800px; height: 800px; }
+      #ring2 { left: -60px; top: 360px; width: 1200px; height: 1200px; opacity: 0.6; }
+      .hair { position: absolute; left: 96px; height: 3px; background: var(--sage-line); }
+
+      .clip { position: absolute; inset: 0; }
+      .kick { position: absolute; left: 96px; font: 700 28px var(--label); letter-spacing: 0.26em; color: var(--accent); text-transform: uppercase; }
+      .head { position: absolute; left: 96px; font-family: var(--serif); font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+      .mask { display: block; overflow: hidden; padding-bottom: 0.12em; }
+      .mask > span { display: block; }
+      .acc { color: var(--deep); }
+      .sub { position: absolute; left: 96px; font: 600 36px var(--label); color: #5d7461; letter-spacing: 0.01em; }
+
+      /* S1 composer (recreated from the Home screen) */
+      #composer { position: absolute; left: 96px; top: 980px; width: 888px; height: 340px; background: var(--card); border: 3px solid var(--sage-line);
+        border-radius: 56px; box-shadow: 0 40px 80px -40px rgba(38, 55, 47, 0.45); }
+      #typed { position: absolute; left: 48px; top: 44px; width: 790px; font: 400 42px/1.3 var(--sans); color: var(--ink); min-height: 120px; }
+      #ph { position: absolute; left: 48px; top: 44px; font: 400 42px/1.3 var(--sans); color: #8a9a8a; }
+      #caret { position: absolute; width: 4px; height: 46px; background: var(--deep); top: 50px; left: 48px; }
+      #chip { position: absolute; left: 36px; bottom: 36px; height: 76px; padding: 0 30px 0 26px; border-radius: 38px; background: #dde8d8; display: flex; align-items: center; gap: 14px;
+        font: 700 30px var(--sans); color: var(--deep); }
+      #send { position: absolute; right: 36px; bottom: 36px; width: 96px; height: 96px; border-radius: 30px; background: #bcc9bb; display: flex; align-items: center; justify-content: center; }
+      #send svg { width: 44px; height: 44px; }
+
+      /* capsule: one element, three states (pill -> approval panel -> denied) */
+      #cap { position: absolute; left: 0px; top: 0px; width: 888px; height: 340px; border-radius: 56px; background: var(--card); overflow: hidden; opacity: 0;
+        box-shadow: 0 30px 70px -30px rgba(38, 55, 47, 0.55); }
+      #cap .layer { position: absolute; inset: 0; opacity: 0; }
+      #capPill { display: flex; align-items: center; gap: 18px; padding: 0 28px; }
+      .orb { flex: none; width: 34px; height: 34px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #cfe3d3, #66866d 60%, #476d54); }
+      #capPillText { font: 600 24px var(--sans); text-overflow: ellipsis; color: #f1f6ee; white-space: nowrap; overflow: hidden; }
+      #capPanel { padding: 44px 48px; color: #f1f6ee; }
+      #capPanel .t1 { font: 600 40px/1.25 var(--sans); }
+      #capPanel .t2 { font: 500 32px var(--sans); color: #a9c4af; margin-top: 8px; }
+      #cmd { margin-top: 28px; padding: 24px 28px; border-radius: 26px; background: rgba(0, 0, 0, 0.28); font: 500 40px/1.3 var(--mono); color: #e9f3e6; }
+      .risk { margin-top: 22px; font: 400 34px/1.34 var(--sans); color: #d4e2d4; }
+      .risk b { color: #f0b9a9; font-weight: 700; }
+      .reassure { margin-top: 24px; font: 400 32px/1.3 var(--sans); color: #a9c4af; }
+      .btns { position: absolute; left: 48px; bottom: 44px; display: flex; gap: 22px; }
+      .btn { height: 96px; border-radius: 48px; display: flex; align-items: center; justify-content: center; font: 700 36px var(--sans); }
+      #btnDeny { width: 250px; background: #f7faf3; color: #32443a; }
+      #btnOk { width: 400px; background: var(--amber); color: #fffaf0; }
+      #capDenied { display: flex; align-items: center; gap: 24px; padding: 0 36px; background: var(--card); color: var(--ink); }
+      #capDenied .tick { flex: none; width: 76px; height: 76px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; }
+      #capDenied .tick svg { width: 40px; height: 40px; }
+      #capDenied .txt { font: 700 40px/1.2 var(--sans); }
+
+      #cursor { position: absolute; left: 0; top: 0; width: 70px; height: 70px; opacity: 0; filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.35)); }
+      #ripple { position: absolute; width: 120px; height: 120px; border-radius: 50%; border: 5px solid var(--accent); opacity: 0; }
+
+      /* phone (S2) */
+      #phone { position: absolute; left: 220px; top: 720px; width: 640px; height: 1420px; border-radius: 84px; background: #17211c; opacity: 0;
+        box-shadow: 0 60px 120px -40px rgba(25, 45, 33, 0.6); }
+      #screen { position: absolute; left: 18px; top: 18px; width: 604px; height: 1384px; border-radius: 68px; overflow: hidden; background: #e9ede5; }
+      #vid { position: absolute; left: 0; top: 0; width: 604px; height: 1384px; object-fit: cover; }
+      #tag { position: absolute; left: 880px; top: 772px; width: 170px; opacity: 0; font: 700 25px/1.25 var(--label); letter-spacing: 0.1em; color: var(--deep); text-transform: uppercase; }
+      #tagline { position: absolute; left: 700px; top: 810px; width: 170px; height: 3px; background: var(--accent); opacity: 0; transform-origin: right center; }
+
+      /* S4 night */
+      #night { position: absolute; inset: 0; background: var(--night); clip-path: circle(0px at 540px 1135px); }
+      #ghostBtn { position: absolute; left: 96px; top: 1110px; height: 100px; width: 420px; border-radius: 50px; border: 4px dashed rgba(197, 168, 120, 0.7); display: flex; align-items: center;
+        justify-content: center; gap: 16px; font: 700 36px var(--sans); color: rgba(214, 186, 140, 0.85); }
+      #ghostNote { position: absolute; left: 96px; top: 1232px; font: 500 32px var(--label); color: #9db9a3; }
+
+      /* S5 lockup */
+      #s5bg { position: absolute; inset: 0; background: var(--ivory); opacity: 0; }
+      #mark { position: absolute; left: 400px; top: 420px; width: 280px; height: 280px; }
+      #name { position: absolute; left: 0; width: 1080px; top: 740px; text-align: center; font: 700 230px/1 var(--serif); letter-spacing: -0.03em; color: var(--ink); }
+      #tagl { position: absolute; left: 90px; width: 900px; top: 1010px; text-align: center; font: 500 46px/1.35 var(--serif); color: #5d7461; }
+      #free { position: absolute; left: 0; width: 1080px; top: 1180px; text-align: center; font: 700 34px var(--label); letter-spacing: 0.12em; color: var(--deep); text-transform: uppercase; }
+      #url { position: absolute; left: 180px; width: 720px; top: 1290px; height: 120px; border-radius: 60px; background: var(--deep); color: #f7fbf2; display: flex; align-items: center; justify-content: center;
+        font: 600 44px var(--label); }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="22.5" data-width="1080" data-height="1920">
+      <!-- persistent depth -->
+      <div id="bg"></div>
+      <div id="glow"></div>
+      <div id="glow2"></div>
+      <div id="ring1" class="ring"></div>
+      <div id="ring2" class="ring"></div>
+
+      <!-- SCENE 1 · hook + composer -->
+      <section id="s1" class="clip" data-start="0" data-duration="5.6" data-track-index="1">
+        <div class="kick" id="kick" style="top: 236px"></div>
+        <div class="head" id="h1" style="top: 300px"></div>
+        <div id="composer">
+          <div id="ph"></div>
+          <div id="typed"></div>
+          <div id="caret"></div>
+          <div id="chip">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#476d54" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>
+            <span>Independent</span>
+          </div>
+          <div id="send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#f7faf3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          </div>
+        </div>
+      </section>
+
+      <!-- SCENE 2 · it operates the phone -->
+      <section id="s2" class="clip" data-start="5.0" data-duration="5.3" data-track-index="1">
+        <div class="head" id="h2" style="top: 330px"></div>
+        <div class="sub" id="sub2" style="top: 590px"></div>
+      </section>
+
+      <!-- SCENE 3 · approval -->
+      <section id="s3" class="clip" data-start="10.0" data-duration="5.2" data-track-index="1">
+        <div class="head" id="h3" style="top: 250px"></div>
+      </section>
+
+      <!-- phone with real footage -->
+      <div id="phone" data-layout-allow-overflow>
+        <div id="screen">
+          <video id="vid" src="assets/video/operate.mp4" muted playsinline data-start="5.0" data-duration="5.4" data-track-index="2"></video>
+        </div>
+      </div>
+      <div id="tagline"></div>
+      <div id="tag"></div>
+
+      <!-- night flip -->
+      <div id="night"></div>
+
+      <!-- SCENE 4 · punchline -->
+      <section id="s4" class="clip" data-start="15.0" data-duration="4.6" data-track-index="1">
+        <div class="head" id="h4" style="top: 480px; color: #f1f6ee"></div>
+        <div class="sub" id="sub4" style="top: 800px; font-weight: 500; font-size: 40px; line-height: 1.5; color: #b5cdb9; width: 880px"></div>
+        <div id="ghostBtn"><span>Approve once</span></div>
+        <div id="ghostNote"></div>
+      </section>
+
+      <!-- the capsule: pill -> panel -> denied -->
+      <div id="cap">
+        <div id="capPill" class="layer" style="background: var(--night)">
+          <div class="orb"></div>
+          <div id="capPillText">Check my Andro…</div>
+        </div>
+        <div id="capPanel" class="layer" style="background: var(--night)">
+          <div class="t1">Check my Android version, then remove the SIM toolkit app</div>
+          <div class="t2" id="needs">needs your approval</div>
+          <div id="cmd">Run: pm uninstall --user 0 com.android.stk</div>
+          <div class="risk"><b>Deletion of important user data (high):</b> uninstalls com.android.stk and its data<br /><span style="display:block;height:10px"></span><b>Destructive system operation (high):</b> uninstalls system package com.android.stk</div>
+          <div class="reassure">This answers this one action. It does not grant lasting control.</div>
+          <div class="btns"><div class="btn" id="btnDeny">Deny</div><div class="btn" id="btnOk">Approve once</div></div>
+        </div>
+        <div id="capDenied" class="layer">
+          <div class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#f7faf3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+          <div class="txt" id="deniedTxt">Denied. Nothing was removed.</div>
+        </div>
+      </div>
+      <div id="ripple"></div>
+      <svg id="cursor" viewBox="0 0 24 24"><path d="M4 2l15 9.2-6.6 1.4 3.7 6.8-2.6 1.4-3.7-6.8L4.6 19z" fill="#ffffff" stroke="#26372f" stroke-width="1.4" stroke-linejoin="round"/></svg>
+
+      <!-- SCENE 5 · lockup -->
+      <section id="s5" class="clip" data-start="19.2" data-duration="3.3" data-track-index="1">
+        <div id="s5bg"></div>
+        <svg id="mark" viewBox="0 0 32 32"><defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8fa88f"/><stop offset="1" stop-color="#476d54"/></linearGradient></defs><circle cx="16" cy="16" r="14" fill="url(#mg)"/><circle cx="21.5" cy="12" r="10.5" fill="#e9ede5"/></svg>
+        <div id="name">Umbra</div>
+        <div id="tagl"></div>
+        <div id="free"></div>
+        <div id="url">umbra-agent.pages.dev</div>
+      </section>
+
+      <!-- audio -->
+      <audio id="music" src="assets/music/umbra-bed.wav" data-start="0" data-duration="22.5" data-track-index="10" data-volume="1"></audio>
+      <audio id="sfx-typing" src="assets/sfx/typing.wav" data-start="0" data-duration="4.62" data-track-index="11" data-volume="0.6"></audio>
+      <audio id="sfx-send" src="assets/sfx/click_003.ogg" data-start="4.55" data-duration="0.01" data-track-index="12" data-volume="0.8"></audio>
+      <audio id="sfx-slide1" src="assets/sfx/card-slide-1.ogg" data-start="4.7" data-duration="0.6" data-track-index="13" data-volume="0.35"></audio>
+      <audio id="sfx-open" src="assets/sfx/impactSoft_medium_001.ogg" data-start="10.25" data-duration="0.19" data-track-index="14" data-volume="0.55"></audio>
+      <audio id="sfx-deny" src="assets/sfx/click_002.ogg" data-start="13.2" data-duration="0.01" data-track-index="15" data-volume="1"></audio>
+      <audio id="sfx-denied" src="assets/sfx/bong_001.ogg" data-start="13.55" data-duration="0.13" data-track-index="16" data-volume="0.55"></audio>
+      <audio id="sfx-flip" src="assets/sfx/impactSoft_medium_002.ogg" data-start="15.0" data-duration="0.14" data-track-index="17" data-volume="0.55"></audio>
+      <audio id="sfx-bell" src="assets/sfx/impactBell_heavy_000.ogg" data-start="19.75" data-duration="1.48" data-track-index="18" data-volume="0.4"></audio>
+    </div>
+
+    <script>
+      var V = (window.__hyperframes && window.__hyperframes.getVariables && window.__hyperframes.getVariables()) || {};
+      var LANG = V.lang === "zh" ? "zh" : "en";
+      var T = {
+        en: {
+          kick: "Umbra · for Android",
+          h1: ["You gave an AI", "your phone."],
+          ph: "Ask Umbra to do anything…",
+          req: "Check my Android version, then remove the SIM toolkit app",
+          h2: ["It taps through", "Settings for you."],
+          sub2: "Real Android 16 · real taps",
+          tag: "The Capsule",
+          h3: ["A risky step?", "It asks first."],
+          needs: "needs your approval",
+          denied: "Denied. Nothing was removed.",
+          h4: ["It can't approve", "its own requests."],
+          sub4: "No operating its own app.<br>No answering its own approvals.",
+          ghost: "Only you can press this.",
+          tagl: "An autonomous agent that lives on your Android phone.",
+          free: "Free · open source · Android 16",
+        },
+        zh: {
+          kick: "Umbra · Android",
+          h1: ["你把手機", "交給了 AI。"],
+          ph: "Ask Umbra to do anything…",
+          req: "Check my Android version, then remove the SIM toolkit app",
+          h2: ["它替你一步步", "操作設定。"],
+          sub2: "真實 Android 16 · 真實點擊",
+          tag: "膠囊",
+          h3: ["有風險的步驟，", "它先問你。"],
+          needs: "needs your approval",
+          denied: "Denied. Nothing was removed.",
+          h4: ["它不能替自己", "核准請求。"],
+          sub4: "不能操作自己的 App，<br>也不能回答自己的核准。",
+          ghost: "只有你能按下這顆。",
+          tagl: "住在你 Android 手機裡的自主代理",
+          free: "免費開源 · Android 16",
+        },
+      }[LANG];
+      var Z = LANG === "zh";
+
+      function lines(el, arr, size, lh, accentLast) {
+        el.style.fontSize = size + "px";
+        el.style.lineHeight = lh;
+        el.innerHTML = arr.map(function (t, i) { return '<span class="mask"><span' + (accentLast && i === arr.length - 1 ? ' class="acc"' : "") + ">" + t + "</span></span>"; }).join("");
+      }
+      document.getElementById("kick").textContent = T.kick;
+      lines(document.getElementById("h1"), T.h1, Z ? 156 : 106, 1.04, true);
+      document.getElementById("ph").textContent = T.ph;
+      lines(document.getElementById("h2"), T.h2, Z ? 104 : 98, 1.06, true);
+      document.getElementById("sub2").textContent = T.sub2;
+      document.getElementById("tag").textContent = T.tag;
+      lines(document.getElementById("h3"), T.h3, Z ? 112 : 94, 1.06, true);
+      document.getElementById("needs").textContent = T.needs;
+      document.getElementById("deniedTxt").textContent = T.denied;
+      lines(document.getElementById("h4"), T.h4, Z ? 132 : 112, 1.06, false);
+      document.getElementById("sub4").innerHTML = T.sub4;
+      document.getElementById("ghostNote").textContent = T.ghost;
+      document.getElementById("tagl").textContent = T.tagl;
+      document.getElementById("free").textContent = T.free;
+      if (Z) { document.getElementById("tagl").style.fontSize = "52px"; document.getElementById("name").style.fontSize = "250px"; }
+
+      var tl = gsap.timeline({ paused: true });
+      var $ = function (s) { return document.querySelector(s); };
+
+      /* ---------- ambient depth, audio-reactive (bass swells the glow; deterministic, pre-extracted) ---------- */
+      tl.to("#ring1", { rotation: 40, scale: 1.06, duration: 22.5, ease: "none" }, 0);
+      tl.to("#ring2", { rotation: -30, scale: 0.96, duration: 22.5, ease: "none" }, 0);
+      var A = window.AUDIO_LITE;
+      for (var f = 0; f < A.n; f++) {
+        tl.set("#glow", { opacity: 0.55 + 0.45 * A.bass[f], scale: 1 + 0.07 * A.bass[f] }, f / A.fps);
+        tl.set("#glow2", { opacity: 0.55 + 0.45 * A.treble[f] }, f / A.fps);
+      }
+
+      /* ---------- S1 · hook (0.25-5.5) ---------- */
+      tl.fromTo("#kick", { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, 0.1);
+      tl.fromTo("#h1 .mask > span", { yPercent: 115 }, { yPercent: 0, duration: 0.7, ease: "expo.out", stagger: 0.12 }, 0.25);
+      tl.fromTo("#composer", { y: 160, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, 1.5);
+      tl.fromTo("#caret", { opacity: 0 }, { opacity: 1, duration: 0.01 }, 1.9);
+      tl.to("#caret", { opacity: 0.15, duration: 0.3, repeat: 5, yoyo: true, ease: "none" }, 2.0);
+      var TYPE = { n: 0 };
+      var req = T.req;
+      tl.to(TYPE, {
+        n: req.length, duration: 1.95, ease: "none",
+        onUpdate: function () { $("#typed").textContent = req.slice(0, Math.round(TYPE.n)); },
+      }, 2.55);
+      tl.to("#ph", { opacity: 0, duration: 0.15 }, 2.5);
+      tl.to("#caret", { opacity: 0, duration: 0.05 }, 4.5);
+      tl.to("#send", { backgroundColor: "#66866d", scale: 1.08, duration: 0.18, ease: "back.out(3)" }, 4.5);
+      tl.to("#send", { scale: 0.94, duration: 0.08 }, 4.7);
+      tl.to("#h1 .mask > span", { yPercent: -115, duration: 0.4, ease: "power3.in", stagger: 0.07 }, 4.5);
+      tl.to("#kick", { opacity: 0, duration: 0.3 }, 4.5);
+      tl.to("#composer", { opacity: 0, duration: 0.06 }, 4.6);   /* the capsule takes over from here (same box) */
+
+      /* ---------- capsule: composer -> pill, riding up onto the phone ---------- */
+      tl.set("#cap", { x: 96, y: 980, backgroundColor: "#f7faf3" }, 0);
+      tl.set("#cap", { opacity: 1 }, 4.6);
+      tl.to("#cap", { x: 380, y: 777, width: 320, height: 60, borderRadius: 30, duration: 0.95, ease: "power3.inOut" }, 4.65);
+      tl.to("#cap", { backgroundColor: "#26372f", duration: 0.3, ease: "none" }, 4.62);
+      tl.to("#capPill", { opacity: 1, duration: 0.4, ease: "none" }, 4.75);
+
+      /* ---------- S2 · phone rises with real footage (5.0-10.0) ---------- */
+      tl.fromTo("#phone", { y: 1000, opacity: 1, scale: 0.94 }, { y: 0, opacity: 1, scale: 1, duration: 0.95, ease: "power3.out" }, 5.0);
+      tl.fromTo("#h2 .mask > span", { yPercent: 115 }, { yPercent: 0, duration: 0.7, ease: "expo.out", stagger: 0.12 }, 5.3);
+      tl.fromTo("#sub2", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 6.0);
+      tl.to("#capPill", { opacity: 0, duration: 0.35, ease: "none" }, 6.2);        /* the real capsule in the footage is there */
+      tl.to("#cap", { opacity: 0, duration: 0.3, ease: "none" }, 6.3);
+      tl.fromTo("#tagline", { scaleX: 0, opacity: 1 }, { scaleX: 1, opacity: 1, duration: 0.5, ease: "power3.out" }, 6.6);
+      tl.fromTo("#tag", { opacity: 0, x: 14 }, { opacity: 1, x: 0, duration: 0.45, ease: "power2.out" }, 6.9);
+      tl.to(["#tag", "#tagline"], { opacity: 0, duration: 0.3 }, 9.35);
+      tl.to("#h2 .mask > span", { yPercent: -115, duration: 0.4, ease: "power3.in", stagger: 0.07 }, 9.35);
+      tl.to("#sub2", { opacity: 0, duration: 0.3 }, 9.4);
+
+      /* ---------- S3 · the capsule opens into the approval (10.0-15.0) ---------- */
+      tl.set("#cap", { x: 380, y: 777, width: 320, height: 60, borderRadius: 30, backgroundColor: "#26372f" }, 9.7);
+      tl.to("#cap", { opacity: 1, duration: 0.25, ease: "none" }, 9.7);
+      tl.to("#capPill", { opacity: 1, duration: 0.2 }, 9.7);
+      tl.to("#phone", { y: 1500, duration: 0.8, ease: "power3.in" }, 9.95);
+      tl.fromTo("#h3 .mask > span", { yPercent: 115 }, { yPercent: 0, duration: 0.7, ease: "expo.out", stagger: 0.12 }, 10.25);
+      tl.to("#cap", { x: 80, y: 540, width: 920, height: 930, borderRadius: 56, duration: 0.85, ease: "expo.inOut" }, 10.25);
+      tl.to("#capPill", { opacity: 0, duration: 0.25 }, 10.3);
+      tl.to("#capPanel", { opacity: 1, duration: 0.5, ease: "none" }, 10.8);
+      tl.fromTo(["#capPanel .t1", "#capPanel .t2", "#cmd", "#capPanel .risk", "#capPanel .reassure"], { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out", stagger: 0.18 }, 10.9);
+      tl.fromTo(".btns", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, 11.8);
+      /* cursor: arrives, taps Deny */
+      tl.set("#cursor", { x: 900, y: 1560, opacity: 0 }, 11.9);
+      tl.to("#cursor", { opacity: 1, duration: 0.25 }, 11.95);
+      tl.to("#cursor", { x: 255, y: 1285, duration: 1.05, ease: "power2.inOut" }, 12.0);
+      tl.to("#btnDeny", { scale: 0.94, duration: 0.09 }, 13.15);
+      tl.set("#ripple", { x: 195, y: 1235, scale: 0.4, opacity: 0.9 }, 13.2);
+      tl.to("#ripple", { scale: 1.6, opacity: 0, duration: 0.55, ease: "power2.out" }, 13.2);
+      tl.to("#btnDeny", { scale: 1, duration: 0.15 }, 13.26);
+      tl.to("#cursor", { opacity: 0, y: 1330, duration: 0.4, ease: "power2.in" }, 13.45);
+      /* panel collapses to the answer */
+      tl.to("#capPanel", { opacity: 0, duration: 0.3, ease: "none" }, 13.3);
+      tl.to("#cap", { x: 150, y: 1060, width: 780, height: 150, borderRadius: 75, backgroundColor: "#f7faf3", duration: 0.7, ease: "expo.inOut" }, 13.35);
+      tl.to("#capDenied", { opacity: 1, duration: 0.4, ease: "none" }, 13.75);
+      tl.fromTo("#capDenied .tick", { scale: 0.2 }, { scale: 1, duration: 0.5, ease: "back.out(2.4)" }, 13.8);
+      tl.to("#h3 .mask > span", { yPercent: -115, duration: 0.4, ease: "power3.in", stagger: 0.07 }, 14.75);
+
+      /* ---------- S4 · punchline: iris from the check mark (15.0-19.5) ---------- */
+      tl.to("#night", { clipPath: "circle(1800px at 540px 1135px)", duration: 0.95, ease: "expo.inOut" }, 15.0);
+      tl.to("#cap", { y: 1560, scale: 0.78, opacity: 0.85, duration: 0.8, ease: "power3.inOut" }, 15.55);
+      tl.fromTo("#h4 .mask > span", { yPercent: 115 }, { yPercent: 0, duration: 0.8, ease: "expo.out", stagger: 0.14 }, 15.8);
+      tl.fromTo("#sub4", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" }, 16.9);
+      tl.fromTo("#ghostBtn", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 17.7);
+      tl.fromTo("#ghostNote", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 18.1);
+      tl.to("#ghostBtn", { x: 6, duration: 0.07, repeat: 5, yoyo: true, ease: "none" }, 18.4);
+
+      /* ---------- S5 · lockup (19.2-22.5) ---------- */
+      tl.to("#s5bg", { opacity: 1, duration: 0.8, ease: "none" }, 19.2);
+      tl.to("#cap", { opacity: 0, duration: 0.4 }, 19.2);
+      tl.fromTo("#mark", { scale: 0.6, opacity: 0, rotation: -40 }, { scale: 1, opacity: 1, rotation: 0, duration: 0.9, ease: "expo.out" }, 19.7);
+      tl.fromTo("#name", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 19.85);
+      tl.fromTo("#tagl", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" }, 20.35);
+      tl.fromTo("#free", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 20.75);
+      tl.fromTo("#url", { opacity: 0, scale: 0.92 }, { opacity: 1, scale: 1, duration: 0.5, ease: "back.out(2)" }, 21.05);
+
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>
