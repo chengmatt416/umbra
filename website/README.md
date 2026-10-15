@@ -18,12 +18,19 @@ wrangler.toml     Pages project umbra-agent, R2 binding RELEASES -> bucket umbra
 source ../scripts/env.sh
 export UMBRA_KEYSTORE=~/.umbra-signing/umbra-release.jks UMBRA_KEYSTORE_PASSWORD=$(cat ~/.umbra-signing/password.txt) UMBRA_KEY_PASSWORD=$UMBRA_KEYSTORE_PASSWORD
 (cd .. && ./gradlew :app:assembleRelease)
-node tools/upload-release.mjs ../app/build/outputs/apk/release/app-release.apk umbra-0.2.0.apk   # writes src/apk.json (size, sha256)
-# bump version/file in src/content.mjs (APK.version/file) and LATEST_APK in wrangler.toml, then:
+node tools/upload-release.mjs ../app/build/outputs/apk/release/app-release.apk umbra-0.2.0.apk   # writes src/apk.json (size, sha256, version, versionCode)
+# bump version/file in src/content.mjs (APK.version/versionCode/file) and LATEST_APK in wrangler.toml, then:
 node build.mjs && npx wrangler pages deploy dist --project-name umbra-agent --branch main
 ```
 
 Releases must be signed with the same key forever (Android refuses updates signed with another one): back up `~/.umbra-signing/`.
+Bump `versionCode` in `app/build.gradle.kts` for every release: installed apps update themselves from `dist/update.json`
+(written by `build.mjs` only when `src/apk.json` describes `umbra-<version>.apk`), and only a higher `versionCode` is an update.
+
+To test an update end to end without touching the live site: build a later version (`-Pumbra.versionCode=… -Pumbra.versionName=…`,
+`-Pumbra.bundleLinux=false` keeps it small), upload it under a test name, deploy a preview (`--branch ota-test`) whose
+`update.json` points at it, and on the phone `adb shell setprop debug.umbra.update_url https://ota-test.umbra-agent.pages.dev/update.json`.
+Delete the test objects (`npx wrangler r2 object delete umbra-releases/<name> --remote`) and the preview deployments afterwards.
 
 ## Re-record the clips
 

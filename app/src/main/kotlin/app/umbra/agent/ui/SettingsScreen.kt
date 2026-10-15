@@ -34,12 +34,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.umbra.agent.R
 import app.umbra.agent.container
 import app.umbra.agent.data.LayaSidecar
+import app.umbra.agent.update.AppUpdater
 import app.umbra.agent.ui.emergency.StopAllConfirm
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.Callout
 import app.umbra.agent.ui.porcelain.Disclosure
 import app.umbra.agent.ui.porcelain.Gap
 import app.umbra.agent.ui.porcelain.P
+import app.umbra.agent.ui.porcelain.PBar
 import app.umbra.agent.ui.porcelain.PButton
 import app.umbra.agent.ui.porcelain.PCard
 import app.umbra.agent.ui.porcelain.PChoice
@@ -157,8 +159,8 @@ fun SettingsScreen(
             PCard(style = app.umbra.agent.ui.porcelain.CardStyle.Soft) { LayaSection() }
 
             SectionHead(stringResource(R.string.set_section_about), Modifier.padding(top = 20.dp))
-            Text(stringResource(R.string.set_version, context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()), fontSize = 14.sp, color = P.ink)
-            Subtle(stringResource(R.string.set_license), Modifier.padding(top = 2.dp))
+            UpdateSection()
+            Subtle(stringResource(R.string.set_license), Modifier.padding(top = 10.dp))
             Gap(32.dp)
         }
     }
@@ -197,6 +199,43 @@ fun SettingsScreen(
             },
         )
     }
+}
+
+/** The installed version, what the updater is doing, and its two switches. */
+@Composable
+private fun UpdateSection() {
+    val context = LocalContext.current
+    val container = context.container
+    val updater = container.updater
+    val prefs by container.settings.flow.collectAsStateWithLifecycle()
+    val state by updater.state.collectAsStateWithLifecycle()
+    Text(stringResource(R.string.set_version, updater.installedVersionName), fontSize = 14.sp, color = P.ink)
+    val mib = { bytes: Long -> "${bytes / (1024 * 1024)} MiB" }
+    val line = when (val s = state) {
+        AppUpdater.State.Idle -> stringResource(R.string.upd_idle)
+        AppUpdater.State.Checking -> stringResource(R.string.upd_checking)
+        is AppUpdater.State.UpToDate -> stringResource(R.string.upd_up_to_date, android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(s.checkedAtMs)))
+        is AppUpdater.State.Available -> stringResource(R.string.upd_available, s.update.version, mib(s.update.bytes)) +
+            if (prefs.autoUpdate && prefs.updateOnWifiOnly) " " + stringResource(R.string.upd_available_wifi) else ""
+        is AppUpdater.State.Downloading -> stringResource(R.string.upd_downloading, s.update.version, (s.bytes * 100 / s.update.bytes.coerceAtLeast(1)).toInt())
+        is AppUpdater.State.Ready -> stringResource(R.string.upd_ready, s.update.version) + " " + stringResource(if (prefs.autoUpdate) R.string.upd_ready_when else R.string.upd_ready_manual)
+        is AppUpdater.State.Installing -> stringResource(R.string.upd_installing, s.update.version)
+        is AppUpdater.State.Confirm -> stringResource(R.string.upd_confirm, s.update.version)
+        is AppUpdater.State.Failed -> stringResource(R.string.upd_failed, s.message)
+    }
+    Subtle(line, Modifier.padding(top = 2.dp))
+    (state as? AppUpdater.State.Downloading)?.let { PBar(it.bytes.toFloat() / it.update.bytes.coerceAtLeast(1), Modifier.padding(top = 8.dp).fillMaxWidth()) }
+    Box(Modifier.padding(top = 10.dp)) {
+        when (state) {
+            is AppUpdater.State.Available -> PButton(stringResource(R.string.upd_download_now), { updater.checkNow() }, style = ButtonStyle.Alt, tiny = true)
+            is AppUpdater.State.Ready, is AppUpdater.State.Confirm -> PButton(stringResource(R.string.upd_install_now), { updater.installNow() }, tiny = true)
+            AppUpdater.State.Checking, is AppUpdater.State.Downloading, is AppUpdater.State.Installing -> Unit
+            else -> PButton(stringResource(R.string.upd_check_now), { updater.checkNow() }, style = ButtonStyle.Alt, tiny = true)
+        }
+    }
+    PToggle(stringResource(R.string.set_updates_auto), stringResource(R.string.set_updates_auto_body), prefs.autoUpdate, { on -> container.settings.update { it.copy(autoUpdate = on) } }, Modifier.padding(top = 6.dp))
+    PToggle(stringResource(R.string.set_updates_wifi), stringResource(R.string.set_updates_wifi_body), prefs.updateOnWifiOnly, { on -> container.settings.update { it.copy(updateOnWifiOnly = on) } }, divider = false)
+    Disclosure(stringResource(R.string.details)) { Subtle(stringResource(R.string.upd_detail)) }
 }
 
 /** A path that works on the development emulator but has not been tried on a real phone (UX report F-04). */

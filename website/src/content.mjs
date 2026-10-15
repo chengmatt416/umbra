@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 // src/apk.json is written by publish.sh from the real file; the defaults only keep a fresh checkout building.
 const fromDisk = existsSync(new URL('./apk.json', import.meta.url)) ? JSON.parse(readFileSync(new URL('./apk.json', import.meta.url), 'utf8')) : {};
-export const APK = { version: '0.1.0', file: 'umbra-0.1.0.apk', size: '? MiB', sha256: '(see /download/umbra-0.1.0.apk.sha256)', bytes: 0, ...fromDisk };
+export const APK = { version: '0.2.0', versionCode: 2, file: 'umbra-0.2.0.apk', size: '? MiB', sha256: '(see /download/umbra-0.2.0.apk.sha256)', bytes: 0, ...fromDisk };
 export const GITHUB = 'https://github.com/chengmatt416/umbra';
 
 export const L = {
@@ -65,7 +65,7 @@ export const L = {
         body: 'Security & Evidence keeps hash-chained journals and independent anchors, and maps what the agent can reach. Emergency Control fences every managed input at once with an Input Lockdown that stays in force across restarts until you lift it.',
         bullets: ['Seven journals, each shown intact or not', 'Independent digest anchoring', 'Emergency Input Lockdown · Take Back Screen'] },
       { id: 'access', part: 2, clip: 'access', kicker: '13 · Set up & access', title: 'Set it up once. Take access back any time.',
-        body: 'Set up walks through what Umbra needs: accessibility, the Linux environment, a model. Root is optional — with it, Linux runs in a chroot apart from the app; without it, under proot. Settings → Access and data stops everything, revokes the helpers, turns screen control off and deletes the history.',
+        body: 'Set up walks through what Umbra needs: accessibility, the Linux environment, a model. Root is optional — with it, Linux runs in a chroot apart from the app; without it, under proot. Settings → Stop and take back stops everything, revokes the helpers, turns screen control off and deletes the history.',
         bullets: ['Root optional · Shizuku or adb for the helper', 'Linux side runs unprivileged', 'One place to take everything back'] },
     ],
     how: {
@@ -84,7 +84,7 @@ export const L = {
     },
     download: {
       eyebrow: 'Download', title: 'Umbra for Android',
-      lead: 'Version %v · arm64 · %s. The Linux environment is inside, so setup needs no network.',
+      lead: 'Version %v · arm64 · %s. The Linux environment is inside, so setup needs no network. From then on the app keeps itself up to date.',
       btn: 'Download APK', sha: 'SHA-256', copy: 'Copy', copied: 'Copied',
       warn: 'This is a preview build for sideloading. Android will ask you to allow installs from your browser or file manager.',
       install: 'Or from a computer with adb:',
@@ -92,11 +92,13 @@ export const L = {
     faq: {
       eyebrow: 'FAQ', title: 'Questions',
       items: [
-        ['Is it safe to give an agent my phone?', 'Risky actions always need your approval, and the agent can never operate Umbra itself or answer its own approvals. The Linux side runs without privileges and cannot change its own system files or read the app’s private data. Settings → Access and data takes everything back.'],
+        ['Is it safe to give an agent my phone?', 'Risky actions always need your approval, and the agent can never operate Umbra itself or answer its own approvals. The Linux side runs without privileges and cannot change its own system files or read the app’s private data. Settings → Stop and take back takes everything back.'],
         ['Do I need root?', 'No. Root is optional: with it the Linux environment runs in a chroot apart from the app; without it, under proot. The privileged helper can start with root, Shizuku, or once per boot over adb.'],
         ['Which models can I use?', 'Anthropic, OpenAI, Google, OpenRouter, or any OpenAI-compatible server — with your own key. Umbra is built on omp, a coding agent with a mature tool and planning loop.'],
         ['Why is the APK so large?', 'It carries a complete Debian environment (about 2 GB once unpacked) so that setup needs no network.'],
         ['Is it on Google Play?', 'No. Install the APK directly. The source is on GitHub.'],
+        ['How do I get updates?', 'From version 0.2.0 on, Umbra updates itself. Twice a day it checks this site, downloads a new version (on Wi-Fi unless you check by hand), verifies that it is signed with the same key, and installs it when no task is running: by itself with the helper or root, otherwise Android asks you to tap Update. The switches are in Settings → About. On 0.1.0, install 0.2.0 from this page once.'],
+        ['Is the app in Chinese?', 'Yes. The app is in English and Traditional Chinese, and follows your phone’s language (or pick one in Android’s app language settings).'],
         ['Does it work on iPhone?', 'No. Umbra is built for Android 16.'],
       ],
     },
@@ -163,7 +165,7 @@ export const L = {
         body: '「安全與證據」保存雜湊鏈日誌與獨立錨點，並標出代理能觸及的範圍。「緊急控制」可以一次圍住所有受管輸入，輸入封鎖在重啟後仍然有效，直到你解除為止。',
         bullets: ['七份日誌，各自顯示完整與否', '獨立的摘要錨定', '緊急輸入封鎖 · 取回螢幕'] },
       { id: 'access', part: 2, clip: 'access', kicker: '13 · 設定與存取', title: '設定一次，隨時收回全部權限。',
-        body: '「設定」會帶你完成 Umbra 需要的項目：無障礙服務、Linux 環境、模型。root 是選配——有 root 時 Linux 在與 App 隔離的 chroot 中執行，沒有則使用 proot。「設定 → 存取與資料」可以停止一切、撤銷輔助程式、關閉螢幕控制並刪除紀錄。',
+        body: '「設定」會帶你完成 Umbra 需要的項目：無障礙服務、Linux 環境、模型。root 是選配——有 root 時 Linux 在與 App 隔離的 chroot 中執行，沒有則使用 proot。「設定 → 停止與收回」可以停止一切、撤銷輔助程式、關閉螢幕控制並刪除紀錄。',
         bullets: ['root 選配 · 輔助程式可用 Shizuku 或 adb 啟動', 'Linux 端以無特權身分執行', '一個地方收回所有權限'] },
     ],
     how: {
@@ -182,7 +184,7 @@ export const L = {
     },
     download: {
       eyebrow: '下載', title: 'Android 版 Umbra',
-      lead: '版本 %v · arm64 · %s。Linux 環境已內建，安裝不需要網路。',
+      lead: '版本 %v · arm64 · %s。Linux 環境已內建，安裝不需要網路，之後 App 會自動保持最新。',
       btn: '下載 APK', sha: 'SHA-256', copy: '複製', copied: '已複製',
       warn: '這是供側載的預覽版本。Android 會請你允許從瀏覽器或檔案管理員安裝 App。',
       install: '或在已裝 adb 的電腦上：',
@@ -190,11 +192,13 @@ export const L = {
     faq: {
       eyebrow: '常見問題', title: '你可能想問',
       items: [
-        ['把手機交給代理安全嗎？', '有風險的動作一律需要你的核准，代理無法操作 Umbra 本身，也無法替自己核准。Linux 端以無特權身分執行，無法修改自己的系統檔案，也讀不到 App 的私有資料。「設定 → 存取與資料」可以收回一切。'],
+        ['把手機交給代理安全嗎？', '有風險的動作一律需要你的核准，代理無法操作 Umbra 本身，也無法替自己核准。Linux 端以無特權身分執行，無法修改自己的系統檔案，也讀不到 App 的私有資料。「設定 → 停止與收回」可以收回一切。'],
         ['一定要 root 嗎？', '不用。root 是選配：有 root 時 Linux 環境在與 App 隔離的 chroot 中執行，沒有則使用 proot。特權輔助程式可以用 root、Shizuku，或每次開機後透過 adb 啟動一次。'],
         ['可以用哪些模型？', 'Anthropic、OpenAI、Google、OpenRouter，或任何相容 OpenAI 的伺服器，使用你自己的金鑰。Umbra 建立在 omp 之上，這是一個工具與規劃迴圈都相當成熟的程式碼代理。'],
         ['為什麼 APK 這麼大？', '它內含完整的 Debian 環境（解開後約 2 GB），讓安裝設定不需要網路。'],
         ['有上架 Google Play 嗎？', '沒有。請直接安裝 APK，原始碼在 GitHub。'],
+        ['要怎麼更新？', '從 0.2.0 起，Umbra 會自動更新：每天檢查本網站兩次，下載新版本（手動檢查以外只用 Wi-Fi），確認它以相同的金鑰簽署，並在沒有任務執行時安裝；有輔助程式或 root 時會自行完成，否則由 Android 請你點「更新」。開關在「設定 → 關於」。若你用的是 0.1.0，請從本頁安裝一次 0.2.0。'],
+        ['App 有中文介面嗎？', '有。App 提供英文與繁體中文，會跟隨手機的語言，也可以在 Android 的 App 語言設定中選擇。'],
         ['iPhone 能用嗎？', '不行，Umbra 是為 Android 16 打造的。'],
       ],
     },

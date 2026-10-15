@@ -111,7 +111,12 @@ cpSync('src/site.css', 'dist/site.css');
 cpSync('src/story.js', 'dist/story.js');
 writeFileSync('dist/story.js', readFileSync('src/story.js', 'utf8') + `\ndocument.querySelectorAll('.langsw').forEach((a) => a.addEventListener('click', () => { try { localStorage.setItem('umbra-lang', a.dataset.lang); } catch (e) {} }));\n`);
 if (existsSync('public')) cpSync('public', 'dist', { recursive: true });
+// The app checks this file for updates (app/.../update/AppUpdater.kt); the APK itself comes from R2 through /download.
+// Written only when src/apk.json describes the uploaded file of this very version (a stale one would offer the wrong APK).
+if (APK.bytes > 0 && /^[0-9a-f]{64}$/.test(APK.sha256) && APK.versionCode > 0 && APK.file === `umbra-${APK.version}.apk`) {
+  writeFileSync('dist/update.json', JSON.stringify({ version: APK.version, versionCode: APK.versionCode, file: APK.file, bytes: APK.bytes, sha256: APK.sha256, url: `/download/${APK.file}` }, null, 2) + '\n');
+} else console.warn(`src/apk.json does not describe umbra-${APK.version}.apk: dist/update.json not written`);
 writeFileSync('dist/robots.txt', `User-agent: *\nAllow: /\nDisallow: /download/\nSitemap: ${SITE}/sitemap.xml\n`);
 writeFileSync('dist/sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">${['en', 'zh-tw'].map((k) => `<url><loc>${SITE}${L[k].path}</loc><xhtml:link rel="alternate" hreflang="en" href="${SITE}/en/"/><xhtml:link rel="alternate" hreflang="zh-Hant-TW" href="${SITE}/zh-tw/"/></url>`).join('')}</urlset>`);
-writeFileSync('dist/_headers', `/clips/*\n  Cache-Control: public, max-age=604800\n/site.css\n  Cache-Control: public, max-age=3600\n/story.js\n  Cache-Control: public, max-age=3600\n/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n`);
+writeFileSync('dist/_headers', `/update.json\n  Cache-Control: no-cache\n  Access-Control-Allow-Origin: *\n/clips/*\n  Cache-Control: public, max-age=604800\n/site.css\n  Cache-Control: public, max-age=3600\n/story.js\n  Cache-Control: public, max-age=3600\n/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n`);
 console.log('built dist/');

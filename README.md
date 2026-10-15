@@ -35,6 +35,12 @@ its own work, and asks before anything risky.
 * **English and 繁體中文.** The whole interface is in both; it follows the phone's language, or pick one in
   Android's per-app language settings.
 
+* **Updates itself.** Twice a day it reads `update.json` on [umbra-agent.pages.dev](https://umbra-agent.pages.dev),
+  downloads a newer APK from the site's Cloudflare R2 bucket (resumable; Wi-Fi only unless you check by hand),
+  checks its size, SHA-256, package, version and that it is signed with the same key, and installs it when no task
+  is running: silently through the helper or root, otherwise through Android's installer, which asks you once.
+  Settings → *About* shows the state and has the switches ([`AppUpdater`](app/src/main/kotlin/app/umbra/agent/update/AppUpdater.kt)).
+
 Free software under the MIT License. Sideload or F-Droid; there is no Play Store build.
 
 ## Requirements
@@ -48,7 +54,7 @@ Free software under the MIT License. Sideload or F-Droid; there is no Play Store
 
 ## Get started
 
-1. Install the APK (`./gradlew :app:assembleRelease`, then `adb install -r app/build/outputs/apk/release/app-release.apk`) and open Umbra.
+1. Install the APK — download it from [umbra-agent.pages.dev](https://umbra-agent.pages.dev), or build it (`./gradlew :app:assembleRelease`, then `adb install -r app/build/outputs/apk/release/app-release.apk`) — and open Umbra.
 2. **Set up** walks through what it needs: the accessibility service, the Linux environment, a model.
 3. Tap **New task** and say what you want. Watch it work, answer questions, approve what it asks.
 

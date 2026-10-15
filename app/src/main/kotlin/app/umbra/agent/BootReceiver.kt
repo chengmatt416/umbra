@@ -13,6 +13,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         // Touching the container is enough: UmbraApp created it, and its start resumes what the contracts allow.
-        context.container
+        val container = context.container
+        if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) container.updater.onPackageReplaced()
     }
 }

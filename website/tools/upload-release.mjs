@@ -2,9 +2,11 @@
 // node upload-release.mjs <apk path> <object name>
 // Uploads a big file to the umbra-releases R2 bucket in 50 MiB parts through a temporary Worker, verifies the size and
 // the SHA-256 (stored next to it as <name>.sha256), writes src/apk.json for the site build, then deletes the Worker.
+// The version and versionCode come from Gradle's output-metadata.json next to the APK; the site's update.json (which
+// the app checks for updates) needs the versionCode.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync, statSync, writeFileSync, openSync, readSync, closeSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync, openSync, readSync, closeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,6 +17,9 @@ const dir = join(here, 'r2-uploader');
 const token = randomBytes(24).toString('hex');
 const size = statSync(file).size;
 const PART = 50 * 1024 * 1024;
+const metaFile = join(dirname(file), 'output-metadata.json');
+const meta = existsSync(metaFile) ? JSON.parse(readFileSync(metaFile, 'utf8')).elements?.[0] ?? {} : {};
+if (!meta.versionCode) console.warn('no output-metadata.json next to the APK: set version and versionCode in src/apk.json by hand');
 
 const sha = createHash('sha256');
 { const fd = openSync(file, 'r'); const buf = Buffer.alloc(8 << 20); let n; let pos = 0;
@@ -54,7 +59,7 @@ try {
   if (done.size !== size) throw new Error(`size mismatch: ${done.size} != ${size}`);
   await call(`/put?key=${encodeURIComponent(name + '.sha256')}`, { method: 'PUT', body: `${digest}  ${name}\n` });
   const mib = (size / 1048576).toFixed(0) + ' MiB';
-  writeFileSync(join(here, '..', 'src', 'apk.json'), JSON.stringify({ file: name, size: mib, sha256: digest, bytes: size }, null, 2));
+  writeFileSync(join(here, '..', 'src', 'apk.json'), JSON.stringify({ file: name, size: mib, sha256: digest, bytes: size, ...(meta.versionCode ? { version: meta.versionName, versionCode: meta.versionCode } : {}) }, null, 2));
   console.log('uploaded', name, mib);
 } finally {
   spawnSync('npx', ['wrangler', 'delete', '--force'], { cwd: dir, stdio: 'inherit' });

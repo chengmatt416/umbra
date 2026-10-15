@@ -57,6 +57,10 @@ data class AppPrefs(
     val setupDismissed: Boolean = false,
     /** Approval history lists only entries after this time; the ledger itself keeps every line (append-only). */
     val approvalHistoryHiddenBeforeMs: Long = 0,
+    /** Look for new versions on the site and install them (update/AppUpdater). */
+    val autoUpdate: Boolean = true,
+    /** Download updates (several hundred MB) only on an unmetered network; a check the user starts uses any. */
+    val updateOnWifiOnly: Boolean = true,
 )
 
 object ProviderPresets {

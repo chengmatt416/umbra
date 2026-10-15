@@ -16,6 +16,8 @@
     <uses-permission android:name="android.permission.READ_LOGS" tools:ignore="ProtectedPermissions" />
 
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Self-update through the system's installer when neither the helper nor root is there (update/AppUpdater). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".UmbraApp"
@@ -67,6 +69,15 @@
         <receiver
             android:name=".ApprovalActionReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".update.UpdateStatusReceiver"
+            android:exported="false" />
+
+        <service
+            android:name=".update.UpdateCheckJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <receiver
             android:name=".BootReceiver"

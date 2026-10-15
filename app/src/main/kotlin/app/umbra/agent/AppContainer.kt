@@ -388,6 +388,18 @@ class AppContainer(val context: Context) {
     /** omp's own terminal UI on a session's conversation. */
     val ompTui by lazy { app.umbra.core.orchestrator.terminal.OmpTui(supervisor, terminals, environment) }
 
+    /** New versions from the site, installed when nothing runs (update/AppUpdater). */
+    val updater = app.umbra.agent.update.AppUpdater(
+        context, scope, settings,
+        privileged = FirstAvailableShell(ShellIdentity.SHELL, listOf(helperShell, ProcessShell.rootAsShell(), rootShell)),
+        busy = {
+            sessionStore.list().any { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL } ||
+                approvals.pending.value.isNotEmpty() || questions.pending.value.isNotEmpty() ||
+                guest.state.value.let { it is GuestManager.State.Downloading || it is GuestManager.State.Installing }
+        },
+        appVisible = ui.appVisible,
+    )
+
     fun start() {
         scope.launch {
             // Terminals outlive the app: once Linux is ready, find the tmux servers and panes again (AC-001).
@@ -405,6 +417,7 @@ class AppContainer(val context: Context) {
             launch { startLogMonitor() }
             health.start(scope)
             serviceMonitor.start(scope)
+            updater.start()
             // A write the app died in the middle of is settled by reading the remote once Linux is ready (§11).
             launch {
                 guest.state.first { it == GuestManager.State.Ready }

@@ -25,6 +25,7 @@ class MainActivity : ComponentActivity() {
         )
         requestedSession = intent?.getStringExtra(EXTRA_SESSION)
         requestedPage = intent?.getStringExtra(EXTRA_PAGE)
+        installUpdateIfAsked(intent)
         setContent {
             PorcelainTheme {
                 PorcelainApp(openSession = requestedSession, openPage = requestedPage, onOpened = { requestedSession = null; requestedPage = null })
@@ -46,6 +47,12 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         requestedSession = intent.getStringExtra(EXTRA_SESSION)
         requestedPage = intent.getStringExtra(EXTRA_PAGE)
+        installUpdateIfAsked(intent)
+    }
+
+    /** The "update ready" notification: with Umbra in front, the system's install dialog may open. */
+    private fun installUpdateIfAsked(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_INSTALL_UPDATE, false) == true) container.updater.installNow()
     }
 
     companion object {
@@ -53,5 +60,8 @@ class MainActivity : ComponentActivity() {
 
         /** A page to open by its route ("inbox", "emergency"), for the Capsule's links. */
         const val EXTRA_PAGE = "page"
+
+        /** Set by the updater's notification: install the downloaded update. */
+        const val EXTRA_INSTALL_UPDATE = "install_update"
     }
 }
