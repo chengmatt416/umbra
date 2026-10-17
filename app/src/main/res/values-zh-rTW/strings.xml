@@ -1757,7 +1757,7 @@
     <string name="upd_ready_manual">請在方便時安裝，Umbra 會重新啟動。</string>
     <string name="upd_installing">正在安裝版本 %s，Umbra 即將重新啟動…</string>
     <string name="upd_confirm">請在 Android 的安裝對話框中確認版本 %s。</string>
-    <string name="upd_failed">更新失敗：%s</string>
+    <string name="upd_failed">無法更新：%s</string>
     <string name="upd_no_space">可用空間不足（需要 %s）</string>
     <string name="upd_check_now">檢查更新</string>
     <string name="upd_download_now">立即下載</string>
@@ -1767,4 +1767,6 @@
     <string name="upd_notif_ready_body">點一下即可安裝。Umbra 會重新啟動，任務、檔案與 Linux 都會保留。</string>
     <string name="upd_notif_done_title">Umbra 已更新至 %s</string>
     <string name="upd_notif_done_body">點一下即可開啟。</string>
+    <string name="upd_err_offline">無法連線到更新網站，Umbra 稍後會再試。</string>
+    <string name="upd_err_no_manifest">更新網站目前沒有可用的版本資訊，Umbra 稍後會再試。</string>
 </resources>

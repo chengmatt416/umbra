@@ -37,6 +37,45 @@ def text(s):
     sh("input", "text", s.replace(" ", "%s"))
 
 
+def ui_nodes():
+    """The on-screen nodes with text or a description: [(cx, cy, text, desc, (x1, y1, x2, y2))]. Used to find a control
+    by its label instead of a fixed position, so a script survives layout changes."""
+    import re
+    for _ in range(4):
+        out = sh("uiautomator", "dump", "/sdcard/umbra-ui.xml")
+        if "dumped" in out:
+            break
+        time.sleep(0.5)
+    xml = sh("cat", "/sdcard/umbra-ui.xml")
+    nodes = []
+    for m in re.finditer(r'<node [^>]*?text="([^"]*)"[^>]*?content-desc="([^"]*)"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml):
+        t, d, x1, y1, x2, y2 = m.groups()
+        if t or d:
+            x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
+            nodes.append(((x1 + x2) // 2, (y1 + y2) // 2, t, d, (x1, y1, x2, y2)))
+    return nodes
+
+
+def find(label, timeout=6.0, exact=False, below=0):
+    """Centre of the first node whose text or description contains (or equals) label, below y=below; None if absent."""
+    end = time.time() + timeout
+    while True:
+        for cx, cy, t, d, _ in ui_nodes():
+            if cy > below and ((label in (t, d)) if exact else (label in t or label in d)):
+                return cx, cy
+        if time.time() > end:
+            return None
+        time.sleep(0.4)
+
+
+def tap_text(label, timeout=6.0, exact=False, below=0, dx=0, dy=0):
+    p = find(label, timeout, exact, below)
+    if p is None:
+        raise RuntimeError("not on screen: %r" % label)
+    tap(p[0] + dx, p[1] + dy)
+    return p
+
+
 def paced(step, seconds):
     """Wraps a scripted step so the model answers after a pause: a person can follow what the agent does."""
     def run(request):

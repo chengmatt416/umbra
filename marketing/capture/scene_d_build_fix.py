@@ -56,6 +56,16 @@ def to_task():
         swipe(360, 1050, 360, 330, 250); time.sleep(0.25)
 
 
+def follow_answer():
+    """Once the answer is in the chat (the step returns after its pause), scroll it into view."""
+    def later():
+        time.sleep(2.5 + 0.9)
+        for _ in range(3):
+            swipe(360, 1050, 360, 450, 500); time.sleep(0.5)
+        rec.mark("answer")
+    threading.Thread(target=later, daemon=True).start()
+
+
 def to_displays():
     page("displays")
 
@@ -93,8 +103,12 @@ model = ScriptedModel([
     with_display("android_type", {"text": "umbra123", "secret": True}, 2.5),
     with_display("android_tap", {"label": "Log in"}, 2.5),
     with_display("verify", {"expect": {"text_visible": "Welcome"}, "timeout_ms": 8000}, 3),
+    # Tidy up: close the app it launched. (Without this, the app moves onto the phone's own screen when the finished
+    # task's background display is released: the display is created without DESTROY_CONTENT_ON_REMOVAL.)
+    plain(tool("android_stop", {"package": FIX}), 1.5),
     plain(say("Signing in crashed because the greeting code called lastUser.equals(user) while lastUser is null on a fresh install. "
-              "I changed it to user.equals(lastUser), rebuilt and reinstalled, and signing in now shows the welcome message."), 2.5, both(to_task, mark("done"))),
+              "I changed it to user.equals(lastUser), rebuilt and reinstalled, and signing in now shows the welcome message."), 2.5,
+          both(to_task, mark("done"), follow_answer)),
 ]).start()
 b.control("provider.set", {"id": "scripted", "base_url": model.url_for_emulator, "model": "scripted-model", "key": ""})
 b.control("approval_mode", {"mode": "autonomous"}); b.control("capsule.set", {"on": False})
@@ -124,5 +138,7 @@ while time.time() < deadline:
         final = st; break
     time.sleep(0.7)
 time.sleep(4)
+sh("input", "keyevent", "3")          # end the still on a change, so the recording keeps it
+time.sleep(1.5)
 rec.stop(); model.stop()
 print("final", final and final["state"], "session", sid)

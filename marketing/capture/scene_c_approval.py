@@ -4,9 +4,10 @@ import time
 from lib import *
 
 b = umbractl.Bridge(); umbractl.setup()
+# No todo list here: with items left open, omp asks the model once more at the end, and the scripted model (which
+# cannot tell) would repeat its last answer in the chat.
 m = ScriptedModel([
-    paced(tool("todo", {"op": "init", "list": [{"phase": "Work", "items": ["Inspect the phone", "Remove the SIM toolkit", "Verify the result"]}]}), 1),
-    tool("android_shell", {"command": "pm uninstall --user 0 com.android.stk"}),
+    paced(tool("android_shell", {"command": "pm uninstall --user 0 com.android.stk"}), 1),
     say("I stopped: the removal was denied, so the SIM toolkit is still installed and nothing else was changed."),
 ]).start()
 b.control("provider.set", {"id": "scripted", "base_url": m.url_for_emulator, "model": "scripted-model", "key": ""})
@@ -22,17 +23,24 @@ for _ in range(60):
     if b.control("approvals.list"): break
     time.sleep(1)
 page("home"); time.sleep(2)
+INBOX = find("Inbox", exact=True)       # the Inbox tab, found by its label
 rec = Recorder("scene_c").start()
 rec.mark("home")
 time.sleep(1.5)
-tap(636, 1460)           # Inbox tab
+tap(*INBOX)
 time.sleep(3.5)
 rec.mark("card")
-tap(120, 912)            # Deny
+tap_text("Deny", exact=True)
 rec.mark("denied")
-time.sleep(1.5)
-page("current"); time.sleep(5)
+time.sleep(2.5)
+sh("am", "start", "-n", "app.umbra.agent/.MainActivity", "--es", "session", sid)   # the task itself: it stopped
+time.sleep(2.0)
+for _ in range(2):
+    swipe(360, 1150, 360, 520, 600); time.sleep(0.7)
+time.sleep(4)
 rec.mark("answer")
+sh("input", "keyevent", "3")            # end the still on a change, so the recording keeps it
+time.sleep(1.5)
 rec.stop()
 m.stop()
 print(b.control("session.get", {"id": sid})["state"], sh("pm", "list", "packages", "com.android.stk").strip())

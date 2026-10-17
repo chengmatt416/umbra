@@ -1796,7 +1796,7 @@
     <string name="upd_ready_manual">Install it when it suits you; Umbra restarts.</string>
     <string name="upd_installing">Installing version %s. Umbra restarts…</string>
     <string name="upd_confirm">Confirm version %s in Android’s install dialog.</string>
-    <string name="upd_failed">The update did not work: %s</string>
+    <string name="upd_failed">Could not update: %s</string>
     <string name="upd_no_space">not enough free space (needs %s)</string>
     <string name="upd_check_now">Check for updates</string>
     <string name="upd_download_now">Download now</string>
@@ -1806,4 +1806,6 @@
     <string name="upd_notif_ready_body">Tap to install. Umbra restarts; your tasks, files and Linux stay.</string>
     <string name="upd_notif_done_title">Umbra was updated to %s</string>
     <string name="upd_notif_done_body">Tap to open.</string>
+    <string name="upd_err_offline">the update site could not be reached. Umbra tries again later.</string>
+    <string name="upd_err_no_manifest">the update site has no usable version information right now. Umbra tries again later.</string>
 </resources>

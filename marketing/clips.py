@@ -20,7 +20,9 @@ def cut(name, c, reel=False):
     segs = c.get("segments") or [[c["start"], c["end"], c.get("speed", 1)]]
     filt = []
     for i, (a, b, sp) in enumerate(segs):
-        filt.append("[0:v]trim=%s:%s,setpts=(PTS-STARTPTS)/%s,fps=30,scale=%s:flags=lanczos,setsar=1[v%d]" % (a, b, sp, "664:1476" if reel else "576:1280", i))
+        # screenrecord writes a frame only when the screen changes: fps=30 first turns that into a constant rate, so a
+        # segment that starts or ends during a still keeps the still instead of jumping to the next change.
+        filt.append("[0:v]fps=30,trim=%s:%s,setpts=(PTS-STARTPTS)/%s,fps=30,scale=%s:flags=lanczos,setsar=1[v%d]" % (a, b, sp, "664:1476" if reel else "576:1280", i))
         parts.append("[v%d]" % i)
     filt.append("%sconcat=n=%d:v=1:a=0[o]" % ("".join(parts), len(segs)))
     out = os.path.join(ROOT, "marketing", "reels", "work") if reel else OUT

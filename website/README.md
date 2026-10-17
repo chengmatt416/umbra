@@ -17,7 +17,9 @@ wrangler.toml     Pages project umbra-agent, R2 binding RELEASES -> bucket umbra
 ```bash
 source ../scripts/env.sh
 export UMBRA_KEYSTORE=~/.umbra-signing/umbra-release.jks UMBRA_KEYSTORE_PASSWORD=$(cat ~/.umbra-signing/password.txt) UMBRA_KEY_PASSWORD=$UMBRA_KEYSTORE_PASSWORD
-(cd .. && ./gradlew :app:assembleRelease)
+# the Linux image to carry: build/rootfs/umbra-rootfs-<v>-arm64.tar.xz + packs + manifest.json (runtime-build/rootfs/build.sh <v>);
+# 0.2.0 carries `main` (it has tmux; the older `dev` image does not). A different image makes installed apps offer a Linux update.
+(cd .. && ./gradlew -Pumbra.linuxVersion=main :app:assembleRelease)
 node tools/upload-release.mjs ../app/build/outputs/apk/release/app-release.apk umbra-0.2.0.apk   # writes src/apk.json (size, sha256, version, versionCode)
 # bump version/file in src/content.mjs (APK.version/versionCode/file) and LATEST_APK in wrangler.toml, then:
 node build.mjs && npx wrangler pages deploy dist --project-name umbra-agent --branch main

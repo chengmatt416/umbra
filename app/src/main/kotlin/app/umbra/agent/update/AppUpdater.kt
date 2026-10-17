@@ -148,7 +148,10 @@ class AppUpdater(
                 mutableState.value = previous
                 return
             }
-            mutableState.value = State.Failed(e.message ?: e.javaClass.simpleName, (previous as? State.Available)?.update)
+            // The details are in the log; the person reads why in plain words (a parser's message means nothing to them).
+            val unusable = e is IllegalArgumentException || e.message?.startsWith("update.json:") == true
+            val reason = context.getString(if (unusable) R.string.upd_err_no_manifest else R.string.upd_err_offline)
+            mutableState.value = State.Failed(reason, (previous as? State.Available)?.update)
             return
         }
         if (!UpdatePolicy.isNewer(update, installedVersionCode)) {
