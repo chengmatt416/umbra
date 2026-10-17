@@ -243,6 +243,26 @@ class NodeConnections(private val c: AppContainer, private val scope: CoroutineS
         }
     }
 
+    /**
+     * Unpairs [nodeId]: this phone forgets it, and the node is asked to forget this phone too (its "revoke" request,
+     * which removes the phone's certificate there and answers with its jobs). A node that cannot be reached keeps the
+     * phone in its list until `umbra-node unpair` is run on it. Returns whether the node answered.
+     */
+    suspend fun unpair(nodeId: String): Boolean = withContext(Dispatchers.IO) {
+        val node = registry[nodeId] ?: return@withContext false
+        disconnect(nodeId)
+        val told = try {
+            NodeChannel.connect(node.host, node.port, tlsContext(keyManagers(), PinnedTrust({ setOf(node.fingerprint) })), scope).use { ch ->
+                ch.request("revoke", timeoutMs = 10_000)
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+        registry.unpair(nodeId)
+        told
+    }
+
     fun disconnect(nodeId: String) {
         channels.remove(nodeId)?.close()
     }

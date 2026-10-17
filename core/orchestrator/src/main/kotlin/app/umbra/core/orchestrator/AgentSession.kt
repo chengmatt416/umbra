@@ -99,6 +99,8 @@ class SessionDeps(
     val exposed: (sessionId: String, names: Set<String>, purpose: String) -> Unit = { _, _, _ -> },
     /** The agent's todo phases as omp last reported them (plan revisions, §4.3). */
     val onTodos: suspend (sessionId: String, phases: List<app.umbra.runtime.omp.OmpTodoPhase>) -> Unit = { _, _ -> },
+    /** After a session is deleted: what the app keeps for it elsewhere (its terminals) goes too. */
+    val onDeleted: suspend (sessionId: String) -> Unit = {},
 )
 
 /** How hard a session tries to recover on its own before giving up and telling the user. */

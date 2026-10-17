@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -177,11 +178,13 @@ fun CurrentScreen(onMenu: () -> Unit, onOpenSession: (String) -> Unit, onSession
     val context = LocalContext.current
     val resources = androidx.compose.ui.platform.LocalResources.current
     val focused by container.ui.focusedSession.collectAsStateWithLifecycle()
-    val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
-    val session = sessions.firstOrNull { it.id == focused }
+    // null until the store has been read: an empty list then would wrongly say that no session is open.
+    val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(null)
+    val session = sessions?.firstOrNull { it.id == focused }
 
     Column(Modifier.fillMaxSize()) {
         AppBar(onMenu)
+        if (session == null && focused != null && sessions == null) return@Column
         if (session == null) {
             app.umbra.agent.ui.porcelain.PEmpty(
                 stringResource(R.string.cur_none_title), stringResource(R.string.cur_none_body), icon = PIcons.activity,
@@ -225,16 +228,29 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
 
     val approvals by container.approvals.pending.collectAsStateWithLifecycle()
     val questions by container.questions.pending.collectAsStateWithLifecycle()
+    // "Agent not running" is said of an unfinished session whose agent has stayed away for a moment, not while the
+    // page is still attaching to it (finished ones say so in their state already).
+    val showNotRunning by produceState(false, id, conversationFlow != null, conversation.live, session.state.isTerminal) {
+        value = false
+        if (conversationFlow != null && !conversation.live && !session.state.isTerminal) {
+            kotlinx.coroutines.delay(2_500)
+            value = true
+        }
+    }
     val mine = approvals.filter { it.sessionId == id }
     val myQuestions = questions.filter { it.sessionId == id }
     val busy = session.state == SessionState.RUNNING || session.state == SessionState.WAITING_APPROVAL
     val project = session.projectId?.let { container.projects[it] }
 
+    // Typing in the session's terminal: the header keeps only the title and the views, so the keyboard does not
+    // squeeze the terminal away.
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    val typingInTerminal = view == View.Terminal && androidx.compose.foundation.layout.WindowInsets.isImeVisible
     Column(Modifier.fillMaxSize().imePadding()) {
         // Header: where this is and what state it is in (one line), the title (one line, tap for all of it), the
         // session's facts in a row that fades where it continues, then the views.
         Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!typingInTerminal) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Eyebrow(project?.let { stringResource(R.string.cur_eyebrow_project, it.name) } ?: stringResource(R.string.cur_eyebrow_independent), Modifier.weight(1f))
                 Tag(stateText(session), sessionTone(session))
             }
@@ -270,7 +286,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                     }
                 }
             }
-            app.umbra.agent.ui.porcelain.FadingRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            if (!typingInTerminal) app.umbra.agent.ui.porcelain.FadingRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 PButton(conversation.session?.model?.name ?: session.model?.modelId ?: stringResource(R.string.cur_model), { sheet = Sheet.Model }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.spark)
                 conversation.session?.thinkingLevel?.let { PButton(stringResource(R.string.cur_thinking, it), { sheet = Sheet.Model }, style = ButtonStyle.Ghost, tiny = true) }
                 conversation.session?.contextUsage?.let { Tag(stringResource(R.string.cur_context, it.percent.toInt()), if (it.percent > 85) Tone.Warn else Tone.Neutral) }
@@ -278,7 +294,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                     val tasks = ph.flatMap { it.tasks }
                     PButton(stringResource(R.string.cur_todos, tasks.count { it.status == "completed" }, tasks.size), { sheet = Sheet.Todos }, style = ButtonStyle.Ghost, tiny = true)
                 }
-                if (!conversation.live) Tag(stringResource(R.string.cur_not_running), Tone.Neutral)
+                if (showNotRunning) Tag(stringResource(R.string.cur_not_running), Tone.Neutral)
             }
             Segmented(View.entries.map { it to stringResource(it.label) }, view, { view = it }, Modifier.padding(top = 8.dp), fill = true)
         }
@@ -329,7 +345,8 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
     if (contractDialog) ResumeContractDialog(id, onDismiss = { contractDialog = false })
     if (confirmDelete) app.umbra.agent.ui.sessions.ConfirmDeleteSession(session, onDismiss = { confirmDelete = false }) {
         confirmDelete = false
-        scope.launch { container.supervisor.delete(id); container.ui.focus(null) }
+        // In the app's scope: deleting the session takes this page (and its scope) away halfway through.
+        container.scope.launch { container.supervisor.delete(id); container.ui.focus(null) }
     }
 }
 

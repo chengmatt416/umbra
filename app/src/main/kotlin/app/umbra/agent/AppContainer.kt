@@ -347,6 +347,8 @@ class AppContainer(val context: Context) {
             onTodos = { id, phases ->
                 plans.observe(id, phases.map { p -> app.umbra.core.control.PlanPhase(p.name, p.tasks.map { app.umbra.core.control.PlanTask(it.content, it.status) }) }, "agent")
             },
+            // A deleted task's terminals (its shells and the omp TUI) end with it instead of running on unseen.
+            onDeleted = { id -> terminals.closeSession(id) },
         ),
         scope = scope,
         governor = governor,

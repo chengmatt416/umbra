@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -162,8 +163,12 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
         Scaffold(
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            // The keyboard covers the tab bar anyway; keeping its space under the keyboard would count it twice
+            // (the pages pad for the whole keyboard), so it steps aside while one is up.
             bottomBar = {
-                if (Dest.entries.any { it.tab && route.startsWith(it.route) }) BottomBar(route, attention, ::go)
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                val keyboard = WindowInsets.isImeVisible
+                if (!keyboard && Dest.entries.any { it.tab && route.startsWith(it.route) }) BottomBar(route, attention, ::go)
             },
             modifier = Modifier.background(P.page),
         ) { padding ->

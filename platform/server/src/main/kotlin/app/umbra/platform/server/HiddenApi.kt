@@ -24,6 +24,22 @@ internal object HiddenApi {
     /** A context whose package and uid are the shell's, for services that check who is calling. */
     val context: Context by lazy { ShellContext(systemContext) }
 
+    /** The window manager service, for display policies the public API does not offer (the shell holds INTERNAL_SYSTEM_WINDOW). */
+    private val windowManager: Any by lazy {
+        val binder = Class.forName("android.os.ServiceManager").getMethod("getService", String::class.java).invoke(null, "window") as android.os.IBinder
+        Class.forName("android.view.IWindowManager\$Stub").getMethod("asInterface", android.os.IBinder::class.java).invoke(null, binder)!!
+    }
+
+    /** WindowManager.DISPLAY_IME_POLICY_*: where the soft keyboard of a window on [displayId] shows. */
+    fun setDisplayImePolicy(displayId: Int, policy: Int) {
+        windowManager.javaClass.getMethod("setDisplayImePolicy", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType).invoke(windowManager, displayId, policy)
+    }
+
+    /** WindowManager.REMOVE_CONTENT_MODE_*: what happens to the apps on [displayId] when it goes away. */
+    fun setRemoveContentMode(displayId: Int, mode: Int) {
+        windowManager.javaClass.getMethod("setRemoveContentMode", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType).invoke(windowManager, displayId, mode)
+    }
+
     fun displayManager(): DisplayManager {
         val ctor = DisplayManager::class.java.getDeclaredConstructor(Context::class.java)
         ctor.isAccessible = true

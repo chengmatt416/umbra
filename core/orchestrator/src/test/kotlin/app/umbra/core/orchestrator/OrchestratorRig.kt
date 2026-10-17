@@ -67,6 +67,9 @@ class OrchestratorRig(
     /** Transcripts the sessions saved, as the app's file cache would hold them. */
     val savedConversations = java.util.concurrent.ConcurrentHashMap<String, List<kotlinx.serialization.json.JsonObject>>()
 
+    /** Sessions whose deletion reached its last step (the app closes their terminals there); slow on purpose. */
+    val deleted = CopyOnWriteArrayList<String>()
+
     private val shell = ProcessShell.app()
     private val journal = ActionJournal()
     private val gate = SafetyGate(RiskClassifier(), { ApprovalPolicy(approvalMode) }, approvals)
@@ -128,6 +131,7 @@ class OrchestratorRig(
             override suspend fun save(sessionId: String, messages: List<kotlinx.serialization.json.JsonObject>) { savedConversations[sessionId] = messages }
             override suspend fun delete(sessionId: String) { savedConversations.remove(sessionId) }
         },
+        onDeleted = { id -> kotlinx.coroutines.delay(300); deleted += id },
     )
 
     val supervisor = AgentSupervisor(deps, scope, governor).also { it.start() }
