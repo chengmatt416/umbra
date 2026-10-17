@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 // src/apk.json is written by publish.sh from the real file; the defaults only keep a fresh checkout building.
 const fromDisk = existsSync(new URL('./apk.json', import.meta.url)) ? JSON.parse(readFileSync(new URL('./apk.json', import.meta.url), 'utf8')) : {};
-export const APK = { version: '0.2.0', versionCode: 2, file: 'umbra-0.2.0.apk', size: '? MiB', sha256: '(see /download/umbra-0.2.0.apk.sha256)', bytes: 0, ...fromDisk };
+export const APK = { version: '0.2.1', versionCode: 3, file: 'umbra-0.2.1.apk', size: '? MiB', sha256: '(see /download/umbra-0.2.1.apk.sha256)', bytes: 0, ...fromDisk };
 export const GITHUB = 'https://github.com/chengmatt416/umbra';
 
 export const L = {
@@ -40,7 +40,7 @@ export const L = {
         bullets: ['Workspaces both Android and Linux can see', 'Build, test, install, verify — one loop', 'Carried inside the APK: setup needs no network'] },
       { id: 'capsule', part: 0, clip: 'capsule', kicker: '05 · Capsule', title: 'A capsule over every app.',
         body: 'The camera-anchored Capsule shows the task, its approvals and a quick composer above whatever you are doing. Long-press it, circle part of the screen, and send that selection with your question: Snapshot selection sends the cropped picture and its accessibility text.',
-        bullets: ['Task status, approvals and composer in one place', 'Snapshot selection: circle it, ask about it', 'Previous / Current / Next at a glance'] },
+        bullets: ['A small eclipse for each task: working, waiting for you, done', 'Approvals, steps and a composer in one place', 'Snapshot selection: circle it, ask about it'] },
 
       { id: 'plan', part: 1, clip: 'plan', kicker: '06 · Plan', title: 'Plans that can evolve safely.',
         body: 'Planning & Agents shows the phase DAG, the agent tree and the wait graph for each session, with a read-only revision history. You see how work is split, who waits for whom, and what changed.',
@@ -98,6 +98,7 @@ export const L = {
         ['Why is the APK so large?', 'It carries a complete Debian environment (about 2 GB once unpacked) so that setup needs no network.'],
         ['Is it on Google Play?', 'No. Install the APK directly. The source is on GitHub.'],
         ['How do I get updates?', 'From version 0.2.0 on, Umbra updates itself. Twice a day it checks this site, downloads a new version (on Wi-Fi unless you check by hand), verifies that it is signed with the same key, and installs it when no task is running: by itself with the helper or root, otherwise Android asks you to tap Update. The switches are in Settings → About. On 0.1.0, install 0.2.0 from this page once.'],
+        ['Can I change how it looks?', 'Yes. Settings → Appearance has three looks: Porcelain (the original grey-green glaze), Liquid (living colour in a hue you pick, light or dark) and an iOS-style look with glass. The change reaches every screen, the Capsule included.'],
         ['Is the app in Chinese?', 'Yes. The app is in English and Traditional Chinese, and follows your phone’s language (or pick one in Android’s app language settings).'],
         ['Does it work on iPhone?', 'No. Umbra is built for Android 16.'],
       ],
@@ -140,7 +141,7 @@ export const L = {
         bullets: ['Android 與 Linux 兩邊都看得到的工作區', '建置、測試、安裝、驗證，一個循環完成', '環境內建在 APK 裡，安裝不需要網路'] },
       { id: 'capsule', part: 0, clip: 'capsule', kicker: '05 · 膠囊', title: '浮在每個 App 上方的膠囊。',
         body: '錨定在相機孔位的膠囊，在你正在用的任何畫面上方顯示任務、核准請求與快速輸入框。長按它，圈出螢幕的一部分，連同你的問題一起送出：「快照框選」會送出裁切後的圖片與其無障礙文字。',
-        bullets: ['任務狀態、核准與輸入框集中一處', '快照框選：圈起來，直接問', '上一個／目前／下一個，一眼看懂'] },
+        bullets: ['每個任務一個小月蝕：工作中、等你決定、完成', '核准、步驟與輸入框集中一處', '快照框選：圈起來，直接問'] },
 
       { id: 'plan', part: 1, clip: 'plan', kicker: '06 · 規劃', title: '能安全演進的計畫。',
         body: '「規劃與代理」為每個工作階段顯示階段 DAG、代理樹與等待圖，以及唯讀的修訂歷史。工作怎麼拆分、誰在等誰、改了什麼，一目了然。',
@@ -198,6 +199,7 @@ export const L = {
         ['為什麼 APK 這麼大？', '它內含完整的 Debian 環境（解開後約 2 GB），讓安裝設定不需要網路。'],
         ['有上架 Google Play 嗎？', '沒有。請直接安裝 APK，原始碼在 GitHub。'],
         ['要怎麼更新？', '從 0.2.0 起，Umbra 會自動更新：每天檢查本網站兩次，下載新版本（手動檢查以外只用 Wi-Fi），確認它以相同的金鑰簽署，並在沒有任務執行時安裝；有輔助程式或 root 時會自行完成，否則由 Android 請你點「更新」。開關在「設定 → 關於」。若你用的是 0.1.0，請從本頁安裝一次 0.2.0。'],
+        ['可以改變外觀嗎？', '可以。「設定 → 外觀」有三種：瓷釉（原本的灰綠瓷釉）、流體（你選的顏色，淺色或深色）以及帶玻璃質感的 iOS 風格。變更會套用到每個畫面，包括膠囊。'],
         ['App 有中文介面嗎？', '有。App 提供英文與繁體中文，會跟隨手機的語言，也可以在 Android 的 App 語言設定中選擇。'],
         ['iPhone 能用嗎？', '不行，Umbra 是為 Android 16 打造的。'],
       ],
