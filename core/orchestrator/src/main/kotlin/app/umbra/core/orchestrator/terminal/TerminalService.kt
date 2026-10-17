@@ -274,6 +274,11 @@ class TerminalService(
         runtime.update { it - id }
     }
 
+    /** Closes the terminals opened for [sessionId] (the session was deleted: nothing should keep running for it). */
+    suspend fun closeSession(sessionId: String) {
+        docs.list().filter { it.sessionId == sessionId }.forEach { close(it.id) }
+    }
+
     /**
      * Probes every group and terminal and records what is true now (AC-001/AC-002): a pane in the same server epoch
      * is reattached; a dead pane is reported with its exit status; a lost or restarted server loses its panes.

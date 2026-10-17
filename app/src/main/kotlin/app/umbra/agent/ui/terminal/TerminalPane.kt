@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -31,7 +32,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -43,6 +43,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onInterceptKeyBeforeSoftKeyboard
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
@@ -71,7 +72,7 @@ import app.umbra.runtime.linux.tmux.CellStyle
 import app.umbra.runtime.linux.tmux.ScreenLine
 import app.umbra.runtime.linux.tmux.TermColor
 import app.umbra.runtime.linux.tmux.TerminalScreen
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.channels.Channel
 
 /** The terminal's colours: the standard 16 tuned to the porcelain night glaze, the 256-colour cube, true colour. */
 object TermPalette {
@@ -128,7 +129,6 @@ private val EXTRA_KEYS = listOf(
 @Composable
 fun TerminalPane(service: TerminalService, id: String, ownsInput: Boolean, modifier: Modifier = Modifier, onFenced: (String) -> Unit = {}) {
     val screen by remember(id) { service.screen(id) }.collectAsStateWithLifecycle(null)
-    val scope = rememberCoroutineScope()
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
     var fontSize by remember { mutableStateOf(12) }
@@ -139,19 +139,46 @@ fun TerminalPane(service: TerminalService, id: String, ownsInput: Boolean, modif
     val focus = remember { FocusRequester() }
     var field by remember { mutableStateOf(TextFieldValue(SENTINEL, TextRange(SENTINEL.length))) }
 
+    // Input leaves in the order it was typed, from one queue: a coroutine per key would race to the terminal, and
+    // under proot every tmux command takes a while, so what piles up meanwhile goes out together in one command.
+    val outbox = remember(id) { Channel<String>(Channel.UNLIMITED) }
+    LaunchedEffect(id) {
+        for (first in outbox) {
+            val batch = StringBuilder(first)
+            while (true) batch.append(outbox.tryReceive().getOrNull() ?: break)
+            val r = service.sendText(id, batch.toString(), Principal.User)
+            if (r is InputResult.Fenced) onFenced(r.reason)
+        }
+    }
+
     fun send(text: String) {
         var out = text
         if (ctrl && out.length == 1 && out[0].isLetterOrDigit()) { out = (out[0].uppercaseChar().code and 0x1f).toChar().toString(); ctrl = false }
         if (alt) { out = "\u001b" + out; alt = false }
-        scope.launch {
-            val r = service.sendText(id, out, Principal.User)
-            if (r is InputResult.Fenced) onFenced(r.reason)
+        outbox.trySend(out)
+    }
+
+    /** What a key of a hardware keyboard (or injected input) sends, or null when it sends nothing to the terminal. */
+    fun bytesOf(e: androidx.compose.ui.input.key.KeyEvent): String? = when (e.key) {
+        Key.Enter, Key.NumPadEnter -> "\r"
+        Key.Backspace -> "\u007f"
+        Key.Tab -> "\t"
+        Key.Escape -> "\u001b"
+        Key.DirectionUp -> "\u001b[A"
+        Key.DirectionDown -> "\u001b[B"
+        Key.DirectionRight -> "\u001b[C"
+        Key.DirectionLeft -> "\u001b[D"
+        else -> when {
+            e.isCtrlPressed && e.utf16CodePoint in 'a'.code..'z'.code -> ((e.utf16CodePoint and 0x1f).toChar()).toString()
+            e.utf16CodePoint >= 0x20 && e.utf16CodePoint != 0x7f -> String(Character.toChars(e.utf16CodePoint))
+            else -> null
         }
     }
 
     Column(modifier) {
         BoxWithConstraints(
-            Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(TermPalette.background)
+            // Never squeezed away by the keyboard: a few lines stay, whatever the page around it does.
+            Modifier.weight(1f).heightIn(min = 96.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(TermPalette.background)
                 .clickable(enabled = ownsInput) { runCatching { focus.requestFocus() } }
                 .padding(6.dp),
         ) {
@@ -203,20 +230,17 @@ fun TerminalPane(service: TerminalService, id: String, ownsInput: Boolean, modif
                     }
                 },
                 Modifier.size(1.dp).alpha(0f).focusRequester(focus).semantics { contentDescription = inputLabel }
+                    // Keys of a hardware keyboard (and injected ones) go straight to the terminal before the soft
+                    // keyboard sees them: otherwise it takes some of them through its own text path, which arrives
+                    // later than the ones it lets through, and "cat /x" could arrive as "c/at x".
+                    .onInterceptKeyBeforeSoftKeyboard { e ->
+                        if (e.type != KeyEventType.KeyDown) return@onInterceptKeyBeforeSoftKeyboard false
+                        bytesOf(e)?.let { send(it); true } ?: false
+                    }
+                    // Keys the soft keyboard itself sends as key events (Enter, Backspace on some keyboards).
                     .onPreviewKeyEvent { e ->
                         if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        val seq = when (e.key) {
-                            Key.Enter, Key.NumPadEnter -> "\r"
-                            Key.Backspace -> "\u007f"
-                            Key.Tab -> "\t"
-                            Key.Escape -> "\u001b"
-                            Key.DirectionUp -> "\u001b[A"
-                            Key.DirectionDown -> "\u001b[B"
-                            Key.DirectionRight -> "\u001b[C"
-                            Key.DirectionLeft -> "\u001b[D"
-                            else -> if (e.isCtrlPressed && e.utf16CodePoint in 'a'.code..'z'.code) ((e.utf16CodePoint and 0x1f).toChar()).toString() else null
-                        }
-                        if (seq != null) { send(seq); true } else false
+                        bytesOf(e)?.takeIf { e.utf16CodePoint < 0x20 || e.isCtrlPressed }?.let { send(it); true } ?: false
                     },
                 enabled = ownsInput,
                 keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Password),

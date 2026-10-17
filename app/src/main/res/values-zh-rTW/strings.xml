@@ -1574,7 +1574,7 @@
     <string name="nodes_revoke_answered">%1$s 已回覆：它表示已忘記這支手機。</string>
     <string name="nodes_revoke_unreachable">無法連上 %1$s；撤銷仍在等待中。</string>
     <string name="nodes_record_gone">%1$s 的記錄已移除；它的憑證仍會被拒絕（沒有任何東西釘住它）。</string>
-    <string name="nodes_forgotten_here">已在這裡移除。也請在 %1$s 上取消與這支手機的配對（umbra-node unpair）。</string>
+    <string name="nodes_forgotten_here">已在這裡忘記，但無法連線到 %1$s：請在那台電腦上執行 umbra-node unpair，移除這支手機。</string>
     <string name="nodes_cancelled_there">已在節點上取消。</string>
     <string name="nodes_job_folder_deleted">節點已刪除這項工作的資料夾。</string>
     <string name="nodes_pairing">配對中</string>
@@ -1828,4 +1828,8 @@
     <string name="tint_teal">藍綠</string>
     <string name="tint_graphite">石墨</string>
     <string name="app_motion_apple">動態光線</string>
+    <string name="nodes_unpair_title">要解除與 %1$s 的配對嗎？</string>
+    <string name="nodes_unpair_body">這支手機會忘記 %1$s，並請它也忘記這支手機。已在那裡執行的工作會在租約到期時結束。若要再次使用，請用新的配對碼重新配對。</string>
+    <string name="nodes_unpairing">正在解除與 %1$s 的配對</string>
+    <string name="nodes_unpaired_both">已解除與 %1$s 的配對：這支手機已忘記它，它也已忘記這支手機。</string>
 </resources>

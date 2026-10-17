@@ -54,6 +54,12 @@ internal class VirtualDisplays {
             throw IllegalStateException("the system refused to create the virtual display")
         }
         val entry = Entry(display.display.displayId, name, width, height, dpi, display, reader)
+        // The agent types by injecting text: an app on this display gets no soft keyboard, so none pops up on the
+        // phone's own screen either (by default it falls back there).
+        runCatching { HiddenApi.setDisplayImePolicy(entry.id, DISPLAY_IME_POLICY_HIDE) }
+        // When the display goes away with an app still on it, the app ends with it instead of landing on the phone's
+        // own screen in front of the user (by default it moves there).
+        runCatching { HiddenApi.setRemoveContentMode(entry.id, REMOVE_CONTENT_MODE_DESTROY) }
         // Keep the newest frame; the surface only produces one when something changes on screen.
         reader.setOnImageAvailableListener({ r -> r.acquireLatestImage()?.use { entry.lastFrame = toBitmap(it, width, height) } }, main)
         displays[entry.id] = entry
@@ -99,5 +105,9 @@ internal class VirtualDisplays {
 
         // OWN_FOCUS | DEVICE_DISPLAY_GROUP (API 34+, always present on Android 16): apps on the display keep input focus independently of the main screen.
         const val FLAGS_API_34 = (1 shl 14) or (1 shl 15)
+
+        // WindowManager.DISPLAY_IME_POLICY_HIDE, WindowManager.REMOVE_CONTENT_MODE_DESTROY (both @hide).
+        const val DISPLAY_IME_POLICY_HIDE = 2
+        const val REMOVE_CONTENT_MODE_DESTROY = 2
     }
 }

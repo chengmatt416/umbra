@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -87,6 +89,9 @@ fun TerminalsScreen(sessionId: String? = null, cwd: String? = null, embedded: Bo
     LaunchedEffect(Unit) { runCatching { container.terminals.reconcile() } }
 
     val focused = list.firstOrNull { it.record.id == open } ?: list.firstOrNull { it.status == TerminalStatus.ATTACHED }?.takeIf { embedded && open == null }
+    // While the keyboard is up the terminal gets the room: the title, the terminal chips and the notes fold away.
+    @OptIn(ExperimentalLayoutApi::class)
+    val typing = WindowInsets.isImeVisible && focused != null
     Column(
         Modifier.fillMaxSize()
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
@@ -114,12 +119,12 @@ fun TerminalsScreen(sessionId: String? = null, cwd: String? = null, embedded: Bo
             )
             return@Column
         }
-        if (!embedded) {
+        if (!embedded && !typing) {
             Eyebrow(stringResource(R.string.term_eyebrow))
             SerifTitle(stringResource(R.string.dest_terminals), Modifier.padding(top = 6.dp, bottom = 6.dp), size = 26)
         }
         error?.let { Callout(it, Tone.Danger); Gap(6.dp) }
-        app.umbra.agent.ui.porcelain.FadingRow(Modifier.fillMaxWidth()) {
+        if (!typing) app.umbra.agent.ui.porcelain.FadingRow(Modifier.fillMaxWidth()) {
             PButton(stringResource(R.string.term_new), newTerminal, tiny = true, icon = PIcons.plus, enabled = !busy)
             list.forEach { t ->
                 val (label, tone) = statusLabel(t)
@@ -141,7 +146,7 @@ fun TerminalsScreen(sessionId: String? = null, cwd: String? = null, embedded: Bo
             val lease = leases.values.firstOrNull { it.resourceId == t.record.resourceId }
             val mine = lease?.owner == Principal.User && (lease.state == LeaseState.ACTIVE || lease.state == LeaseState.HANDOFF_PENDING)
             var details by remember(t.record.id) { mutableStateOf(false) }
-            OwnershipBar(t, lease, onError = { error = it }, onDetails = { details = true })
+            OwnershipBar(t, lease, onError = { error = it }, onDetails = { details = true }, compact = typing)
             Gap(6.dp)
             TerminalPane(container.terminals, t.record.id, ownsInput = mine && t.status == TerminalStatus.ATTACHED, modifier = Modifier.weight(1f), onFenced = { error = resources.getString(R.string.term_not_sent, it) })
             if (details) TerminalDetailsSheet(t, onClose = { details = false })
@@ -162,7 +167,7 @@ private fun TerminalDetailsSheet(t: TerminalState, onClose: () -> Unit) {
 }
 
 @Composable
-private fun OwnershipBar(t: TerminalState, lease: app.umbra.core.control.InputLease?, onError: (String) -> Unit, onDetails: () -> Unit) {
+private fun OwnershipBar(t: TerminalState, lease: app.umbra.core.control.InputLease?, onError: (String) -> Unit, onDetails: () -> Unit, compact: Boolean = false) {
     val container = LocalContext.current.container
     val scope = rememberCoroutineScope()
     val closeFailed = stringResource(R.string.term_close_failed)
@@ -188,7 +193,7 @@ private fun OwnershipBar(t: TerminalState, lease: app.umbra.core.control.InputLe
         PButton(stringResource(R.string.term_details), onDetails, style = ButtonStyle.Ghost, tiny = true)
         PButton(stringResource(R.string.term_close), { scope.launch { runCatching { container.terminals.close(t.record.id) }.onFailure { onError(it.message ?: closeFailed) } } }, style = ButtonStyle.Ghost, tiny = true)
     }
-    when {
+    if (!compact) when {
         owner == Principal.User -> Subtle(stringResource(R.string.term_you_hold), Modifier.padding(top = 4.dp))
         owner != null && t.status == TerminalStatus.ATTACHED -> Subtle(stringResource(R.string.term_choice_note), Modifier.padding(top = 4.dp))
     }

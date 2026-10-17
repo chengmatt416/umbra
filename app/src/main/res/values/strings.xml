@@ -1610,7 +1610,7 @@
     <string name="nodes_revoke_answered">%1$s answered: it says it has forgotten this phone.</string>
     <string name="nodes_revoke_unreachable">%1$s could not be reached; the revocation stays pending.</string>
     <string name="nodes_record_gone">The record of %1$s is gone; its certificate stays refused (nothing pins it).</string>
-    <string name="nodes_forgotten_here">Forgotten here. Unpair this phone on %1$s too (umbra-node unpair).</string>
+    <string name="nodes_forgotten_here">Forgotten here, but %1$s could not be reached: run umbra-node unpair on it to remove this phone there.</string>
     <string name="nodes_cancelled_there">Cancelled on the node.</string>
     <string name="nodes_job_folder_deleted">The node deleted the job\'s folder.</string>
     <string name="nodes_pairing">Pairing</string>
@@ -1867,4 +1867,8 @@
     <string name="tint_teal">Teal</string>
     <string name="tint_graphite">Graphite</string>
     <string name="app_motion_apple">Moving light</string>
+    <string name="nodes_unpair_title">Unpair %1$s?</string>
+    <string name="nodes_unpair_body">This phone forgets %1$s and asks it to forget this phone too. Jobs already running there end when their leases run out. To use it again, pair it again with a new code.</string>
+    <string name="nodes_unpairing">Unpairing %1$s</string>
+    <string name="nodes_unpaired_both">%1$s is unpaired: this phone forgot it, and it forgot this phone.</string>
 </resources>

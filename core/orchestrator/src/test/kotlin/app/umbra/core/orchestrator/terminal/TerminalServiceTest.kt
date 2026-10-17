@@ -72,6 +72,22 @@ class TerminalServiceTest {
     }
 
     @Test
+    fun deletingASessionClosesItsTerminalsAndNoOthers(): Unit = runBlocking {
+        val (svc, _, _) = service()
+        val mine = svc.open("session shell", dir.toString(), shell, group, sessionId = "s-del")
+        val also = svc.open("session shell 2", dir.toString(), shell, group, sessionId = "s-del")
+        val other = svc.open("someone else's", dir.toString(), shell, group, sessionId = "s-keep")
+        val free = svc.open("Linux shell", dir.toString(), shell, group)
+        svc.closeSession("s-del")
+        val left = svc.terminals.value.map { it.record.id }.toSet()
+        assertTrue(mine.id !in left && also.id !in left, "the deleted session's terminals are closed")
+        assertEquals(setOf(other.id, free.id), left, "other sessions' terminals and free terminals stay")
+        fun alive(id: String) = ProcessBuilder(tmux, "-L", "umbra-$group", "has-session", "-t", id).start().waitFor() == 0
+        assertTrue(!alive(mine.id) && !alive(also.id), "their tmux sessions are gone too, not only the app's records")
+        assertTrue(alive(other.id) && alive(free.id))
+    }
+
+    @Test
     fun takingControlFencesTheAgentImmediatelyAndReturningItRestoresIt(): Unit = runBlocking {
         val (svc, leases, _) = service()
         val agent = Principal.agent("s-1")

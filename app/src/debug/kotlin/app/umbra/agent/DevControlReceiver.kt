@@ -20,9 +20,9 @@ class DevControlReceiver : BroadcastReceiver() {
         val container = context.container
         when (intent.action) {
             ACTION_START -> {
-                val bridge = bridge(container)
-                val port = bridge.start(intent.getStringExtra("token"), intent.getIntExtra("port", 0))
-                setResult(0, port.toString(), null)
+                // A port that is taken is an answer for the script, not a reason to take the whole app down.
+                val port = runCatching { bridge(container).start(intent.getStringExtra("token"), intent.getIntExtra("port", 0)) }
+                port.onSuccess { setResult(0, it.toString(), null) }.onFailure { setResult(1, "failed: ${it.message}", null) }
             }
             ACTION_STOP -> {
                 bridge(container).stop()

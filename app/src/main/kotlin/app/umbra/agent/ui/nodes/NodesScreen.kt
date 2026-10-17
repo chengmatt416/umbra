@@ -91,6 +91,7 @@ fun NodesScreen() {
     var pairing by remember { mutableStateOf(false) }
     var running by remember { mutableStateOf<PairedNode?>(null) }
     var revoking by remember { mutableStateOf<PairedNode?>(null) }
+    var unpairing by remember { mutableStateOf<PairedNode?>(null) }
     var redispatching by remember { mutableStateOf<NodeJob?>(null) }
 
     fun act(label: String, block: suspend () -> String) {
@@ -134,7 +135,7 @@ fun NodesScreen() {
                 } else {
                     n.info?.let { i -> Subtle(stringResource(R.string.nodes_info, i.os, i.arch, i.cpus, i.memoryMb / 1024), Modifier.padding(top = 2.dp)) }
                     Gap(6.dp)
-                    Segmented(NodeTrust.entries.map { it to trustLabel(it) }, n.trust, { t -> container.nodes.setTrust(n.id, t) }, fill = true)
+                    Segmented(NodeTrust.entries.map { it to trustLabel(it) }, n.trust, { t -> container.nodes.setTrust(n.id, t); message = null }, fill = true)
                     FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         PButton(stringResource(R.string.nodes_run), { running = n }, tiny = true)
                         PButton(stringResource(R.string.nodes_preflight), { act(resources.getString(R.string.busy_working)) { container.nodeConnections.preflight(n.id).let { resources.getString(R.string.nodes_preflight_result, n.name, it.os, it.cpus, it.tools.keys.joinToString()) } } }, style = ButtonStyle.Alt, tiny = true)
@@ -147,7 +148,7 @@ fun NodesScreen() {
                         }
                         Text("${n.host}:${n.port} · ${shortFingerprint(n.fingerprint)}", Modifier.padding(top = 4.dp), fontSize = 11.sp, fontFamily = P.mono, color = P.sub)
                         Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            PButton(stringResource(R.string.nodes_unpair), { container.nodeConnections.disconnect(n.id); container.nodes.unpair(n.id); message = resources.getString(R.string.nodes_forgotten_here, n.name) }, style = ButtonStyle.Ghost, tiny = true)
+                            PButton(stringResource(R.string.nodes_unpair), { unpairing = n }, style = ButtonStyle.Ghost, tiny = true)
                             PButton(stringResource(R.string.nodes_revoke), { revoking = n }, style = ButtonStyle.Ghost, tiny = true)
                         }
                     }
@@ -243,6 +244,21 @@ fun NodesScreen() {
                 }) { Text(stringResource(R.string.np_pair)) }
             },
             dismissButton = { TextButton(onClick = { pairing = false }) { Text(stringResource(R.string.np_cancel)) } },
+        )
+    }
+    unpairing?.let { n ->
+        app.umbra.agent.ui.porcelain.PConfirm(
+            title = stringResource(R.string.nodes_unpair_title, n.name),
+            body = stringResource(R.string.nodes_unpair_body, n.name),
+            confirmLabel = stringResource(R.string.nodes_unpair),
+            onDismiss = { unpairing = null },
+            onConfirm = {
+                unpairing = null
+                act(resources.getString(R.string.nodes_unpairing, n.name)) {
+                    if (container.nodeConnections.unpair(n.id)) resources.getString(R.string.nodes_unpaired_both, n.name)
+                    else resources.getString(R.string.nodes_forgotten_here, n.name)
+                }
+            },
         )
     }
     revoking?.let { n ->

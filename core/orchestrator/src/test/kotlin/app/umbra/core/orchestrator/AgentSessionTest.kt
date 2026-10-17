@@ -309,6 +309,21 @@ class AgentSessionTest {
     }
 
     @Test
+    fun aDeletionFinishesEvenWhenItsCallerIsCancelled() {
+        val model = ScriptedModel { ScriptedModel.text("done") }
+        withRig(model) {
+            val s = supervisor.launch("to be deleted")
+            awaitState(s.id, SessionState.COMPLETED)
+            // The screen that asked for it goes away while the deletion runs (as the session's own page does).
+            val caller = scope.launch { supervisor.delete(s.id) }
+            withTimeout(10_000) { while (store.get(s.id) != null) delay(10) }
+            caller.cancel()
+            withTimeout(10_000) { while (s.id !in deleted) delay(20) }
+            assertEquals(null, store.get(s.id))
+        }
+    }
+
+    @Test
     fun deleteAllRemovesEveryTaskWithItsTimeline() {
         val model = ScriptedModel { ScriptedModel.text("done") }
         withRig(model) {

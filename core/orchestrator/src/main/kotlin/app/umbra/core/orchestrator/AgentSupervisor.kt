@@ -16,6 +16,8 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
 
 /** Raised when the device cannot take another running session right now (spec §30). */
 class CapacityException(message: String) : IllegalStateException(message)
@@ -364,12 +366,17 @@ class AgentSupervisor(
             }
         } ?: throw app.umbra.core.session.SessionNotFoundException(sessionId)
 
-    /** Stops the session and deletes it with its timeline and its private files. */
-    suspend fun delete(sessionId: String) {
+    /**
+     * Stops the session and deletes it with its timeline and its private files. Once begun it finishes: a caller
+     * that goes away halfway (a screen showing the session it deletes) would otherwise leave its terminals running.
+     */
+    suspend fun delete(sessionId: String) = withContext(NonCancellable) {
         stop(sessionId, "deleted")
         deps.store.get(sessionId)?.workspaceId?.let { runCatching { deps.workspaces.detachSession(it, sessionId) } }
         runCatching { deps.conversations.delete(sessionId) }
         deps.store.delete(sessionId)
+        runCatching { deps.onDeleted(sessionId) }
+        Unit
     }
 
     /**
