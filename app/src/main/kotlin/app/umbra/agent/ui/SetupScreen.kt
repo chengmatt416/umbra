@@ -1,5 +1,6 @@
 package app.umbra.agent.ui
 
+import app.umbra.agent.ui.porcelain.pc
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -174,10 +175,10 @@ private fun StepCard(number: Int, row: CapabilityRow, onAction: (CapabilityActio
     PCard(style = if (done) CardStyle.Soft else CardStyle.Ceramic) {
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(
-                Modifier.size(28.dp).clip(CircleShape).background(if (done) Color(0xFFE5F0DF) else Color(0xFFDCEBD6)).border(1.dp, if (done) Color(0xFFB6CCB0) else Color(0xFF82A185), CircleShape),
+                Modifier.size(28.dp).clip(CircleShape).background(if (done) pc(0xFFE5F0DF) else pc(0xFFDCEBD6)).border(1.dp, if (done) pc(0xFFB6CCB0) else pc(0xFF82A185), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                if (done) PIcon(PIcons.check, size = 14.dp, tint = Color(0xFF57835A))
+                if (done) PIcon(PIcons.check, size = 14.dp, tint = pc(0xFF57835A))
                 else Text("$number", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = P.accent2)
             }
             Column(Modifier.weight(1f)) {
@@ -229,7 +230,7 @@ private fun RestrictedSteps(restriction: Restriction) {
 @Composable
 private fun StepLine(n: Int, text: String, action: @Composable () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Box(Modifier.size(22.dp).clip(CircleShape).background(Color(0xFFE6EFE1)), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(22.dp).clip(CircleShape).background(pc(0xFFE6EFE1)), contentAlignment = Alignment.Center) {
             Text("$n", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = P.accent2)
         }
         Text(text, Modifier.weight(1f), fontSize = 13.sp, lineHeight = 18.sp, color = P.ink)

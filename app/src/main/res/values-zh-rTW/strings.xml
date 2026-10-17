@@ -1769,4 +1769,63 @@
     <string name="upd_notif_done_body">點一下即可開啟。</string>
     <string name="upd_err_offline">無法連線到更新網站，Umbra 稍後會再試。</string>
     <string name="upd_err_no_manifest">更新網站目前沒有可用的版本資訊，Umbra 稍後會再試。</string>
+
+    <!-- Appearance (themes) -->
+    <string name="dest_appearance">外觀</string>
+    <string name="theme_porcelain">瓷釉</string>
+    <string name="theme_porcelain_body">原本的灰綠瓷釉。</string>
+    <string name="theme_liquid">流體</string>
+    <string name="theme_liquid_body">流動的色彩與玻璃，顏色由你決定。</string>
+    <string name="app_headline_sans">讓它</string>
+    <string name="app_headline_serif">屬於你。</string>
+    <string name="app_intro">選擇 Umbra 的外觀。變更會流過每個畫面，包括膠囊。</string>
+    <string name="app_color">顏色</string>
+    <string name="app_color_body">選一滴顏色，或滑動挑選任何色相。</string>
+    <string name="app_custom_hue">自訂色相</string>
+    <string name="app_hue_value">%1$s · %2$d°</string>
+    <string name="app_custom">自訂</string>
+    <string name="app_mode">淺色或深色</string>
+    <string name="app_mode_light">淺色</string>
+    <string name="app_mode_dark">深色</string>
+    <string name="app_mode_system">跟隨手機</string>
+    <string name="app_motion">流動背景</string>
+    <string name="app_motion_body">背景會緩慢流動。關閉時保持靜止；省電模式與 Android 的「移除動畫」也會讓它靜止。</string>
+    <string name="app_try">試試手感</string>
+    <string name="app_try_body">按壓、切換、滑動：每個控制項都像一滴液體般回應。</string>
+    <string name="app_try_press">按我</string>
+    <string name="app_try_glass">玻璃</string>
+    <string name="app_try_soft">柔和</string>
+    <string name="app_try_toggle">開關</string>
+    <string name="app_try_one">一</string>
+    <string name="app_try_two">二</string>
+    <string name="app_try_three">三</string>
+    <string name="app_porcelain_note">瓷釉保留原本設計的配色。選擇「流體」或「Apple」即可自訂顏色。</string>
+    <string name="hue_lagoon">潟湖</string>
+    <string name="hue_ocean">海洋</string>
+    <string name="hue_iris">鳶尾</string>
+    <string name="hue_orchid">蘭花</string>
+    <string name="hue_rose">玫瑰</string>
+    <string name="hue_ember">餘燼</string>
+    <string name="hue_amber">琥珀</string>
+    <string name="hue_jade">翡翠</string>
+
+    <!-- Appearance: the Apple theme -->
+    <string name="theme_apple">Apple</string>
+    <string name="theme_apple_body">iOS 的色彩、字體與動態，搭配液態玻璃。</string>
+    <string name="app_tint">強調色</string>
+    <string name="app_tint_body">按鈕、開關與選取狀態使用的系統顏色。</string>
+    <string name="app_glass">液態玻璃</string>
+    <string name="app_glass_body">工具列、按鈕、開關與側邊欄會變成玻璃：折射並照亮下方的內容、跟隨手指，並以彈簧收合。關閉時使用 iOS 經典的不透明材質。</string>
+    <string name="app_glass_reduced">Android 的高對比文字已開啟，為了易讀，玻璃會以實心材質呈現。</string>
+    <string name="app_motion_body_apple">玻璃上的光線會隨手機傾斜而移動。關閉時保持靜止；省電模式與 Android 的「移除動畫」也會讓它靜止。</string>
+    <string name="tint_blue">藍色</string>
+    <string name="tint_indigo">靛藍</string>
+    <string name="tint_purple">紫色</string>
+    <string name="tint_pink">粉紅</string>
+    <string name="tint_red">紅色</string>
+    <string name="tint_orange">橙色</string>
+    <string name="tint_green">綠色</string>
+    <string name="tint_teal">藍綠</string>
+    <string name="tint_graphite">石墨</string>
+    <string name="app_motion_apple">動態光線</string>
 </resources>

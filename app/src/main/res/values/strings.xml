@@ -1808,4 +1808,63 @@
     <string name="upd_notif_done_body">Tap to open.</string>
     <string name="upd_err_offline">the update site could not be reached. Umbra tries again later.</string>
     <string name="upd_err_no_manifest">the update site has no usable version information right now. Umbra tries again later.</string>
+
+    <!-- Appearance (themes) -->
+    <string name="dest_appearance">Appearance</string>
+    <string name="theme_porcelain">Porcelain</string>
+    <string name="theme_porcelain_body">The original grey-green glaze.</string>
+    <string name="theme_liquid">Liquid</string>
+    <string name="theme_liquid_body">Living colour and glass, in your hue.</string>
+    <string name="app_headline_sans">Make it</string>
+    <string name="app_headline_serif">yours.</string>
+    <string name="app_intro">Choose how Umbra looks. A change pours over every screen, the Capsule included.</string>
+    <string name="app_color">Colour</string>
+    <string name="app_color_body">Pick a drop, or slide to any hue.</string>
+    <string name="app_custom_hue">Custom hue</string>
+    <string name="app_hue_value">%1$s · %2$d°</string>
+    <string name="app_custom">Custom</string>
+    <string name="app_mode">Light or dark</string>
+    <string name="app_mode_light">Light</string>
+    <string name="app_mode_dark">Dark</string>
+    <string name="app_mode_system">Follow phone</string>
+    <string name="app_motion">Living background</string>
+    <string name="app_motion_body">The backdrop drifts slowly. Off, it holds still; battery saver and Android’s “Remove animations” also still it.</string>
+    <string name="app_try">Try the feel</string>
+    <string name="app_try_body">Press, toggle and slide: every control answers like a drop of liquid.</string>
+    <string name="app_try_press">Press me</string>
+    <string name="app_try_glass">Glass</string>
+    <string name="app_try_soft">Soft</string>
+    <string name="app_try_toggle">A switch</string>
+    <string name="app_try_one">One</string>
+    <string name="app_try_two">Two</string>
+    <string name="app_try_three">Three</string>
+    <string name="app_porcelain_note">Porcelain keeps its designed palette. Choose Liquid or Apple to pick your own colour.</string>
+    <string name="hue_lagoon">Lagoon</string>
+    <string name="hue_ocean">Ocean</string>
+    <string name="hue_iris">Iris</string>
+    <string name="hue_orchid">Orchid</string>
+    <string name="hue_rose">Rose</string>
+    <string name="hue_ember">Ember</string>
+    <string name="hue_amber">Amber</string>
+    <string name="hue_jade">Jade</string>
+
+    <!-- Appearance: the Apple theme -->
+    <string name="theme_apple">Apple</string>
+    <string name="theme_apple_body">iOS colours, type and motion, with Liquid Glass.</string>
+    <string name="app_tint">Tint</string>
+    <string name="app_tint_body">The system colour buttons, switches and selections take.</string>
+    <string name="app_glass">Liquid Glass</string>
+    <string name="app_glass_body">Bars, buttons, switches and the sidebar become glass: they bend and light what is under them, follow your finger and settle on springs. Off, they use iOS’s classic opaque materials.</string>
+    <string name="app_glass_reduced">Android’s high-contrast text is on, so glass is drawn as solid materials for legibility.</string>
+    <string name="app_motion_body_apple">The light on the glass follows the tilt of the phone. Off, it holds still; battery saver and Android’s “Remove animations” also still it.</string>
+    <string name="tint_blue">Blue</string>
+    <string name="tint_indigo">Indigo</string>
+    <string name="tint_purple">Purple</string>
+    <string name="tint_pink">Pink</string>
+    <string name="tint_red">Red</string>
+    <string name="tint_orange">Orange</string>
+    <string name="tint_green">Green</string>
+    <string name="tint_teal">Teal</string>
+    <string name="tint_graphite">Graphite</string>
+    <string name="app_motion_apple">Moving light</string>
 </resources>

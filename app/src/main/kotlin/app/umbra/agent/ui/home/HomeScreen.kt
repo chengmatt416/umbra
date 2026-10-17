@@ -1,5 +1,7 @@
 package app.umbra.agent.ui.home
 
+import app.umbra.agent.ui.porcelain.pc
+import app.umbra.agent.ui.porcelain.pcHue
 import app.umbra.agent.ui.sessionsFlow
 import android.app.Activity
 import android.content.Intent
@@ -111,8 +113,8 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: ()
         Row(Modifier.fillMaxWidth().height(150.dp), verticalAlignment = Alignment.Bottom) {
             Column(Modifier.weight(1f).padding(bottom = 18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(Modifier.size(7.dp).clip(androidx.compose.foundation.shape.CircleShape).background(if (working) P.accent else Color(0xFFA9BAA6)))
-                    Text(stringResource(if (working) R.string.home_working else R.string.home_rest), fontSize = 12.sp, letterSpacing = 0.4.sp, color = Color(0xFF73886F))
+                    Box(Modifier.size(7.dp).clip(androidx.compose.foundation.shape.CircleShape).background(if (working) P.accent else pc(0xFFA9BAA6)))
+                    Text(stringResource(if (working) R.string.home_working else R.string.home_rest), fontSize = 12.sp, letterSpacing = 0.4.sp, color = pc(0xFF73886F))
                 }
             }
             FoldedOrb(Modifier.fillMaxHeight().aspectRatio(1.15f), working = working)
@@ -205,7 +207,7 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: ()
                 PObject(s.title, stateText(s), PIcons.bot, onClick = { onOpenSession(s.id) })
             }
         }
-        Gap(28.dp)
+        Gap(28.dp + app.umbra.agent.ui.shell.LocalChromeBottom.current)
     }
 }
 
@@ -238,14 +240,14 @@ fun SmartComposer(
     }
     val shape = RoundedCornerShape(21.dp)
     Column(
-        Modifier.fillMaxWidth().shadow(8.dp, shape, ambientColor = Color(0x22455F49), spotColor = Color(0x33455F49)).clip(shape)
-            .background(Color(0xFFF7FAF4)).border(1.dp, Color(0xB5FFFFFF), shape).padding(horizontal = 12.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().shadow(8.dp, shape, ambientColor = pcHue(0x22455F49), spotColor = pcHue(0x33455F49)).clip(shape)
+            .background(pc(0xFFF7FAF4)).border(1.dp, pc(0xB5FFFFFF), shape).padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         // The same context the Capsule's composers hold (§3.1): a screen selection made over another app shows here too.
         chips.forEach { chip -> app.umbra.agent.capsule.ChipRow(chip) { container.ui.removeContext(chip.id) } }
         if (chips.isNotEmpty()) Gap(8.dp)
         Box(Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
-            if (draft.isEmpty()) Text(stringResource(R.string.composer_hint), fontSize = 15.sp, color = Color(0xFF9AAA98))
+            if (draft.isEmpty()) Text(stringResource(R.string.composer_hint), fontSize = 15.sp, color = pc(0xFF9AAA98))
             val messageLabel = stringResource(R.string.cap_message)
             BasicTextField(
                 draft,

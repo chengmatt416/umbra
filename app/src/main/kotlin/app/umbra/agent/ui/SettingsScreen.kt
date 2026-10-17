@@ -66,7 +66,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit, onModels: () -> Unit, onSetup: () -> Unit, onApprovalHistory: () -> Unit, onDiagnostics: () -> Unit,
-    onWorkspaces: () -> Unit, onProcesses: () -> Unit, onDisplays: () -> Unit,
+    onWorkspaces: () -> Unit, onProcesses: () -> Unit, onDisplays: () -> Unit, onAppearance: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val resources = androidx.compose.ui.platform.LocalResources.current
@@ -87,6 +87,7 @@ fun SettingsScreen(
                 PLink(stringResource(R.string.dest_processes), stringResource(R.string.set_processes_summary), icon = PIcons.activity, onClick = onProcesses)
                 PLink(stringResource(R.string.dest_displays), stringResource(R.string.set_displays_summary), icon = PIcons.monitor, onClick = onDisplays)
                 PLink(stringResource(R.string.dest_diagnostics), stringResource(R.string.set_diagnostics_summary), icon = PIcons.info, onClick = onDiagnostics)
+                PLink(stringResource(R.string.dest_appearance), stringResource(when (prefs.theme.style) { app.umbra.agent.data.ThemeStyle.LIQUID -> R.string.theme_liquid; app.umbra.agent.data.ThemeStyle.APPLE -> R.string.theme_apple; else -> R.string.theme_porcelain }), icon = PIcons.drop, onClick = onAppearance)
                 PLink(stringResource(R.string.set_language), stringResource(R.string.set_language_body), icon = PIcons.book, divider = false) {
                     runCatching { context.startActivity(Intent(Settings.ACTION_APP_LOCALE_SETTINGS, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                 }

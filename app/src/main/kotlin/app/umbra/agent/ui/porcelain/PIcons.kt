@@ -66,6 +66,7 @@ object PIcons {
 
     // Added with the UX fixes, drawn on the same 24-unit grid and stroke as the reference set.
     val folder = IconSpec(listOf("M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2.2h8.4a1.5 1.5 0 0 1 1.5 1.5v9.8a1.5 1.5 0 0 1 -1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" to false))
+    val drop = IconSpec(listOf("M12 2.8c3.6 4.2 6.5 7.9 6.5 11.4a6.5 6.5 0 0 1 -13 0c0 -3.5 2.9 -7.2 6.5 -11.4z" to true, "M9.2 14.6a2.9 2.9 0 0 0 2.6 2.7" to false))
     val trash = IconSpec(listOf("M4 7h16M9 7V4.5h6V7" to false, "m6.5 7 1 12.6a1.5 1.5 0 0 0 1.5 1.4h6a1.5 1.5 0 0 0 1.5 -1.4L17.5 7" to false, "M10 11v6m4-6v6" to false))
     val chevronRight = IconSpec(listOf("m9 6 6 6-6 6" to false))
 }

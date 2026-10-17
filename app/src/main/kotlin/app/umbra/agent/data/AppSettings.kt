@@ -61,6 +61,34 @@ data class AppPrefs(
     val autoUpdate: Boolean = true,
     /** Download updates (several hundred MB) only on an unmetered network; a check the user starts uses any. */
     val updateOnWifiOnly: Boolean = true,
+    /** How the app looks: Porcelain (the original glaze) or Liquid (a living backdrop in a colour the user picks). */
+    val theme: ThemePrefs = ThemePrefs(),
+)
+
+@Serializable
+enum class ThemeStyle { PORCELAIN, LIQUID, APPLE }
+
+/** The Apple theme's tint: the system colours iOS offers as accents. */
+@Serializable
+enum class AppleAccent { BLUE, INDIGO, PURPLE, PINK, RED, ORANGE, GREEN, TEAL, GRAPHITE }
+
+@Serializable
+enum class ThemeAppearance { LIGHT, DARK, SYSTEM }
+
+/**
+ * The look the user chose in Appearance. [hue] is Liquid's colour, [appleAccent] and [appleGlass] are the Apple
+ * theme's tint and its Liquid Glass switch; [appearance] (light, dark, follow phone) applies to both.
+ */
+@Serializable
+data class ThemePrefs(
+    val style: ThemeStyle = ThemeStyle.PORCELAIN,
+    val hue: Float = 204f,
+    val appearance: ThemeAppearance = ThemeAppearance.LIGHT,
+    /** Liquid's backdrop flows; off, it holds still (the system's "remove animations" also stills it). */
+    val motion: Boolean = true,
+    val appleAccent: AppleAccent = AppleAccent.BLUE,
+    /** Apple: controls, bars and sheets are Liquid Glass (refraction, rim light, interactive); off, the classic materials. */
+    val appleGlass: Boolean = true,
 )
 
 object ProviderPresets {

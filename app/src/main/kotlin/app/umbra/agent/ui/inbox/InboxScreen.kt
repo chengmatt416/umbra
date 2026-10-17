@@ -44,7 +44,7 @@ fun InboxScreen(onOpenSession: (String) -> Unit, onHistory: () -> Unit) {
         )
         return
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp, 4.dp, 18.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp, 4.dp, 18.dp, 28.dp + app.umbra.agent.ui.shell.LocalChromeBottom.current), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Eyebrow(stringResource(R.string.inbox_eyebrow))
             SerifTitle(stringResource(R.string.inbox_title), Modifier.padding(top = 8.dp), size = 28)

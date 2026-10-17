@@ -1,5 +1,6 @@
 package app.umbra.agent.ui
 
+import app.umbra.agent.ui.porcelain.pc
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
@@ -70,7 +71,7 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier, color: Color = Mat
 @Composable
 private fun MarkdownTable(table: MarkdownParser.Block.Table, color: Color, inlineCode: Color) {
     val columns = maxOf(table.header.size, table.rows.maxOfOrNull { it.size } ?: 0)
-    Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(Color(0x66F2F6EF), RoundedCornerShape(10.dp)).padding(vertical = 4.dp)) {
+    Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(pc(0x66F2F6EF), RoundedCornerShape(10.dp)).padding(vertical = 4.dp)) {
         (listOf(table.header) + table.rows).forEachIndexed { r, cells ->
             Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
                 for (c in 0 until columns) {

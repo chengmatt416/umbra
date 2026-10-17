@@ -10,6 +10,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.umbra.agent.ui.porcelain.PorcelainTheme
+import app.umbra.agent.ui.porcelain.Theme
+import app.umbra.agent.ui.porcelain.ThemeRevealHost
 import app.umbra.agent.ui.shell.PorcelainApp
 
 class MainActivity : ComponentActivity() {
@@ -28,7 +30,15 @@ class MainActivity : ComponentActivity() {
         installUpdateIfAsked(intent)
         setContent {
             PorcelainTheme {
-                PorcelainApp(openSession = requestedSession, openPage = requestedPage, onOpened = { requestedSession = null; requestedPage = null })
+                // Light glazes take dark status and navigation icons; Liquid's dark glass takes light ones.
+                val dark = Theme.dark
+                androidx.compose.runtime.LaunchedEffect(dark) {
+                    val bars = if (dark) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT) else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                    enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                }
+                ThemeRevealHost {
+                    PorcelainApp(openSession = requestedSession, openPage = requestedPage, onOpened = { requestedSession = null; requestedPage = null })
+                }
             }
         }
     }

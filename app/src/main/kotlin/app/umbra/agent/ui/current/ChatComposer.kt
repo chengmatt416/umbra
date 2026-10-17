@@ -1,5 +1,7 @@
 package app.umbra.agent.ui.current
 
+import app.umbra.agent.ui.porcelain.pc
+import app.umbra.agent.ui.porcelain.pcHue
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -105,10 +107,10 @@ fun ChatComposer(
     if (field.text != text) field = androidx.compose.ui.text.input.TextFieldValue(text, androidx.compose.ui.text.TextRange(text.length))
     val takesImages = conversation.session?.model?.takesImages ?: true
 
-    Column(Modifier.fillMaxWidth().background(Color(0xF0E9EDE5)).padding(horizontal = 12.dp, vertical = 8.dp)) {
+    Column(Modifier.fillMaxWidth().background(pc(0xF0E9EDE5)).padding(horizontal = 12.dp, vertical = 8.dp)) {
         // Extension widgets above the editor, then the queue.
         conversation.widgets.values.filter { it.aboveEditor }.forEach { w ->
-            Text(w.lines.joinToString("\n"), Modifier.fillMaxWidth().padding(bottom = 6.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99E3EDE0)).padding(8.dp), fontSize = 11.sp, fontFamily = P.mono, color = P.sub)
+            Text(w.lines.joinToString("\n"), Modifier.fillMaxWidth().padding(bottom = 6.dp).clip(RoundedCornerShape(10.dp)).background(pc(0x99E3EDE0)).padding(8.dp), fontSize = 11.sp, fontFamily = P.mono, color = P.sub)
         }
         if (conversation.queuedSteering.isNotEmpty() || conversation.queuedFollowUp.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -119,7 +121,7 @@ fun ChatComposer(
 
         val palette = paletteFor(text, conversation.commands)
         if (palette.isNotEmpty()) {
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 240.dp).padding(bottom = 6.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFF7FAF4)).border(1.dp, Color(0x6EBFD1BB), RoundedCornerShape(14.dp))) {
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 240.dp).padding(bottom = 6.dp).clip(RoundedCornerShape(14.dp)).background(pc(0xFFF7FAF4)).border(1.dp, pc(0x6EBFD1BB), RoundedCornerShape(14.dp))) {
                 items(palette, key = { it.first }) { (insert, label, hint) ->
                     Column(Modifier.fillMaxWidth().clickable { onText(insert) }.padding(horizontal = 12.dp, vertical = 8.dp)) {
                         Text(label, fontSize = 13.sp, fontFamily = P.mono, fontWeight = FontWeight.SemiBold, color = P.ink)
@@ -134,7 +136,7 @@ fun ChatComposer(
                 images.forEachIndexed { i, img ->
                     Box {
                         Base64Picture(img.base64, 64)
-                        Box(Modifier.align(Alignment.TopEnd).clip(RoundedCornerShape(8.dp)).background(Color(0xCC26372F)).clickable { images.removeAt(i) }.padding(3.dp)) {
+                        Box(Modifier.align(Alignment.TopEnd).clip(RoundedCornerShape(8.dp)).background(pcHue(0xCC26372F)).clickable { images.removeAt(i) }.padding(3.dp)) {
                             PIcon(PIcons.close, size = 12.dp, tint = Color.White)
                         }
                     }
@@ -144,7 +146,7 @@ fun ChatComposer(
         }
 
         val shape = RoundedCornerShape(20.dp)
-        Column(Modifier.fillMaxWidth().clip(shape).background(Color(0xFFF7FAF4)).border(1.dp, Color(0xB5FFFFFF), shape).padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(Modifier.fillMaxWidth().clip(shape).background(pc(0xFFF7FAF4)).border(1.dp, pc(0xB5FFFFFF), shape).padding(horizontal = 12.dp, vertical = 8.dp)) {
             Box(Modifier.fillMaxWidth().heightIn(min = 40.dp)) {
                 if (text.isEmpty()) Text(
                     stringResource(when {
@@ -152,7 +154,7 @@ fun ChatComposer(
                         paused -> R.string.comp_hint_paused
                         else -> R.string.comp_hint
                     }),
-                    fontSize = 15.sp, color = Color(0xFF9AAA98),
+                    fontSize = 15.sp, color = pc(0xFF9AAA98),
                 )
                 val messageLabel = stringResource(R.string.cap_message)
                 BasicTextField(field, { v -> field = v; if (v.text != text) onText(v.text) }, Modifier.fillMaxWidth().semantics { contentDescription = messageLabel }, textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = P.ink, fontFamily = if (text.startsWith("!")) P.mono else null), cursorBrush = SolidColor(P.accent2), maxLines = 8)
@@ -202,13 +204,13 @@ fun ChatComposer(
 @Composable
 private fun QueueChip(kind: String, text: String, onRemove: () -> Unit, onPromote: (() -> Unit)? = null) {
     Row(
-        Modifier.clip(RoundedCornerShape(50)).background(Color(0xFFF1E9DE)).border(1.dp, Color(0xFFE1CBAC), RoundedCornerShape(50)).padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+        Modifier.clip(RoundedCornerShape(50)).background(pc(0xFFF1E9DE)).border(1.dp, pc(0xFFE1CBAC), RoundedCornerShape(50)).padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("$kind: ", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF956F44))
-        Text(text.take(40), fontSize = 11.sp, color = Color(0xFF956F44), maxLines = 1)
-        if (onPromote != null) Box(Modifier.padding(start = 6.dp).clip(RoundedCornerShape(50)).clickable(onClickLabel = stringResource(R.string.comp_send_now), onClick = onPromote).padding(4.dp)) { PIcon(PIcons.arrowRight, size = 12.dp, tint = Color(0xFF956F44)) }
-        Box(Modifier.clip(RoundedCornerShape(50)).clickable(onClickLabel = stringResource(R.string.comp_take_back), onClick = onRemove).padding(4.dp)) { PIcon(PIcons.close, size = 12.dp, tint = Color(0xFF956F44)) }
+        Text("$kind: ", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = pc(0xFF956F44))
+        Text(text.take(40), fontSize = 11.sp, color = pc(0xFF956F44), maxLines = 1)
+        if (onPromote != null) Box(Modifier.padding(start = 6.dp).clip(RoundedCornerShape(50)).clickable(onClickLabel = stringResource(R.string.comp_send_now), onClick = onPromote).padding(4.dp)) { PIcon(PIcons.arrowRight, size = 12.dp, tint = pc(0xFF956F44)) }
+        Box(Modifier.clip(RoundedCornerShape(50)).clickable(onClickLabel = stringResource(R.string.comp_take_back), onClick = onRemove).padding(4.dp)) { PIcon(PIcons.close, size = 12.dp, tint = pc(0xFF956F44)) }
     }
 }
 

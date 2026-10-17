@@ -1,5 +1,43 @@
 package app.umbra.agent.ui.shell
 
+import app.umbra.agent.ui.porcelain.pc
+import app.umbra.agent.ui.porcelain.GlassKind
+import app.umbra.agent.ui.porcelain.OverlayHost
+import app.umbra.agent.ui.porcelain.OverlayScrim
+import app.umbra.agent.ui.porcelain.GlassHost
+import app.umbra.agent.ui.porcelain.LocalGlassHost
+import app.umbra.agent.ui.porcelain.LiquidLightSource
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import app.umbra.agent.ui.porcelain.GooeyDrop
+import app.umbra.agent.ui.porcelain.LiquidBackdrop
+import app.umbra.agent.ui.porcelain.PageBackdrop
+import app.umbra.agent.ui.porcelain.Theme
+import app.umbra.agent.ui.porcelain.hsl
+import app.umbra.agent.ui.porcelain.jelly
+import app.umbra.agent.ui.porcelain.liquidGlass
+import app.umbra.agent.ui.porcelain.liquidPress
+import app.umbra.agent.ui.porcelain.rememberPress
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.effects.vibrancy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.positionInParent
 import app.umbra.agent.ui.sessionsFlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -105,6 +143,7 @@ enum class Dest(val route: String, @param:StringRes val title: Int, val icon: Ic
     ApprovalHistory("approvals", R.string.dest_approvals, PIcons.check, R.string.group_system),
     Diagnostics("diagnostics", R.string.dest_diagnostics, PIcons.info, R.string.group_system),
     Settings("settings", R.string.dest_settings, PIcons.settings, R.string.group_system),
+    Appearance("appearance", R.string.dest_appearance, PIcons.drop, R.string.group_system),
     Reference("reference", R.string.dest_reference, PIcons.book, R.string.group_system),
 }
 
@@ -151,11 +190,66 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
 
     androidx.activity.compose.BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
     val openEmergency: () -> Unit = { go(Dest.Emergency) }
+    val liquid = Theme.liquid
+    val view = androidx.compose.ui.platform.LocalView.current
+    // Liquid glass refracts the live backdrop: the page's for the pages, the drawer's own for the drawer.
+    val pageGlass = rememberLayerBackdrop()
+    val drawerGlass = rememberLayerBackdrop()
+    // Apple's bars and sidebar refract the pages themselves, recorded live as they scroll
+    val contentGlass = rememberLayerBackdrop()
+    var contentOrigin by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    val apple = Theme.apple
+    val appleGlass = apple && app.umbra.agent.ui.porcelain.appleGlassActive()
+    LiquidLightSource(active = (liquid || appleGlass) && Theme.current.motion && androidx.compose.runtime.remember(Theme.current) { app.umbra.agent.ui.porcelain.motionAllowed(view.context) })
+    // dialogs and sheets are glass in the app's own window: the whole app is recorded live for them to refract
+    val appGlass = rememberLayerBackdrop()
+    val styled = !Theme.current.porcelain
+    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().then(if (styled) Modifier.layerBackdrop(appGlass) else Modifier)) {
+    PageBackdrop(if (liquid) Modifier.layerBackdrop(pageGlass) else Modifier)
+    androidx.compose.runtime.CompositionLocalProvider(LocalGlassHost provides if (liquid) GlassHost(pageGlass, view) else null, LocalPageGlass provides if (liquid) pageGlass else null) {
     ModalNavigationDrawer(
         drawerState = drawer,
         drawerContent = {
-            ModalDrawerSheet(drawerContainerColor = Color(0xFFE6ECE2), drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)) {
-                DrawerContent(current = route, onGo = ::go)
+            val sheetShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)
+            ModalDrawerSheet(
+                drawerContainerColor = when {
+                    liquid || appleGlass -> Color.Transparent
+                    apple -> P.base
+                    else -> pc(0xFFE6ECE2)
+                },
+                drawerShape = sheetShape,
+            ) {
+                if (appleGlass) {
+                    // the sidebar is a sheet of glass over the page it slid across
+                    Box(
+                        Modifier
+                            .fillMaxHeight()
+                            .drawBackdrop(
+                                backdrop = contentGlass,
+                                shape = { sheetShape },
+                                effects = {
+                                    vibrancy()
+                                    blur(18.dp.toPx())
+                                    lens(20.dp.toPx(), 36.dp.toPx())
+                                },
+                                highlight = { app.umbra.agent.ui.porcelain.appleRim() },
+                                shadow = { app.umbra.agent.ui.porcelain.appleShadow(24.dp, if (Theme.dark) 0.45f else 0.16f) },
+                                onDrawSurface = { drawRect(if (Theme.dark) Color.Black.copy(alpha = 0.42f) else Color.White.copy(alpha = 0.56f)) },
+                            ),
+                    ) { DrawerContent(current = route, onGo = ::go) }
+                } else if (liquid) {
+                    Box(Modifier.fillMaxHeight()) {
+                        // flows only while the drawer is out; closed, it holds a still frame
+                        LiquidBackdrop(Modifier.matchParentSize().layerBackdrop(drawerGlass), Theme.current.let { it.copy(motion = it.motion && drawer.currentValue == DrawerValue.Open) }, seed = 40f)
+                        Box(Modifier.matchParentSize().background(if (Theme.dark) Color.Black.copy(alpha = 0.30f) else Color.White.copy(alpha = 0.38f)))
+                        androidx.compose.runtime.CompositionLocalProvider(LocalGlassHost provides GlassHost(drawerGlass, view)) {
+                            DrawerContent(current = route, onGo = ::go)
+                        }
+                    }
+                } else {
+                    DrawerContent(current = route, onGo = ::go)
+                }
             }
         },
     ) {
@@ -163,13 +257,62 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             bottomBar = {
-                if (Dest.entries.any { it.tab && route.startsWith(it.route) }) BottomBar(route, attention, ::go)
+                if (Dest.entries.any { it.tab && route.startsWith(it.route) }) BottomBar(route, attention, ::go, contentGlass) { contentOrigin }
             },
             modifier = Modifier.background(P.page),
         ) { padding ->
-            Box(Modifier.fillMaxSize().background(P.page).padding(padding)) {
-              androidx.compose.runtime.CompositionLocalProvider(LocalOpenEmergency provides openEmergency) {
-                NavHost(nav, startDestination = Dest.Home.route) {
+            // Porcelain keeps its bar beside the pages; Liquid's and Apple's bars float, and the pages scroll under them
+            // (the tab pages pad their own ends by LocalChromeBottom; Current keeps its composer clear of the bar).
+            val floating = !Theme.current.porcelain
+            val barInset = padding.calculateBottomPadding()
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(top = padding.calculateTopPadding())
+                    .padding(bottom = if (!floating || route.startsWith(Dest.Current.route)) barInset else 0.dp)
+                    .then(if (apple) Modifier.layerBackdrop(contentGlass) else Modifier)
+                    .onGloballyPositioned { contentOrigin = it.positionInRoot() }
+                    .background(P.page),
+            ) {
+              androidx.compose.runtime.CompositionLocalProvider(LocalOpenEmergency provides openEmergency, LocalChromeBottom provides if (floating) barInset else 0.dp) {
+                NavHost(
+                    nav, startDestination = Dest.Home.route,
+                    // Liquid pages surface like a drop rising to meet the glass; Porcelain keeps the default cross-fade.
+                    // Apple pushes in from the right and pops back the same way (the page underneath parallaxes a third and
+                    // dims), on a critically damped spring; switching tabs only cross-fades.
+                    enterTransition = {
+                        when {
+                            Theme.apple -> if (tabSwitch(initialState.destination.route, targetState.destination.route)) fadeIn(tween(160)) else slideInHorizontally(appleSlide) { it }
+                            Theme.liquid -> fadeIn(tween(240)) + scaleIn(spring(dampingRatio = 0.72f, stiffness = 420f), initialScale = 0.94f)
+                            tabSwitch(initialState.destination.route, targetState.destination.route) -> fadeIn(tween(180))
+                            else -> fadeIn(tween(700))
+                        }
+                    },
+                    exitTransition = {
+                        when {
+                            Theme.apple -> if (tabSwitch(initialState.destination.route, targetState.destination.route)) fadeOut(tween(120)) else slideOutHorizontally(appleSlide) { -it / 3 } + fadeOut(tween(380), targetAlpha = 0.6f)
+                            Theme.liquid -> fadeOut(tween(160)) + scaleOut(tween(220), targetScale = 1.03f)
+                            tabSwitch(initialState.destination.route, targetState.destination.route) -> fadeOut(tween(120))
+                            else -> fadeOut(tween(700))
+                        }
+                    },
+                    popEnterTransition = {
+                        when {
+                            Theme.apple -> if (tabSwitch(initialState.destination.route, targetState.destination.route)) fadeIn(tween(160)) else slideInHorizontally(appleSlide) { -it / 3 } + fadeIn(tween(380), initialAlpha = 0.6f)
+                            Theme.liquid -> fadeIn(tween(240)) + scaleIn(spring(dampingRatio = 0.72f, stiffness = 420f), initialScale = 1.04f)
+                            tabSwitch(initialState.destination.route, targetState.destination.route) -> fadeIn(tween(180))
+                            else -> fadeIn(tween(700))
+                        }
+                    },
+                    popExitTransition = {
+                        when {
+                            Theme.apple -> if (tabSwitch(initialState.destination.route, targetState.destination.route)) fadeOut(tween(120)) else slideOutHorizontally(appleSlide) { it }
+                            Theme.liquid -> fadeOut(tween(160)) + scaleOut(tween(220), targetScale = 0.94f)
+                            tabSwitch(initialState.destination.route, targetState.destination.route) -> fadeOut(tween(120))
+                            else -> fadeOut(tween(700))
+                        }
+                    },
+                ) {
                     composable(Dest.Home.route) {
                         TabPage(onMenu = { scope.launch { drawer.open() } }) {
                             HomeScreen(onOpenSession = ::openSessionNow, onSetup = { go(Dest.Linux) }, onInbox = { go(Dest.Inbox) })
@@ -227,6 +370,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                     composable(Dest.Processes.route) { ProcessesScreen(onBack = { nav.popBackStack() }) }
                     composable(Dest.ApprovalHistory.route) { ApprovalHistoryScreen(onBack = { nav.popBackStack() }) }
                     composable(Dest.Diagnostics.route) { DiagnosticsScreen(onBack = { nav.popBackStack() }) }
+                    composable(Dest.Appearance.route) { app.umbra.agent.ui.AppearanceScreen(onBack = { nav.popBackStack() }) }
                     composable(Dest.Reference.route) { app.umbra.agent.ui.reference.ReferenceScreen(onBack = { nav.popBackStack() }) }
                     composable(Dest.Settings.route) {
                         SettingsScreen(
@@ -238,12 +382,18 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                             onWorkspaces = { go(Dest.Workspaces) },
                             onProcesses = { go(Dest.Processes) },
                             onDisplays = { go(Dest.Displays) },
+                            onAppearance = { go(Dest.Appearance) },
                         )
                     }
                 }
               }
             }
         }
+    }
+    }
+    OverlayScrim()
+    }
+    if (styled) OverlayHost(appGlass) { androidx.compose.ui.geometry.Offset.Zero }
     }
 }
 
@@ -252,7 +402,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
 fun TabPage(onMenu: () -> Unit, actions: @Composable () -> Unit = {}, content: @Composable () -> Unit) {
     Column(Modifier.fillMaxSize()) {
         AppBar(onMenu, actions)
-        Box(Modifier.weight(1f).fillMaxWidth()) { content() }
+        Box(Modifier.weight(1f).fillMaxWidth().scrollEdge()) { content() }
     }
 }
 
@@ -270,7 +420,8 @@ fun AppBar(onMenu: () -> Unit, actions: @Composable () -> Unit = {}) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BadgeIcon(PIcons.spark, size = 30.dp)
-        Text("Umbra", Modifier.padding(start = 10.dp).weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = P.ink)
+        if (Theme.apple) Text("Umbra", Modifier.padding(start = 10.dp).weight(1f), fontSize = 26.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.6).sp, color = P.ink, fontFamily = P.serif)
+        else Text("Umbra", Modifier.padding(start = 10.dp).weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = P.ink)
         actions()
         Spacer(Modifier.width(8.dp))
         PIconButton(if (locked) PIcons.alert else PIcons.shield, stringResource(R.string.dest_emergency), LocalOpenEmergency.current, size = 36.dp, tint = if (locked) P.danger else P.accent2)
@@ -285,8 +436,8 @@ fun AppBar(onMenu: () -> Unit, actions: @Composable () -> Unit = {}) {
 private fun LockdownBanner() {
     Text(
         androidx.compose.ui.res.stringResource(app.umbra.agent.R.string.lockdown_banner),
-        Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFF4E1DD)).clickable(onClick = LocalOpenEmergency.current).padding(horizontal = 12.dp, vertical = 7.dp),
-        fontSize = 12.sp, color = Color(0xFF97564F), fontWeight = FontWeight.SemiBold,
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(RoundedCornerShape(10.dp)).background(pc(0xFFF4E1DD)).clickable(onClick = LocalOpenEmergency.current).padding(horizontal = 12.dp, vertical = 7.dp),
+        fontSize = 12.sp, color = pc(0xFF97564F), fontWeight = FontWeight.SemiBold,
     )
 }
 
@@ -318,17 +469,29 @@ fun PorcelainPage(title: String, onBack: () -> Unit, actions: @Composable () -> 
             )
         }
         if (locked) LockdownBanner()
-        Box(Modifier.weight(1f).fillMaxWidth()) { content() }
+        Box(Modifier.weight(1f).fillMaxWidth().scrollEdge()) { content() }
     }
 }
 
 @Composable
-private fun BottomBar(route: String, attention: Int, onGo: (Dest) -> Unit) {
+private fun BottomBar(route: String, attention: Int, onGo: (Dest) -> Unit, content: com.kyant.backdrop.backdrops.LayerBackdrop, contentOrigin: () -> androidx.compose.ui.geometry.Offset) {
+    if (Theme.liquid) return LiquidBottomBar(route, attention, onGo, LocalPageGlass.current)
+    if (Theme.apple) {
+        val tabs = Dest.entries.filter { it.tab }
+        val labels = tabs.map { stringResource(it.title) }
+        return app.umbra.agent.ui.porcelain.AppleTabBar(
+            tabs.mapIndexed { i, d -> app.umbra.agent.ui.porcelain.AppleTab(d.icon, labels[i], if (d == Dest.Inbox) attention else 0) },
+            tabs.indexOfFirst { route.startsWith(it.route) }.coerceAtLeast(0),
+            { i -> onGo(tabs[i]) },
+            content,
+            contentOrigin,
+        )
+    }
     Row(
         Modifier
             .fillMaxWidth()
-            .background(Color(0xFFE0E9DF))
-            .border(width = 1.dp, color = Color(0x5CA9B9A7), shape = RoundedCornerShape(0.dp))
+            .background(pc(0xFFE0E9DF))
+            .border(width = 1.dp, color = pc(0x5CA9B9A7), shape = RoundedCornerShape(0.dp))
             .navigationBarsPadding()
             .height(64.dp),
         horizontalArrangement = Arrangement.SpaceAround,
@@ -336,7 +499,7 @@ private fun BottomBar(route: String, attention: Int, onGo: (Dest) -> Unit) {
     ) {
         Dest.entries.filter { it.tab }.forEach { d ->
             val on = route.startsWith(d.route)
-            val color = if (on) Color(0xFF44694B) else Color(0xFF839683)
+            val color = if (on) pc(0xFF44694B) else pc(0xFF839683)
             Column(
                 Modifier.clip(RoundedCornerShape(14.dp)).clickable(role = Role.Tab, onClickLabel = stringResource(d.title)) { onGo(d) }.padding(horizontal = 14.dp, vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -376,20 +539,134 @@ private fun DrawerContent(current: String, onGo: (Dest) -> Unit) {
 @Composable
 private fun DrawerItem(d: Dest, active: Boolean, onGo: (Dest) -> Unit) {
     val shape = RoundedCornerShape(15.dp)
+    val press = rememberPress()
     Row(
         Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp)
-            .clip(shape)
-            .let { if (active) it.background(P.ceramic).border(1.dp, Color(0xA8FFFFFF), shape) else it }
-            .clickable(role = Role.Button) { onGo(d) }
+            .liquidPress(press, 0.5f)
+            .let {
+                when {
+                    !active -> it.clip(shape)
+                    Theme.apple -> it.clip(RoundedCornerShape(12.dp)).background(Theme.current.accentColor)
+                    Theme.liquid -> it.liquidGlass(shape, GlassKind.Control, 4.dp)
+                    else -> it.clip(shape).background(P.ceramic).border(1.dp, pc(0xA8FFFFFF), shape)
+                }
+            }
+            .clickable(interactionSource = press, indication = androidx.compose.foundation.LocalIndication.current, role = Role.Button) { onGo(d) }
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PIcon(d.icon, size = 18.dp, tint = if (active) Color(0xFF395941) else Color(0xFF647965))
-        Text(stringResource(d.title), Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (active) Color(0xFF395941) else Color(0xFF647965))
+        val tint = if (active) (if (Theme.apple) Color.White else if (Theme.liquid) P.accent2 else pc(0xFF395941)) else if (Theme.apple) P.ink else pc(0xFF647965)
+        PIcon(d.icon, size = 18.dp, tint = tint)
+        Text(stringResource(d.title), Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = tint)
     }
 }
+
+/**
+ * The Liquid tab bar: a glass capsule floating above the backdrop. The chosen tab sits in a drop of the accent that
+ * flows to the next tab (stretching on the way), and the tab's icon bounces as the drop arrives.
+ */
+@Composable
+private fun LiquidBottomBar(route: String, attention: Int, onGo: (Dest) -> Unit, backdrop: com.kyant.backdrop.backdrops.LayerBackdrop?) {
+    val tabs = Dest.entries.filter { it.tab }
+    val index = tabs.indexOfFirst { route.startsWith(it.route) }
+    val drop = remember { GooeyDrop() }
+    val bounds = remember { androidx.compose.runtime.mutableStateListOf<Pair<Float, Float>>().apply { repeat(tabs.size) { add(0f to 0f) } } }
+    val target = bounds.getOrNull(index)?.takeIf { it.second > it.first }
+    LaunchedEffect(index, target) { if (target != null) drop.moveTo(target.first, target.second) }
+    val spec = Theme.current
+    // the bar's tint follows the drops passing under it: over a dark one it turns dark glass with light ink
+    val tone = app.umbra.agent.ui.porcelain.rememberBackdropTone(backdrop?.graphicsLayer, { androidx.compose.ui.geometry.Offset.Zero }, spec.dark, spec.tokens.base)
+    val lightTokens = remember(spec.hue) { app.umbra.agent.ui.porcelain.Tokens.liquid(spec.hue, false) }
+    val darkTokens = remember(spec.hue) { app.umbra.agent.ui.porcelain.Tokens.liquid(spec.hue, true) }
+    val dropColor = androidx.compose.ui.graphics.lerp(hsl(spec.hue, 0.75f, 0.62f, 0.22f), hsl(spec.hue, 0.70f, 0.62f, 0.30f), tone.value)
+    val shape = RoundedCornerShape(30.dp)
+    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 14.dp, end = 14.dp, bottom = 10.dp, top = 4.dp).then(tone.modifier)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .liquidGlass(shape, GlassKind.Bar, 16.dp, tone = tone.value)
+                .padding(6.dp)
+                .drawBehind {
+                    if (target == null) return@drawBehind
+                    val l = drop.left.value
+                    val r = drop.right.value
+                    val st = drop.stretch(target.second - target.first)
+                    val h = size.height * (1f - 0.2f * st)
+                    val top = (size.height - h) / 2f
+                    drawRoundRect(dropColor, topLeft = androidx.compose.ui.geometry.Offset(l, top), size = androidx.compose.ui.geometry.Size(r - l, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(h / 2f))
+                }
+                .height(56.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            tabs.forEachIndexed { i, d ->
+                val on = i == index
+                val press = rememberPress()
+                val onColor = androidx.compose.ui.graphics.lerp(lightTokens.accent2, darkTokens.accent2, tone.value)
+                val offColor = androidx.compose.ui.graphics.lerp(lightTokens.muted, darkTokens.muted, tone.value)
+                val color by androidx.compose.animation.animateColorAsState(if (on) onColor else offColor, tween(240), label = "tab")
+                val bounce = remember { androidx.compose.animation.core.Animatable(1f) }
+                LaunchedEffect(on) {
+                    if (on) {
+                        bounce.snapTo(0.82f)
+                        bounce.animateTo(1f, spring(dampingRatio = 0.32f, stiffness = 380f))
+                    }
+                }
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .onPlaced { c -> val x = c.positionInParent().x; bounds[i] = x to x + c.size.width }
+                        .jelly(press, 0.8f, glow = RoundedCornerShape(24.dp))
+                        .clip(RoundedCornerShape(24.dp))
+                        .clickable(interactionSource = press, indication = null, role = Role.Tab, onClickLabel = stringResource(d.title)) { onGo(d) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Box(Modifier.graphicsLayer { scaleX = bounce.value; scaleY = bounce.value }) {
+                        PIcon(d.icon, size = 20.dp, tint = color)
+                        if (d == Dest.Inbox && attention > 0) {
+                            Box(Modifier.align(Alignment.TopEnd).padding(start = 14.dp).size(16.dp).clip(CircleShape).background(P.amber), contentAlignment = Alignment.Center) {
+                                Text("${attention.coerceAtMost(9)}", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    Text(stringResource(d.title), Modifier.padding(top = 3.dp), fontSize = 11.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium, color = color, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+/** The Liquid backdrop's live layer, for the tab bar to read its tone from. */
+private val LocalPageGlass = androidx.compose.runtime.staticCompositionLocalOf<com.kyant.backdrop.backdrops.LayerBackdrop?> { null }
+
+/** How far the floating tab bar reaches into the page: tab pages pad the end of their scrolling content by it. */
+val LocalChromeBottom = androidx.compose.runtime.staticCompositionLocalOf { 0.dp }
+
+private val tabRoutes = Dest.entries.filter { it.tab }.map { it.route }.toSet()
+
+private fun tabSwitch(from: String?, to: String?) = from in tabRoutes && to in tabRoutes
+
+/** UINavigationController's push: critically damped, response 0.4 s. */
+private val appleSlide = app.umbra.agent.ui.porcelain.appleSpring(1f, 0.4f, androidx.compose.ui.unit.IntOffset.VisibilityThreshold)
+
+/**
+ * Apple's scroll edge effect: content softly dissolves where it meets the bar above it instead of a hard line.
+ * Other themes are untouched.
+ */
+@Composable
+private fun Modifier.scrollEdge(): Modifier = if (!Theme.apple) this else this
+    .graphicsLayer(compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen)
+    .drawWithContent {
+        drawContent()
+        val edge = 14.dp.toPx()
+        drawRect(
+            androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.Transparent, edge / size.height.coerceAtLeast(1f) to Color.Black),
+            blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+        )
+    }
 
 /** Navigates to [dest] from a nested screen. */
 fun NavHostController.go(dest: Dest) = navigate(dest.route) { launchSingleTop = true }

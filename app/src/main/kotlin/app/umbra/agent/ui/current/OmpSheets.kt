@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.current
 
+import app.umbra.agent.ui.porcelain.pc
 import androidx.compose.ui.res.stringResource
 import app.umbra.agent.R
 import androidx.compose.foundation.background
@@ -17,9 +18,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
+import app.umbra.agent.ui.porcelain.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
+import app.umbra.agent.ui.porcelain.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -99,7 +100,7 @@ enum class Sheet { None, Model, Session, Tree, Todos, Subagents, Goal, Modes }
 fun OmpSheet(sheet: Sheet, conversation: ConversationState, ops: SessionOps, onClose: () -> Unit, onOpen: (Sheet) -> Unit, onComposer: (String) -> Unit) {
     if (sheet == Sheet.None) return
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onClose, sheetState = state, containerColor = Color(0xFFEEF2EA)) {
+    ModalBottomSheet(onDismissRequest = onClose, sheetState = state, containerColor = pc(0xFFEEF2EA)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
             when (sheet) {
                 Sheet.Model -> ModelSheet(conversation, ops, onClose)
@@ -141,7 +142,7 @@ private fun ModelSheet(conversation: ConversationState, ops: SessionOps, onClose
         Gap(8.dp)
     }
     PSetting(stringResource(R.string.omp_fast), stringResource(R.string.omp_fast_d), divider = false) {
-        Switch(session?.fastModeEnabled == true, { on -> ops.launch("Fast mode") { it.setFastMode(on) } })
+        if (app.umbra.agent.ui.porcelain.Theme.liquid) app.umbra.agent.ui.porcelain.LiquidSwitch(session?.fastModeEnabled == true, { on -> ops.launch("Fast mode") { it.setFastMode(on) } }) else if (app.umbra.agent.ui.porcelain.Theme.apple) app.umbra.agent.ui.porcelain.AppleSwitch(session?.fastModeEnabled == true, { on -> ops.launch("Fast mode") { it.setFastMode(on) } }) else Switch(session?.fastModeEnabled == true, { on -> ops.launch("Fast mode") { it.setFastMode(on) } })
     }
     Gap(8.dp)
     OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), placeholder = { Text(stringResource(R.string.omp_search_models)) }, singleLine = true)
@@ -276,7 +277,7 @@ private fun TreeSheet(ops: SessionOps, onComposer: (String) -> Unit, onClose: ()
         items(rows, key = { it.first.id }) { (n, depth) ->
             val on = n.id in path
             Row(Modifier.fillMaxWidth().padding(start = (depth * 14).dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(if (on) P.accent2 else Color(0xFFC5D4C2)))
+                Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(if (on) P.accent2 else pc(0xFFC5D4C2)))
                 Column(Modifier.padding(start = 8.dp).weight(1f)) {
                     Text((if (n.role == "user") stringResource(R.string.omp_you_prefix) + " " else if (n.role == "assistant") stringResource(R.string.omp_agent_prefix) + " " else "") + n.preview, fontSize = 13.sp, color = if (on) P.ink else P.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     if (n.role == "user") Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
@@ -436,11 +437,11 @@ private fun ModesSheet(conversation: ConversationState, ops: SessionOps) {
         Segmented(listOf("immediate" to stringResource(R.string.omp_now), "wait" to stringResource(R.string.omp_wait)), s?.interruptMode ?: "immediate", { m -> ops.launch("Interrupt mode") { it.setInterruptMode(m) } })
     }
     PSetting(stringResource(R.string.omp_autocompact), stringResource(R.string.omp_autocompact_d)) {
-        Switch(s?.autoCompaction ?: true, { on -> ops.launch("Auto-compaction") { it.setAutoCompaction(on) } })
+        if (app.umbra.agent.ui.porcelain.Theme.liquid) app.umbra.agent.ui.porcelain.LiquidSwitch(s?.autoCompaction ?: true, { on -> ops.launch("Auto-compaction") { it.setAutoCompaction(on) } }) else if (app.umbra.agent.ui.porcelain.Theme.apple) app.umbra.agent.ui.porcelain.AppleSwitch(s?.autoCompaction ?: true, { on -> ops.launch("Auto-compaction") { it.setAutoCompaction(on) } }) else Switch(s?.autoCompaction ?: true, { on -> ops.launch("Auto-compaction") { it.setAutoCompaction(on) } })
     }
     PSetting(stringResource(R.string.omp_autoretry), stringResource(R.string.omp_autoretry_d)) {
         var on by remember { mutableStateOf(true) }
-        Switch(on, { v -> on = v; ops.launch("Auto-retry") { it.setAutoRetry(v) } })
+        if (app.umbra.agent.ui.porcelain.Theme.liquid) app.umbra.agent.ui.porcelain.LiquidSwitch(on, { v -> on = v; ops.launch("Auto-retry") { it.setAutoRetry(v) } }) else if (app.umbra.agent.ui.porcelain.Theme.apple) app.umbra.agent.ui.porcelain.AppleSwitch(on, { v -> on = v; ops.launch("Auto-retry") { it.setAutoRetry(v) } }) else Switch(on, { v -> on = v; ops.launch("Auto-retry") { it.setAutoRetry(v) } })
     }
     PSetting(stringResource(R.string.omp_cache), stringResource(R.string.omp_cache_d), divider = false) {
         Segmented(listOf("off" to stringResource(R.string.omp_off), "streaming" to stringResource(R.string.omp_working), "idle" to stringResource(R.string.omp_idle)), cache, { m -> cache = m; ops.launch("Cache warming") { it.setCacheWarming(m) } })

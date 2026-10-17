@@ -133,13 +133,16 @@ private fun DrawScope.drawOrb(angle: Float) {
         translate(cx, cy + scale * 0.84f)
         scale(1f, 0.18f, pivot = Offset.Zero)
     }) {
-        drawCircle(Brush.radialGradient(listOf(Color(0x2E334A37), Color(0x00334A37)), center = Offset.Zero, radius = scale * 1.65f), radius = scale * 1.6f, center = Offset.Zero)
+        drawCircle(Brush.radialGradient(listOf(pcHue(0x2E334A37), pcHue(0x00334A37)), center = Offset.Zero, radius = scale * 1.65f), radius = scale * 1.6f, center = Offset.Zero)
     }
     val path = Path()
     val stroke = Stroke(width = 0.6f)
+    // the glaze (165, 188, 168) under Porcelain; under Liquid the same glaze in the theme's hue
+    val glaze = pcHue(0xFFA5BCA8)
+    val gr = (glaze.red * 255).roundToInt(); val gg = (glaze.green * 255).roundToInt(); val gb = (glaze.blue * 255).roundToInt()
     for (f in faces) {
         fun c(x: Int) = min(255, max(0, (x * f.shade + 43).roundToInt()))
-        val color = Color(c(165), c(188), c(168))
+        val color = Color(c(gr), c(gg), c(gb))
         path.reset()
         f.pts.forEachIndexed { i, p ->
             val x = cx + p[0] * scale
@@ -158,8 +161,8 @@ fun CapsuleDot(modifier: Modifier = Modifier, size: Dp = 18.dp) {
     Box(
         modifier
             .size(size)
-            .shadow(3.dp, CircleShape, spotColor = Color(0x89A2C2A7))
+            .shadow(3.dp, CircleShape, spotColor = pcHue(0x89A2C2A7))
             .clip(CircleShape)
-            .background(Brush.radialGradient(0f to Color(0xFFEDF7E7), 0.32f to Color(0xFF87B28E), 0.65f to Color(0xFF49634D), 1f to Color(0xFF273E2F), center = Offset(size.value * 0.9f, size.value * 0.75f))),
+            .background(Brush.radialGradient(0f to pcHue(0xFFEDF7E7), 0.32f to pcHue(0xFF87B28E), 0.65f to pcHue(0xFF49634D), 1f to pcHue(0xFF273E2F), center = Offset(size.value * 0.9f, size.value * 0.75f))),
     )
 }

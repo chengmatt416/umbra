@@ -1,5 +1,6 @@
 package app.umbra.agent.ui
 
+import app.umbra.agent.ui.porcelain.pc
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,7 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import app.umbra.agent.ui.porcelain.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -205,7 +206,7 @@ private fun AddProviderDialog(existing: Set<String>, onDismiss: () -> Unit, onSa
     val custom = choice == "custom"
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = androidx.compose.ui.graphics.Color(0xFFF2F6EF),
+        containerColor = pc(0xFFF2F6EF),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(P.radius),
         title = { Text(stringResource(R.string.models_add_provider), fontFamily = P.serif, fontSize = 22.sp, color = P.ink) },
         text = {

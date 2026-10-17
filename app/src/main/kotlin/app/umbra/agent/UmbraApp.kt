@@ -15,6 +15,8 @@ class UmbraApp : Application() {
         keepRunningWhenABackendGoesAway()
         container = AppContainer(this)
         container.start()
+        // The saved look, before the first frame (the activity and the Capsule both draw in it).
+        app.umbra.agent.ui.porcelain.Theme.current = app.umbra.agent.ui.porcelain.ThemeSpec.of(container.settings.value.theme, resources.configuration.isNightModeActive)
     }
 
     /**

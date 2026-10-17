@@ -1,5 +1,7 @@
 package app.umbra.agent.ui.terminal
 
+import app.umbra.agent.ui.porcelain.pc
+import app.umbra.agent.ui.porcelain.pcHue
 import app.umbra.agent.R
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
@@ -73,8 +75,8 @@ import kotlinx.coroutines.launch
 
 /** The terminal's colours: the standard 16 tuned to the porcelain night glaze, the 256-colour cube, true colour. */
 object TermPalette {
-    val background = Color(0xFF1F2B24)
-    val foreground = Color(0xFFD4E8D3)
+    val background get() = pcHue(0xFF1F2B24)
+    val foreground get() = pcHue(0xFFD4E8D3)
     private val base = listOf(
         0xFF2A3A30, 0xFFE0857A, 0xFF9BD3A2, 0xFFF0CF95, 0xFF8FB3D9, 0xFFC9A0D6, 0xFF8FD0C8, 0xFFD4E8D3,
         0xFF5E7464, 0xFFF0A59C, 0xFFB8E6BE, 0xFFF7DDB0, 0xFFAECBEA, 0xFFDDBDE6, 0xFFAEE2DB, 0xFFF4FBF2,
@@ -177,8 +179,8 @@ fun TerminalPane(service: TerminalService, id: String, ownsInput: Boolean, modif
                 }
                 if (s.dead) Text(
                     stringResource(R.string.tp_ended) + (s.deadStatus?.let { " " + stringResource(R.string.tp_status, it.toString()) } ?: ""),
-                    Modifier.padding(4.dp).background(Color(0xCC26372F)).padding(horizontal = 8.dp, vertical = 4.dp),
-                    color = Color(0xFFF0CF95), fontSize = 12.sp,
+                    Modifier.padding(4.dp).background(pcHue(0xCC26372F)).padding(horizontal = 8.dp, vertical = 4.dp),
+                    color = pcHue(0xFFF0CF95), fontSize = 12.sp,
                 )
             }
             // The keyboard: a hidden field that turns typed text, Enter and Backspace into terminal bytes.
@@ -227,8 +229,8 @@ fun TerminalPane(service: TerminalService, id: String, ownsInput: Boolean, modif
                     val on = (label == "Ctrl" && ctrl) || (label == "Alt" && alt)
                     Text(
                         label,
-                        Modifier.clip(RoundedCornerShape(9.dp)).background(if (on) P.accent2 else Color(0xFFDCE7D9))
-                            .border(1.dp, Color(0xA1FFFFFF), RoundedCornerShape(9.dp))
+                        Modifier.clip(RoundedCornerShape(9.dp)).background(if (on) P.accent2 else pc(0xFFDCE7D9))
+                            .border(1.dp, pc(0xA1FFFFFF), RoundedCornerShape(9.dp))
                             .clickable {
                                 when (label) {
                                     "Ctrl" -> ctrl = !ctrl
@@ -237,11 +239,11 @@ fun TerminalPane(service: TerminalService, id: String, ownsInput: Boolean, modif
                                 }
                             }
                             .padding(horizontal = 11.dp, vertical = 8.dp),
-                        fontSize = 13.sp, fontFamily = P.mono, color = if (on) Color.White else Color(0xFF355740),
+                        fontSize = 13.sp, fontFamily = P.mono, color = if (on) Color.White else pc(0xFF355740),
                     )
                 }
-                Text("A−", Modifier.clip(RoundedCornerShape(9.dp)).background(Color(0xFFDCE7D9)).clickable { fontSize = (fontSize - 1).coerceAtLeast(8) }.padding(horizontal = 11.dp, vertical = 8.dp), fontSize = 13.sp, color = Color(0xFF355740))
-                Text("A+", Modifier.clip(RoundedCornerShape(9.dp)).background(Color(0xFFDCE7D9)).clickable { fontSize = (fontSize + 1).coerceAtMost(22) }.padding(horizontal = 11.dp, vertical = 8.dp), fontSize = 13.sp, color = Color(0xFF355740))
+                Text("A−", Modifier.clip(RoundedCornerShape(9.dp)).background(pc(0xFFDCE7D9)).clickable { fontSize = (fontSize - 1).coerceAtLeast(8) }.padding(horizontal = 11.dp, vertical = 8.dp), fontSize = 13.sp, color = pc(0xFF355740))
+                Text("A+", Modifier.clip(RoundedCornerShape(9.dp)).background(pc(0xFFDCE7D9)).clickable { fontSize = (fontSize + 1).coerceAtMost(22) }.padding(horizontal = 11.dp, vertical = 8.dp), fontSize = 13.sp, color = pc(0xFF355740))
             }
         }
     }

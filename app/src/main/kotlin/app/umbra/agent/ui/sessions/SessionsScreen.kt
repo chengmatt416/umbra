@@ -115,7 +115,7 @@ fun SessionsScreen(onOpenSession: (String) -> Unit) {
     }
     val byProject = shown.groupBy { s -> s.projectId?.takeIf { projectsById.containsKey(it) } }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp, 4.dp, 18.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp, 4.dp, 18.dp, 28.dp + app.umbra.agent.ui.shell.LocalChromeBottom.current), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Eyebrow(stringResource(R.string.sessions_eyebrow))
             SerifTitle(stringResource(R.string.dest_sessions), Modifier.padding(top = 8.dp, bottom = 12.dp), size = 28)

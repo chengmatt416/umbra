@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.reference
 
+import app.umbra.agent.ui.porcelain.pc
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -215,7 +216,7 @@ private fun DesignSystem() {
 @Composable
 private fun Swatch(name: String, color: Color) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(44.dp).background(color, RoundedCornerShape(12.dp)).border(1.dp, Color(0x3391AA90), RoundedCornerShape(12.dp)))
+        Box(Modifier.size(44.dp).background(color, RoundedCornerShape(12.dp)).border(1.dp, pc(0x3391AA90), RoundedCornerShape(12.dp)))
         Text(name, Modifier.padding(top = 4.dp), fontSize = 10.sp, color = P.sub)
     }
 }

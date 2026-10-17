@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.inbox
 
+import app.umbra.agent.ui.porcelain.pcHue
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -84,8 +85,8 @@ fun ApprovalCountdown(request: ApprovalRequest, modifier: Modifier = Modifier, d
     val urgent = left <= 60_000
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         val color = when {
-            dark && urgent -> androidx.compose.ui.graphics.Color(0xFFE7A493)
-            dark -> androidx.compose.ui.graphics.Color(0xFFF9E5C3)
+            dark && urgent -> pcHue(0xFFE7A493)
+            dark -> pcHue(0xFFF9E5C3)
             urgent -> P.danger
             else -> P.amber
         }

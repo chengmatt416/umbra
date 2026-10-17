@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.current
 
+import app.umbra.agent.ui.porcelain.pc
 import app.umbra.agent.R
 import androidx.compose.ui.res.stringResource
 import android.graphics.BitmapFactory
@@ -81,8 +82,8 @@ fun UserMessage(item: ChatItem.User, actions: MessageActions) {
             Column(
                 Modifier
                     .clip(RoundedCornerShape(18.dp, 18.dp, 5.dp, 18.dp))
-                    .background(Color(0xFFDCE8D8))
-                    .border(1.dp, Color(0x6EBFD1BB), RoundedCornerShape(18.dp, 18.dp, 5.dp, 18.dp))
+                    .background(pc(0xFFDCE8D8))
+                    .border(1.dp, pc(0x6EBFD1BB), RoundedCornerShape(18.dp, 18.dp, 5.dp, 18.dp))
                     .combinedClickable(onClick = {}, onLongClick = { menu = true })
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
@@ -141,7 +142,7 @@ fun AssistantMessage(item: ChatItem.Assistant, tools: Map<String, ToolRun>, resu
 private fun Thinking(block: Block.Thinking, live: Boolean) {
     var open by remember { mutableStateOf(false) }
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0x80E8EFE4)).clickable { open = !open }.animateContentSize().padding(horizontal = 12.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(pc(0x80E8EFE4)).clickable { open = !open }.animateContentSize().padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (live) CircularProgressIndicator(Modifier.size(11.dp), strokeWidth = 1.2.dp, color = P.muted)
@@ -158,13 +159,13 @@ fun ToolCard(call: Block.ToolCall, run: ToolRun?, images: List<app.umbra.core.or
     val running = run?.running ?: false
     val failed = run?.isError == true
     val tone = when {
-        running -> Color(0xFF6E8F74)
+        running -> pc(0xFF6E8F74)
         failed -> P.danger
         run?.result != null -> P.good
         else -> P.muted
     }
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xCCF2F6EF)).border(1.dp, Color(0x6EBFD1BB), RoundedCornerShape(14.dp))
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(pc(0xCCF2F6EF)).border(1.dp, pc(0x6EBFD1BB), RoundedCornerShape(14.dp))
             .clickable { open = !open }.animateContentSize().padding(horizontal = 12.dp, vertical = 9.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -183,7 +184,7 @@ fun ToolCard(call: Block.ToolCall, run: ToolRun?, images: List<app.umbra.core.or
             val shown = if (open) output.takeLast(30_000) else output.lines().takeLast(if (running) 6 else 4).joinToString("\n")
             Text(
                 shown,
-                Modifier.padding(top = 6.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (call.name == "bash") P.code else Color(0x80E3EBE0))
+                Modifier.padding(top = 6.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (call.name == "bash") P.code else pc(0x80E3EBE0))
                     .horizontalScroll(rememberScrollState()).padding(9.dp),
                 fontSize = 11.sp, lineHeight = 16.sp, fontFamily = P.mono, color = if (call.name == "bash") P.codeText else if (failed) P.danger else P.sub,
             )
@@ -203,9 +204,9 @@ private fun EditDiff(arguments: kotlinx.serialization.json.JsonObject) {
         Text(arguments.toString().take(4_000), Modifier.padding(top = 6.dp), fontSize = 11.sp, fontFamily = P.mono, color = P.sub)
         return
     }
-    Column(Modifier.padding(top = 6.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color(0xFFF6F8F1)).padding(8.dp)) {
-        old?.lines()?.forEach { Text("- $it", Modifier.fillMaxWidth().background(Color(0xFFEDDAD6)), fontSize = 11.sp, fontFamily = P.mono, color = Color(0xFF9E635E)) }
-        new?.lines()?.forEach { Text("+ $it", Modifier.fillMaxWidth().background(Color(0xFFDAE9D8)), fontSize = 11.sp, fontFamily = P.mono, color = Color(0xFF4B7350)) }
+    Column(Modifier.padding(top = 6.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(pc(0xFFF6F8F1)).padding(8.dp)) {
+        old?.lines()?.forEach { Text("- $it", Modifier.fillMaxWidth().background(pc(0xFFEDDAD6)), fontSize = 11.sp, fontFamily = P.mono, color = pc(0xFF9E635E)) }
+        new?.lines()?.forEach { Text("+ $it", Modifier.fillMaxWidth().background(pc(0xFFDAE9D8)), fontSize = 11.sp, fontFamily = P.mono, color = pc(0xFF4B7350)) }
     }
 }
 
@@ -239,14 +240,14 @@ fun SummaryMarker(item: ChatItem.Summary) {
 
 @Composable
 fun CommandOutputCard(item: ChatItem.CommandOutput) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xCCF2F6EF)).border(1.dp, Color(0x6EBFD1BB), RoundedCornerShape(14.dp)).padding(12.dp)) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(pc(0xCCF2F6EF)).border(1.dp, pc(0x6EBFD1BB), RoundedCornerShape(14.dp)).padding(12.dp)) {
         Text(item.text.take(40_000), fontSize = 12.sp, lineHeight = 18.sp, fontFamily = P.mono, color = P.ink)
     }
 }
 
 @Composable
 fun CustomMessage(item: ChatItem.Custom) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0x99E3EDE0)).padding(12.dp)) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(pc(0x99E3EDE0)).padding(12.dp)) {
         if (item.type.isNotBlank()) Tag(item.type, Tone.Neutral)
         MarkdownText(item.text, Modifier.padding(top = 6.dp), color = P.ink)
     }
@@ -268,7 +269,7 @@ fun NoticeLine(item: ChatItem.Notice) {
 @Composable
 fun Base64Picture(data: String, height: Int) {
     if (data.isEmpty()) {
-        Box(Modifier.size(height.dp * 0.75f, height.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFE3EBE0)), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(height.dp * 0.75f, height.dp).clip(RoundedCornerShape(10.dp)).background(pc(0xFFE3EBE0)), contentAlignment = Alignment.Center) {
             Subtle(stringResource(R.string.chat_picture), Modifier.padding(6.dp))
         }
         return
@@ -288,5 +289,5 @@ fun Base64Picture(data: String, height: Int) {
         }
     }
     bitmap?.let { Image(it, stringResource(R.string.chat_picture), Modifier.height(height.dp).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.FillHeight) }
-        ?: Box(Modifier.width(height.dp * 0.6f).height(height.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFE3EBE0)))
+        ?: Box(Modifier.width(height.dp * 0.6f).height(height.dp).clip(RoundedCornerShape(10.dp)).background(pc(0xFFE3EBE0)))
 }

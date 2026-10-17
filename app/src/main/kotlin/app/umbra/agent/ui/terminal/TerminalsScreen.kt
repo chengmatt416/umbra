@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.terminal
 
+import app.umbra.agent.ui.porcelain.pc
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -151,7 +152,7 @@ fun TerminalsScreen(sessionId: String? = null, cwd: String? = null, embedded: Bo
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun TerminalDetailsSheet(t: TerminalState, onClose: () -> Unit) {
-    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onClose, containerColor = androidx.compose.ui.graphics.Color(0xFFEEF2EA)) {
+    app.umbra.agent.ui.porcelain.ModalBottomSheet(onDismissRequest = onClose, containerColor = pc(0xFFEEF2EA)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
             Eyebrow(stringResource(R.string.term_details_eyebrow))
             SerifTitle(t.record.title, Modifier.padding(top = 6.dp, bottom = 8.dp), size = 22)

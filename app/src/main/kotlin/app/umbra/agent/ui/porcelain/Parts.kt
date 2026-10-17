@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -73,8 +72,9 @@ fun PConfirm(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFFF2F6EF),
-        shape = RoundedCornerShape(P.radius),
+        // Apple: an alert's continuous large radius on the elevated surface (a dialog window has no live backdrop to refract)
+        containerColor = if (Theme.apple) AppleColors.elevated(Theme.dark).copy(alpha = if (Theme.current.appleGlass) 0.96f else 1f) else pc(0xFFF2F6EF),
+        shape = RoundedCornerShape(if (Theme.apple) 30.dp else P.radius),
         title = { Text(title, fontFamily = P.serif, fontSize = 22.sp, lineHeight = 26.sp, color = P.ink) },
         text = {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -177,7 +177,7 @@ fun Disclosure(label: String, modifier: Modifier = Modifier, initiallyOpen: Bool
 fun DisabledReason(text: String, modifier: Modifier = Modifier) {
     Row(modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         PIcon(PIcons.info, Modifier.padding(top = 2.dp), size = 13.dp, tint = P.amber)
-        Text(text, fontSize = 12.sp, lineHeight = 17.sp, color = Color(0xFF856B49))
+        Text(text, fontSize = 12.sp, lineHeight = 17.sp, color = pc(0xFF856B49))
     }
 }
 
@@ -208,11 +208,11 @@ fun PField(
         visualTransformation = visualTransformation,
         keyboardOptions = keyboardOptions,
         colors = OutlinedTextFieldDefaults.colors(
-            focusedContainerColor = Color(0xFFF4F8F1),
-            unfocusedContainerColor = Color(0xCCF2F6EF),
-            disabledContainerColor = Color(0x80F2F6EF),
+            focusedContainerColor = pc(0xFFF4F8F1),
+            unfocusedContainerColor = pc(0xCCF2F6EF),
+            disabledContainerColor = pc(0x80F2F6EF),
             focusedBorderColor = P.accent,
-            unfocusedBorderColor = Color(0x8CBFD1BB),
+            unfocusedBorderColor = pc(0x8CBFD1BB),
             focusedLabelColor = P.accent2,
             cursorColor = P.accent2,
         ),
@@ -244,7 +244,7 @@ fun PLink(label: String, summary: String? = null, modifier: Modifier = Modifier,
             }
             PIcon(PIcons.chevronRight, size = 16.dp, tint = P.muted)
         }
-        if (divider) Box(Modifier.fillMaxWidth().padding(start = if (icon != null) 30.dp else 0.dp).height(1.dp).background(Color(0x3391AA90)))
+        if (divider) Box(Modifier.fillMaxWidth().padding(start = if (icon != null) 30.dp else 0.dp).height(1.dp).background(pc(0x3391AA90)))
     }
 }
 
@@ -264,9 +264,13 @@ fun PToggle(label: String, description: String? = null, checked: Boolean, onChan
                 }
                 if (!description.isNullOrBlank()) Text(description, Modifier.padding(top = 3.dp), fontSize = 12.sp, lineHeight = 17.sp, color = P.muted)
             }
-            androidx.compose.material3.Switch(checked, onChange)
+            when {
+                Theme.liquid -> LiquidSwitch(checked, null)
+                Theme.apple -> AppleSwitch(checked, null)
+                else -> androidx.compose.material3.Switch(checked, onChange)
+            }
         }
-        if (divider) Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x3391AA90)))
+        if (divider) Box(Modifier.fillMaxWidth().height(1.dp).background(pc(0x3391AA90)))
     }
 }
 
@@ -278,19 +282,21 @@ fun <T> PChoice(options: List<Triple<T, String, String>>, selected: T, onSelect:
             val on = value == selected
             val stateText = androidx.compose.ui.res.stringResource(if (on) app.umbra.agent.R.string.pchoice_selected else app.umbra.agent.R.string.pchoice_not_selected)
             val shape = RoundedCornerShape(16.dp)
+            val press = rememberPress()
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .background(if (on) Color(0xFFE6EFE1) else Color(0x99F2F6EF), shape)
-                    .border(1.dp, if (on) Color(0xFF82A185) else Color(0x5EBFD1BB), shape)
-                    .clickable(role = Role.RadioButton) { onSelect(value) }
+                    .liquidPress(press, 0.4f)
+                    .background(if (on) pc(0xFFE6EFE1) else pc(0x99F2F6EF), shape)
+                    .border(1.dp, if (on) pc(0xFF82A185) else pc(0x5EBFD1BB), shape)
+                    .clickable(interactionSource = press, indication = androidx.compose.foundation.LocalIndication.current, role = Role.RadioButton) { onSelect(value) }
                     .semantics { contentDescription = title; stateDescription = stateText }
                     .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.Top,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Box(
-                    Modifier.padding(top = 2.dp).border(1.5.dp, if (on) P.accent2 else Color(0xFFA9BAA6), RoundedCornerShape(50)).padding(4.dp),
+                    Modifier.padding(top = 2.dp).border(1.5.dp, if (on) P.accent2 else pc(0xFFA9BAA6), RoundedCornerShape(50)).padding(4.dp),
                 ) { Box(Modifier.background(if (on) P.accent2 else Color.Transparent, RoundedCornerShape(50)).padding(4.dp)) }
                 Column(Modifier.weight(1f)) {
                     Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = P.ink)
