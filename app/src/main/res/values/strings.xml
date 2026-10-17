@@ -263,6 +263,25 @@
     <string name="sel_cancel">Cancel</string>
     <string name="sel_clear">Clear</string>
     <string name="sel_done">Attach</string>
+    <!-- Capsule companion (docs/design/capsule-companion.md) -->
+    <string name="capc_mood_thinking">Thinking</string>
+    <string name="capc_mood_compacting">Compacting</string>
+    <string name="capc_mood_error">Error</string>
+    <string name="capc_done_label">Done · %1$s</string>
+    <string name="capc_member">%1$s: %2$s</string>
+    <string name="capc_list_sep">"; "</string>
+    <string name="capc_description_more">%1$s. %2$s</string>
+    <string name="capc_more">+%1$d</string>
+    <plurals name="capc_more_running">
+        <item quantity="one">%1$d more running</item>
+        <item quantity="other">%1$d more running</item>
+    </plurals>
+    <string name="capc_show_session">Show this task</string>
+    <string name="capc_feed_said">Said</string>
+    <string name="capc_feed_you">You</string>
+    <string name="capc_feed_approval">Approval</string>
+    <string name="capc_feed_problem">Problem</string>
+    <string name="capc_seconds">%1$s s</string>
     <string name="stop_all">Stop all tasks…</string>
     <string name="stop_all_short">Stop all…</string>
     <string name="stop_all_title">Stop all tasks?</string>

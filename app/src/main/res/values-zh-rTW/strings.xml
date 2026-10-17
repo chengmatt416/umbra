@@ -255,6 +255,24 @@
     <string name="sel_cancel">取消</string>
     <string name="sel_clear">清除</string>
     <string name="sel_done">附加</string>
+    <!-- Capsule companion (docs/design/capsule-companion.md) -->
+    <string name="capc_mood_thinking">思考中</string>
+    <string name="capc_mood_compacting">壓縮脈絡中</string>
+    <string name="capc_mood_error">出錯了</string>
+    <string name="capc_done_label">已完成 · %1$s</string>
+    <string name="capc_member">%1$s：%2$s</string>
+    <string name="capc_list_sep">；</string>
+    <string name="capc_description_more">%1$s。%2$s</string>
+    <string name="capc_more">+%1$d</string>
+    <plurals name="capc_more_running">
+        <item quantity="other">還有 %1$d 個在執行</item>
+    </plurals>
+    <string name="capc_show_session">顯示這個任務</string>
+    <string name="capc_feed_said">回覆</string>
+    <string name="capc_feed_you">你</string>
+    <string name="capc_feed_approval">核准</string>
+    <string name="capc_feed_problem">問題</string>
+    <string name="capc_seconds">%1$s 秒</string>
     <string name="stop_all">停止所有任務…</string>
     <string name="stop_all_short">全部停止…</string>
     <string name="stop_all_title">停止所有任務？</string>

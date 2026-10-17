@@ -87,6 +87,14 @@ internal class OverlayWindow(
     val windowToken get() = frame.windowToken
 
     /**
+     * Plays a haptic through this window ([android.view.HapticFeedbackConstants]). It goes through the system's own
+     * haptic feedback, so the user's touch-feedback setting decides whether anything is felt.
+     */
+    fun haptic(feedback: Int) {
+        if (!closed && frame.isAttachedToWindow) frame.performHapticFeedback(feedback)
+    }
+
+    /**
      * Closes the window on the next turn of the main loop, not now: it is often closed from one of its own buttons or
      * gestures, and Compose still reads from that node right after the handler returns (a long press asks for haptic
      * feedback); a window removed under it would take the app down.

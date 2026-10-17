@@ -10,6 +10,7 @@ import android.graphics.Rect as AndroidRect
 import android.graphics.RectF
 import android.provider.Settings
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
@@ -56,6 +57,9 @@ class Capsule(private val context: Context, private val container: AppContainer)
     /** The camera hole the collapsed capsule wraps, when it sits at the camera; null otherwise. */
     internal val hole = MutableStateFlow<Hole?>(null)
 
+    /** What the companions and the activity feed show (docs/design/capsule-companion.md). */
+    internal val watch = CapsuleWatch(container, scope, ::feel)
+
     /**
      * [gapPx] is the room left for the camera (the hole and a margin each side), [heightPx] the capsule's height so it
      * encloses the hole, [contentLeft] whether the orb and the task go left of the camera (the side with more room, so
@@ -86,6 +90,7 @@ class Capsule(private val context: Context, private val container: AppContainer)
     fun start() {
         if (job?.isActive == true) return
         context.registerComponentCallbacks(rotation)
+        watch.start()
         job = scope.launch {
             launch {
                 combine(container.settings.flow.map { it.overlayEnabled }.distinctUntilChanged(), UmbraAccessibilityService.connected) { on, _ -> on }
@@ -110,6 +115,7 @@ class Capsule(private val context: Context, private val container: AppContainer)
     fun stop() {
         job?.cancel()
         job = null
+        watch.stop()
         runCatching { context.unregisterComponentCallbacks(rotation) }
         closeCapsule()
         closeComposer()
@@ -199,6 +205,22 @@ class Capsule(private val context: Context, private val container: AppContainer)
                 else -> { p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; p.width = WindowManager.LayoutParams.WRAP_CONTENT; p.x = (top?.centerX() ?: (width / 2)) - width / 2 }
             }
         }
+    }
+
+    /**
+     * A light haptic for a new request or a completed task, felt through the capsule's window (so the system's
+     * touch-feedback setting applies). Only while the capsule is on screen and Umbra itself is not in front: the app
+     * shows the same thing, and a person looking at it needs no nudge.
+     */
+    private fun feel(signal: CapsuleWatch.Signal) {
+        val window = capsuleWindow ?: return
+        if (container.ui.appVisible.value) return
+        window.haptic(
+            when (signal) {
+                CapsuleWatch.Signal.REQUEST -> HapticFeedbackConstants.GESTURE_THRESHOLD_ACTIVATE
+                CapsuleWatch.Signal.DONE -> HapticFeedbackConstants.CONFIRM
+            },
+        )
     }
 
     private fun closeCapsule() {

@@ -1,14 +1,11 @@
 package app.umbra.agent.capsule
 
+import app.umbra.agent.ui.porcelain.pc
+import app.umbra.agent.ui.porcelain.pcHue
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.speech.SpeechRecognizer
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -30,7 +27,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.DropdownMenu
@@ -42,12 +40,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -70,6 +68,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -91,8 +90,8 @@ import app.umbra.agent.ui.porcelain.P
 import app.umbra.agent.ui.porcelain.PButton
 import app.umbra.agent.ui.porcelain.PIcon
 import app.umbra.agent.ui.porcelain.PIcons
+import app.umbra.agent.ui.porcelain.Theme
 import app.umbra.agent.ui.porcelain.motionAllowed
-import app.umbra.agent.ui.sessions.stateText
 import app.umbra.agent.ui.sessionsFlow
 import app.umbra.core.control.EmergencyLevel
 import app.umbra.core.control.LeaseState
@@ -104,33 +103,19 @@ import app.umbra.core.session.SessionState
 import app.umbra.core.session.Trails
 import kotlinx.coroutines.delay
 
-private val Glaze = Brush.linearGradient(listOf(Color(0xFF34453B), Color(0xFF20352D)))
-private val Rim = Color(0xFF617A63)
-private val Label = Color(0xFFE9F3E6)
-private val Small = Color(0xFFA4B9A4)
-private val RowText = Color(0xFFD1E0D2)
-private val Section = Color(0xFFA5C4A7)
-private val Attention = Color(0xFFF9E5C3)
+private val Glaze get() = Brush.linearGradient(listOf(pcHue(0xFF34453B), pcHue(0xFF20352D)))
+private val Rim get() = pcHue(0xFF617A63)
+internal val Label get() = pcHue(0xFFE9F3E6)
+internal val Small get() = pcHue(0xFFA4B9A4)
+internal val RowText get() = pcHue(0xFFD1E0D2)
+internal val Section get() = pcHue(0xFFA5C4A7)
+internal val Attention get() = pcHue(0xFFF9E5C3)
 private val LIVE = setOf(SessionState.RUNNING, SessionState.WAITING_APPROVAL, SessionState.PAUSED)
 
-/** The ceramic orb of the capsule (`.cap-dot`); it breathes while an agent works, unless motion is reduced. */
-@Composable
-private fun CapDot(working: Boolean, attention: Boolean) {
-    val context = LocalContext.current
-    val moving = working && remember { motionAllowed(context) }
-    val breath = if (moving) rememberInfiniteTransition(label = "orb").animateFloat(0.9f, 1.08f, infiniteRepeatable(tween(1100), RepeatMode.Reverse), label = "breath").value else 1f
-    Box(
-        Modifier.size(18.dp).scale(breath).clip(CircleShape).background(
-            Brush.radialGradient(
-                0f to Color(0xFFEDF7E7), 0.32f to (if (attention) Color(0xFFD8B27A) else Color(0xFF87B28E)),
-                0.65f to (if (attention) Color(0xFF8A6235) else Color(0xFF49634D)), 1f to Color(0xFF273E2F),
-                center = Offset(14f, 12f), radius = 46f,
-            ),
-        ),
-    )
-}
-
-/** The capsule itself: collapsed orb + task (or a mini island at rest), expanded Previous / Current / Next. */
+/**
+ * The capsule itself: collapsed, one companion per running task (docs/design/capsule-companion.md) and the task, or
+ * a companion at rest; expanded, Previous / Current / Next for sessions and steps, the steps as a live activity feed.
+ */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
@@ -146,7 +131,10 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     val notice by capsule.notice.collectAsState()
     val dismissed by capsule.dismissedFailures.collectAsState()
     val hole by capsule.hole.collectAsState()
+    val activity by capsule.watch.activity.collectAsState()
+    val finished by capsule.watch.finished.collectAsState()
     val density = LocalDensity.current
+    val context = LocalContext.current
 
     val trail = remember(sessions, focused) { Trails.sessions(sessions, focused) }
     val current = trail.current
@@ -155,6 +143,17 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     val failed = sessions.filter { it.state == SessionState.FAILED && it.id !in dismissed && System.currentTimeMillis() - it.updatedAtMs < 10 * 60_000 }.maxByOrNull { it.updatedAtMs }
     val needsYou = approvals.isNotEmpty() || questions.isNotEmpty()
     val atRest = current == null && !needsYou && !locked && failed == null
+    val nowMs = System.currentTimeMillis()
+    // Elapsed times tick while the capsule is open.
+    val ticking by produceState(nowMs, expanded) { while (expanded) { delay(1_000); value = System.currentTimeMillis() } }
+    val clockNow = maxOf(ticking, nowMs)
+    val waitingOn = remember(approvals, questions) { approvals.map { it.sessionId }.toSet() + questions.map { it.sessionId } }
+    val crew = Crews.of(sessions, activity, waitingOn, finished, dismissed, nowMs)
+    val headMood = current?.let { Crews.moodOf(it, activity[it.id], it.id in waitingOn, null, false, nowMs) } ?: Mood.IDLE
+    val moving = remember(sessions, approvals, expanded) { motionAllowed(context) } && Theme.current.motion
+    val clock = rememberCompanionClock(crew.members.map { it.mood }.toSet() + headMood, moving)
+    val tick: () -> Long = remember(clock) { { clock.value } }
+    val done = crew.members.firstOrNull { it.mood == Mood.DONE }
     LaunchedEffect(failed?.id) { if (failed != null && !container.ui.appVisible.value) capsule.expanded.value = true }
 
     val label = when {
@@ -162,6 +161,7 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
         approvals.isNotEmpty() -> stringResource(R.string.cap_needs_decision)
         questions.isNotEmpty() -> stringResource(R.string.cap_question)
         failed != null && current == null -> stringResource(R.string.cap_stopped_error)
+        done != null && current == null -> stringResource(R.string.capc_done_label, done.title)
         current != null -> (steps.current?.text ?: current.title).let { if (it.length > 30) it.take(29).trimEnd() + "…" else it }
         else -> stringResource(R.string.cap_at_rest)
     }
@@ -169,11 +169,12 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     val composerLabel = stringResource(R.string.cap_open_composer)
     val expandLabel = stringResource(R.string.cap_expand)
     val selectLabel = stringResource(R.string.cap_select_screen)
-    val capsuleDescription = stringResource(R.string.cap_description, label)
+    val crewSaid = crewDescription(crew)
+    val capsuleDescription = stringResource(R.string.cap_description, label).let { if (crewSaid.isEmpty()) it else stringResource(R.string.capc_description_more, it, crewSaid) }
     val shape = RoundedCornerShape(24.dp)
     Column(
         Modifier.then(if (expanded) Modifier.fillMaxWidth() else Modifier)
-            .shadow(10.dp, shape, ambientColor = Color(0x4020372C), spotColor = Color(0x4020372C))
+            .shadow(10.dp, shape, ambientColor = pcHue(0x4020372C), spotColor = pcHue(0x4020372C))
             .clip(shape).background(Glaze).border(1.dp, Rim, shape).animateContentSize(),
     ) {
         val wrap = hole
@@ -193,20 +194,28 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.width(if (gap != null && around?.contentLeft == false) gap else 13.dp))
-            CapDot(working = current?.state == SessionState.RUNNING, attention = needsYou || locked || failed != null)
-            Box(Modifier.width(8.dp))
-            Text(
-                if (expanded) (current?.let { "${it.title} · ${stateText(it).lowercase()}" } ?: stringResource(R.string.cap_smart_composer)) else label,
-                Modifier.then(if (expanded) Modifier.weight(1f) else Modifier.widthIn(max = around?.let { a -> with(density) { a.labelMaxPx.toDp() } }?.coerceAtMost(180.dp) ?: 180.dp)),
-                fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Label, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            if (expanded) CompanionGlyph(headMood, tick, moving) else CrewRow(crew, tick, moving)
+            val labelRoom = (around?.let { a -> with(density) { a.labelMaxPx.toDp() } }?.coerceAtMost(180.dp) ?: 180.dp) - crewExtraWidth(crew)
+            if (expanded || labelRoom >= 40.dp) {
+                Box(Modifier.width(8.dp))
+                Text(
+                    if (expanded) (current?.let { "${it.title} · ${moodText(headMood).lowercase()}" } ?: stringResource(R.string.cap_smart_composer)) else label,
+                    Modifier.then(if (expanded) Modifier.weight(1f) else Modifier.widthIn(max = labelRoom)),
+                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Label, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (expanded && current != null) Text(
+                elapsedText(clockNow - (activity[current.id]?.runStartedAtMs ?: current.createdAtMs)),
+                Modifier.padding(start = 8.dp), fontSize = 11.sp, color = Small, maxLines = 1, style = TextStyle(fontFeatureSettings = P.tabular),
             )
             if (expanded || !atRest) { Box(Modifier.width(8.dp)); PIcon(if (expanded) PIcons.close else PIcons.chevronDown, size = 13.dp, tint = Label) }
             Box(Modifier.width(if (gap != null && around?.contentLeft == true) gap + 8.dp else 13.dp))
         }
         if (!expanded) return@Column
 
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x24FFFFFF)))
-        Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 14.dp)) {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(pcHue(0x24FFFFFF)))
+        val maxBody = with(density) { (LocalResources.current.displayMetrics.heightPixels * 0.8f).toDp() }
+        Column(Modifier.fillMaxWidth().heightIn(max = maxBody).verticalScroll(rememberScrollState()).padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 14.dp)) {
             if (locked) {
                 Text((stringResource(R.string.cap_lockdown_text) + " " + (emergency.reason ?: "")).trim(), Modifier.padding(vertical = 4.dp), fontSize = 12.sp, color = Attention)
                 PButton(stringResource(R.string.dest_emergency), { capsule.open("emergency", null) }, style = ButtonStyle.Alt, tiny = true)
@@ -214,7 +223,7 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
             }
             approvals.firstOrNull()?.let { request ->
                 Text(request.description, Modifier.padding(vertical = 4.dp), fontSize = 12.sp, color = Attention, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                Text(request.assessment.localizedDescription(), fontSize = 11.sp, color = if (request.assessment.level >= RiskLevel.HIGH) Color(0xFFE7A493) else Small, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Text(request.assessment.localizedDescription(), fontSize = 11.sp, color = if (request.assessment.level >= RiskLevel.HIGH) pcHue(0xFFE7A493) else Small, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 ApprovalCountdown(request, Modifier.padding(top = 6.dp), dark = true)
                 Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     PButton(stringResource(R.string.appr_deny), { container.approvals.resolve(request.id, ApprovalDecision.Denied("denied from the capsule")) }, style = ButtonStyle.Alt, tiny = true)
@@ -243,23 +252,19 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
             }
 
             SectionTitle(stringResource(R.string.cap_section_sessions))
-            TrailRow(stringResource(R.string.cap_previous), trail.previous?.let { "${it.title} · ${stateText(it).lowercase()}" }, false)
-            TrailRow(stringResource(R.string.cap_current), current?.title, true)
-            TrailRow(stringResource(R.string.cap_next), trail.next?.title ?: stringResource(R.string.cap_nothing_queued), false)
+            CrewSessions(trail, crew, sessions, activity, headMood, clockNow, tick, moving, onFocus = { container.ui.focus(it) })
             SectionGap()
             SectionTitle(stringResource(R.string.cap_section_steps))
-            TrailRow(stringResource(R.string.cap_previous), steps.previous?.text, false)
-            TrailRow(stringResource(R.string.cap_current), steps.current?.text ?: if (current != null && current.plan.isEmpty()) stringResource(R.string.cap_no_steps) else null, true)
-            TrailRow(stringResource(R.string.cap_next), steps.next?.text, false)
+            CrewSteps(current, current?.let { activity[it.id] }, headMood, steps, clockNow, tick, moving)
 
             Row(Modifier.padding(top = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(
-                    Modifier.weight(1f).heightIn(min = 40.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x18FFFFFF)).border(1.dp, Color(0x2BFFFFFF), RoundedCornerShape(10.dp))
+                    Modifier.weight(1f).heightIn(min = 40.dp).clip(RoundedCornerShape(10.dp)).background(pcHue(0x18FFFFFF)).border(1.dp, pcHue(0x2BFFFFFF), RoundedCornerShape(10.dp))
                         .clickable(onClickLabel = stringResource(R.string.cap_write)) { capsule.openComposer(current?.id) }.padding(horizontal = 10.dp, vertical = 9.dp),
                 ) {
                     Text(
                         draft.ifBlank { stringResource(if (current != null) R.string.cap_ask_agent else R.string.cap_ask_umbra) } + if (chips.isNotEmpty()) "  · " + pluralStringResource(R.plurals.cap_attached, chips.size, chips.size) else "",
-                        fontSize = 12.sp, color = if (draft.isBlank()) Color(0xFFC5D8C5) else Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        fontSize = 12.sp, color = if (draft.isBlank()) pcHue(0xFFC5D8C5) else Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     )
                 }
                 PButton("", { capsule.startSelection() }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.target, contentDescription = selectLabel)
@@ -295,15 +300,7 @@ private fun SectionTitle(text: String) =
     Text(text.uppercase(), Modifier.padding(top = 4.dp, bottom = 5.dp), fontSize = 9.sp, letterSpacing = 1.sp, color = Section)
 
 @Composable
-private fun SectionGap() = Box(Modifier.padding(vertical = 9.dp).fillMaxWidth().height(1.dp).background(Color(0x22FFFFFF)))
-
-@Composable
-private fun TrailRow(label: String, value: String?, current: Boolean) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Text(label, Modifier.width(62.dp), fontSize = 11.sp, color = Small)
-        Text(value ?: "—", Modifier.weight(1f), fontSize = 12.sp, color = if (current) Color.White else RowText, fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal, maxLines = 2, overflow = TextOverflow.Ellipsis)
-    }
-}
+private fun SectionGap() = Box(Modifier.padding(vertical = 9.dp).fillMaxWidth().height(1.dp).background(pcHue(0x22FFFFFF)))
 
 /**
  * The bottom Quick Composer: the same draft and context as Home and the capsule, the target (new work or a running
@@ -347,8 +344,8 @@ internal fun QuickComposerView(capsule: Capsule, container: AppContainer, screen
             .onGloballyPositioned { c -> atBottom = c.positionOnScreen().y + c.size.height >= screenHeightPx - 2 }
             .padding(bottom = if (atBottom) with(density) { navigationInsetPx.toDp() } else 0.dp)
             .padding(horizontal = 12.dp, vertical = 10.dp)
-            .shadow(14.dp, shape, ambientColor = Color(0x33455F49), spotColor = Color(0x44455F49)).clip(shape)
-            .background(Color(0xFFF7FAF4)).border(1.dp, Color(0xB5FFFFFF), shape).padding(horizontal = 12.dp, vertical = 10.dp),
+            .shadow(14.dp, shape, ambientColor = pcHue(0x33455F49), spotColor = pcHue(0x44455F49)).clip(shape)
+            .background(pc(0xFFF7FAF4)).border(1.dp, pc(0xB5FFFFFF), shape).padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Box(Modifier.weight(1f)) {
@@ -370,7 +367,7 @@ internal fun QuickComposerView(capsule: Capsule, container: AppContainer, screen
         }
         chips.forEach { chip -> ChipRow(chip) { container.ui.removeContext(chip.id) } }
         Box(Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 48.dp)) {
-            if (draft.isEmpty()) Text(stringResource(if (targetSession != null) R.string.cap_message_agent else R.string.cap_ask_umbra), fontSize = 15.sp, color = Color(0xFF9AAA98))
+            if (draft.isEmpty()) Text(stringResource(if (targetSession != null) R.string.cap_message_agent else R.string.cap_ask_umbra), fontSize = 15.sp, color = pc(0xFF9AAA98))
             val messageLabel = stringResource(R.string.cap_message)
             BasicTextField(
                 draft, { container.ui.saveDraft(it) },
@@ -399,7 +396,7 @@ internal fun ChipRow(chip: ContextChip, onRemove: () -> Unit) {
         chip.imagePath?.let { path -> runCatching { BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = 4 })?.asImageBitmap() }.getOrNull() }
     }
     Row(
-        Modifier.padding(top = 8.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFE4EDE1)).border(1.dp, Color(0xFFC9D8C6), RoundedCornerShape(12.dp)).padding(4.dp),
+        Modifier.padding(top = 8.dp).clip(RoundedCornerShape(12.dp)).background(pc(0xFFE4EDE1)).border(1.dp, pc(0xFFC9D8C6), RoundedCornerShape(12.dp)).padding(4.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (thumb != null) Image(thumb, null, Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
@@ -423,7 +420,7 @@ internal fun SelectionView(capture: ScreenContext.Capture, topInsetPx: Int, bott
     val points = remember { mutableStateListOf<Offset>() }
     var origin by remember { mutableStateOf(Offset.Zero) }
     val density = LocalDensity.current
-    val dim = Color(0x550C2414)
+    val dim = pcHue(0x550C2414)
     val selectionDescription = stringResource(R.string.sel_description)
     Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionOnScreen() }) {
         Canvas(
@@ -442,11 +439,11 @@ internal fun SelectionView(capture: ScreenContext.Capture, topInsetPx: Int, bott
                     close()
                 }
                 clipPath(path, ClipOp.Difference) { drawRect(dim) }
-                drawPath(path, Color(0x19AEE7B0))
-                drawPath(path, Color(0xFFE0FAE6), style = Stroke(width = 2.dp.toPx() * 1.5f))
+                drawPath(path, pcHue(0x19AEE7B0))
+                drawPath(path, pcHue(0xFFE0FAE6), style = Stroke(width = 2.dp.toPx() * 1.5f))
             } else {
                 drawRect(dim)
-                points.firstOrNull()?.let { drawCircle(Color(0xFFE0FAE6), radius = 18.dp.toPx(), center = it, style = Stroke(width = 3.dp.toPx())) }
+                points.firstOrNull()?.let { drawCircle(pcHue(0xFFE0FAE6), radius = 18.dp.toPx(), center = it, style = Stroke(width = 3.dp.toPx())) }
             }
         }
         Row(
@@ -459,7 +456,7 @@ internal fun SelectionView(capture: ScreenContext.Capture, topInsetPx: Int, bott
         }
         if (points.isEmpty()) Text(
             stringResource(R.string.sel_hint),
-            Modifier.align(Alignment.Center).clip(RoundedCornerShape(14.dp)).background(Color(0xAA17251D)).padding(horizontal = 14.dp, vertical = 9.dp),
+            Modifier.align(Alignment.Center).clip(RoundedCornerShape(14.dp)).background(pcHue(0xAA17251D)).padding(horizontal = 14.dp, vertical = 9.dp),
             fontSize = 14.sp, color = Color.White,
         )
         // A solid glaze base under the three buttons: nothing of the screenshot shows between them, and Clear is always
@@ -467,7 +464,7 @@ internal fun SelectionView(capture: ScreenContext.Capture, topInsetPx: Int, bott
         Row(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                 .padding(start = 12.dp, end = 12.dp, bottom = with(density) { bottomInsetPx.toDp() } + 12.dp)
-                .shadow(12.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x4020372C), spotColor = Color(0x4020372C))
+                .shadow(12.dp, RoundedCornerShape(22.dp), ambientColor = pcHue(0x4020372C), spotColor = pcHue(0x4020372C))
                 .clip(RoundedCornerShape(22.dp)).background(Glaze).border(1.dp, Rim, RoundedCornerShape(22.dp))
                 .padding(8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
