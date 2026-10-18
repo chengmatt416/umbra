@@ -124,3 +124,47 @@ class Recorder:
         with open(os.path.join(RAW, self.name + ".marks.json"), "w") as f:
             json.dump({"segments": files, "marks": self.marks}, f, indent=1)
         print("saved", files)
+
+
+# ---- the redesign (0.3): overlay windows (the Capsule) take real touch streams, not `input tap`
+def mtap(x, y, hold=0.06):
+    sh("input", "motionevent", "DOWN", str(int(x)), str(int(y)))
+    time.sleep(hold)
+    sh("input", "motionevent", "UP", str(int(x)), str(int(y)))
+
+
+def mdrag(points, step=0.016):
+    """A finger along [(x, y), ...]: down at the first point, up at the last."""
+    (x0, y0), rest = points[0], points[1:]
+    sh("input", "motionevent", "DOWN", str(int(x0)), str(int(y0)))
+    for x, y in rest:
+        time.sleep(step)
+        sh("input", "motionevent", "MOVE", str(int(x)), str(int(y)))
+    x1, y1 = points[-1]
+    sh("input", "motionevent", "UP", str(int(x1)), str(int(y1)))
+
+
+def mlong(x, y, hold=0.9):
+    mtap(x, y, hold)
+
+
+def circle(cx, cy, rx, ry, n=36, turns=1.08):
+    import math
+    return [(cx + rx * math.cos(2 * math.pi * turns * i / n - math.pi / 2), cy + ry * math.sin(2 * math.pi * turns * i / n - math.pi / 2)) for i in range(n + 1)]
+
+
+def menu(label, wait=1.0):
+    """The bottom-right menu button, then one of its choices."""
+    tap_text("Open the menu", exact=True)
+    time.sleep(wait)
+    tap_text(label, exact=True)
+
+
+def ui_set(bridge, **kw):
+    return bridge.control("ui.set", {k: str(v).lower() if isinstance(v, bool) else v for k, v in kw.items()})
+
+
+def fresh_app(route="home", wait=3.0):
+    """A new activity at [route]: pages keep their scroll and disclosures while the app runs."""
+    sh("am", "start", "-f", "0x10008000", "-n", "app.umbra.agent/.MainActivity", "--es", "page", route)
+    time.sleep(wait)

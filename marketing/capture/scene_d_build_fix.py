@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Scene D: the section-33 loop. Build an Android app in the Linux environment, install it, run it in a background display,
 read the crash from the log, fix the source, rebuild, reinstall, sign in. Same flow as scripts/ondevice-scripted-acceptance.py,
-paced for the camera and screen-recorded; the on-screen UI switches between the task and the Displays page."""
+paced for the camera and screen-recorded. Power mode: the task's chat shows the background display live (a card that
+opens full size), and the second run is watched on the Screens page."""
 import importlib.util
 import re
 import threading
@@ -49,7 +50,14 @@ def plain(step, wait=P, before=None):
     return run
 
 
+def close_live():
+    p = find("Close", timeout=0.6, exact=True)
+    if p:
+        tap(*p); time.sleep(0.8)
+
+
 def to_task():
+    close_live()
     sh("am", "start", "-n", "app.umbra.agent/.MainActivity", "--es", "session", state["sid"])
     time.sleep(1.2)
     for _ in range(4):                      # follow the newest cards: the chat does not auto-scroll under a long prompt
@@ -67,7 +75,17 @@ def follow_answer():
 
 
 def to_displays():
-    page("displays")
+    page("screens")
+
+
+def open_live():
+    """The live card in the chat (it appears once the agent works on a background display), opened full size."""
+    for _ in range(4):
+        swipe(360, 1050, 360, 330, 250); time.sleep(0.25)
+    time.sleep(1.5)
+    p = find("Screens", timeout=6, exact=True)
+    if p:
+        tap(*p)
 
 
 def mark(label):
@@ -86,7 +104,7 @@ model = ScriptedModel([
     plain(tool("bash", {"command": "cd %s && ./build.sh 2>&1 | tail -5" % project, "timeout": 900}), 1.5, lambda: (rec and rec.t0 and rec.mark("build"))),
     plain(tool("android_packages", {"action": "install", "apk_path": project + "/build/crashy-login.apk"}), P, mark("install")),
     plain(tool("android_display", {"action": "create", "width": 720, "height": 1280, "dpi": 320}), P),
-    with_display("android_launch", {"package": FIX}, P, both(to_displays, mark("display"))),
+    with_display("android_launch", {"package": FIX}, P, both(open_live, mark("display"))),
     with_display("android_tap", {"label": "Username"}, 3),
     with_display("android_type", {"text": "demo"}, 2.5),
     with_display("android_tap", {"label": "Password"}, 2),
@@ -112,6 +130,7 @@ model = ScriptedModel([
 ]).start()
 b.control("provider.set", {"id": "scripted", "base_url": model.url_for_emulator, "model": "scripted-model", "key": ""})
 b.control("approval_mode", {"mode": "autonomous"}); b.control("capsule.set", {"on": False})
+ui_set(b, mode="power", onboarded=True)
 task = ("This project is in %s (an Android app, package %s). Signing in as demo / umbra123 crashes the app. Build it with ./build.sh, "
         "install the apk on the phone, reproduce the crash in a background display, read the log to find the cause, fix the source, "
         "rebuild and reinstall, and show that signing in works." % (project, FIX))

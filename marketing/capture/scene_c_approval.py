@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Scene C: a risky action waits in the Inbox; the person denies it; the phone is untouched."""
+"""Scene C: a risky action waits on its task's row on Home; the person reads it and denies it there; the phone is
+untouched and the task says so."""
 import time
 from lib import *
 
@@ -12,7 +13,8 @@ m = ScriptedModel([
 ]).start()
 b.control("provider.set", {"id": "scripted", "base_url": m.url_for_emulator, "model": "scripted-model", "key": ""})
 b.control("approval_mode", {"mode": "balanced"}); b.control("capsule.set", {"on": False})
-page("home"); time.sleep(2)
+ui_set(b, mode="simple", onboarded=True)
+fresh_app("home", 2)
 sid = None
 for _ in range(60):
     try:
@@ -22,17 +24,14 @@ for _ in range(60):
 for _ in range(60):
     if b.control("approvals.list"): break
     time.sleep(1)
-page("home"); time.sleep(2)
-INBOX = find("Inbox", exact=True)       # the Inbox tab, found by its label
+fresh_app("home", 2.5)
 rec = Recorder("scene_c").start()
 rec.mark("home")
-time.sleep(1.5)
-tap(*INBOX)
 time.sleep(3.5)
-rec.mark("card")
+rec.mark("row")
 tap_text("Deny", exact=True)
 rec.mark("denied")
-time.sleep(2.5)
+time.sleep(3.0)
 sh("am", "start", "-n", "app.umbra.agent/.MainActivity", "--es", "session", sid)   # the task itself: it stopped
 time.sleep(2.0)
 for _ in range(2):
