@@ -132,6 +132,12 @@ class SessionOps(
         }
     }
 
+    /** A thinking level chosen by hand: kept on the session (a restart starts with it), not only in the live process. */
+    fun setEffort(level: String) = scope.launch {
+        runCatching { container.supervisor.setEffort(sessionId, app.umbra.core.session.Effort(level)) }
+            .onFailure { onError("Setting thinking: ${it.message ?: it::class.simpleName}") }
+    }
+
     fun stats(onStats: (OmpSessionStats) -> Unit) = launch("Reading statistics", then = onStats) { it.sessionStats() }
 
     /** The user changed the plan: that is a new plan revision with the user as its source (§4.3). */
@@ -211,10 +217,23 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
     val view = if (simple) View.Chat else chosenView
     var expanded by remember(id) { mutableStateOf(false) }
     var sheet by remember(id) { mutableStateOf(Sheet.None) }
+    var effortSheet by remember(id) { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var contractDialog by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var titleOpen by remember(id) { mutableStateOf(false) }
+
+    if (effortSheet) {
+        val live = conversation.session?.model
+        app.umbra.agent.ui.models.EffortPicker(
+            current = session.effort,
+            supported = live?.efforts.orEmpty(),
+            modelName = live?.name,
+            modelIsAuto = false,
+            onChoose = { e -> scope.launch { runCatching { container.supervisor.setEffort(id, e) }.onFailure { error = it.message } } },
+            onDismiss = { effortSheet = false },
+        )
+    }
 
     // omp asks the client to open a sign-in page or prefill the composer.
     LaunchedEffect(id) {
@@ -292,7 +311,10 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
             }
             if (!typingInTerminal && !simple) app.umbra.agent.ui.porcelain.FadingRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 PButton(conversation.session?.model?.name ?: session.model?.modelId ?: stringResource(R.string.cur_model), { sheet = Sheet.Model }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.spark)
-                conversation.session?.thinkingLevel?.let { PButton(stringResource(R.string.cur_thinking, it), { sheet = Sheet.Model }, style = ButtonStyle.Ghost, tiny = true) }
+                // How hard it thinks: the session's own effort ("Auto → High"), else what omp reports.
+                (session.effort?.let { app.umbra.agent.ui.models.sessionEffortLabel(it) } ?: conversation.session?.thinkingLevel?.let { app.umbra.agent.ui.models.effortName(it) })?.let {
+                    PButton(stringResource(R.string.r_effort_chip, it), { effortSheet = true }, style = ButtonStyle.Ghost, tiny = true)
+                }
                 conversation.session?.contextUsage?.let { Tag(stringResource(R.string.cur_context, it.percent.toInt()), if (it.percent > 85) Tone.Warn else Tone.Neutral) }
                 conversation.session?.todos?.takeIf { it.isNotEmpty() }?.let { ph ->
                     val tasks = ph.flatMap { it.tasks }

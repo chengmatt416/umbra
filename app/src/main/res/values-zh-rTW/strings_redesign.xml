@@ -196,4 +196,20 @@
     <string name="r_rec_channel">螢幕錄影</string>
     <string name="r_rec_notification">Umbra 正在錄製螢幕。點一下膠囊就停止。</string>
     <string name="r_rec_finishing">正在整理錄影…</string>
+    <!-- 強度（docs/design/agents-2026-10.md §5） -->
+    <string name="r_effort_title">強度</string>
+    <string name="r_effort_chip">強度・%1$s</string>
+    <string name="r_effort_auto_body">Laya 依任務決定（沒有 Laya 時由 omp 判斷）</string>
+    <string name="r_effort_auto_to">自動 → %1$s</string>
+    <string name="r_effort_minimal">最少</string>
+    <string name="r_effort_low">低</string>
+    <string name="r_effort_low_body">快、便宜，適合簡單的事</string>
+    <string name="r_effort_medium">中</string>
+    <string name="r_effort_high">高</string>
+    <string name="r_effort_xhigh">極高</string>
+    <string name="r_effort_xhigh_body">長時間、困難的任務</string>
+    <string name="r_effort_max">最大</string>
+    <string name="r_effort_off">關閉</string>
+    <string name="r_effort_unsupported">此模型不支援</string>
+    <string name="r_effort_by_model">等級依「自動」選到的模型調整</string>
 </resources>

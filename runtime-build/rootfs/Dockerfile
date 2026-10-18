@@ -4,7 +4,7 @@
 FROM umbra-debian-base:trixie
 
 ARG BUN_VERSION=1.3.14
-ARG OMP_VERSION=18.6.1
+ARG OMP_VERSION=18.12.1
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \

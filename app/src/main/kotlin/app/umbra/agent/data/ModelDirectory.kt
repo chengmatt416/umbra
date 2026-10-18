@@ -23,6 +23,8 @@ data class DirectoryModel(
     val name: String = id,
     val images: Boolean = false,
     val reasoning: Boolean = false,
+    /** The thinking efforts omp accepts for it (low … max); empty when it does not reason or the list is older. */
+    val efforts: List<String> = emptyList(),
     val contextWindow: Long? = null,
     /** The model "Auto" takes for this provider. */
     val recommended: Boolean = false,

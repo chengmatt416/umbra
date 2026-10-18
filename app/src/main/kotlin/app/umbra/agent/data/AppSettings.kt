@@ -44,7 +44,10 @@ data class ApprovalPrefs(val mode: ApprovalMode = ApprovalMode.BALANCED)
 data class AppPrefs(
     val providers: List<ProviderConfig> = emptyList(),
     val defaultModel: ModelRef? = null,
+    /** The effort the user chose for new tasks, used when [autoEffort] is off (null: omp's default). */
     val thinkingLevel: String? = null,
+    /** "Auto" effort: Laya reads each new task and picks how hard the model thinks (omp's own judge without Laya). */
+    val autoEffort: Boolean = true,
     val approvalMode: ApprovalMode = ApprovalMode.BALANCED,
     /** Appended to the agent's instructions in every session. */
     val standingInstructions: String = "",
@@ -146,9 +149,13 @@ class AppSettings(context: Context) {
 
     private fun load(): AppPrefs = prefs.getString(KEY, null)?.let {
         try {
-            val loaded = UmbraJson.decodeFromString(AppPrefs.serializer(), it)
+            var loaded = UmbraJson.decodeFromString(AppPrefs.serializer(), it)
             // Saved before "Auto" existed: a model the person had chosen stays chosen.
-            if ("\"autoModel\"" !in it && loaded.defaultModel != null) loaded.copy(autoModel = false) else loaded
+            if ("\"autoModel\"" !in it && loaded.defaultModel != null) loaded = loaded.copy(autoModel = false)
+            // The same for effort: a thinking level the person had set stays set.
+            if ("\"autoEffort\"" !in it && loaded.thinkingLevel != null) loaded = loaded.copy(autoEffort = false)
+            loaded.defaultModel?.let { m -> ModelRenames.current(m).takeIf { it != m }?.let { loaded = loaded.copy(defaultModel = it) } }
+            loaded
         } catch (_: Exception) {
             null
         }
@@ -171,7 +178,7 @@ class AppProviderResolver(
     override suspend fun resolve(sessionModel: ModelRef?): ProviderSelection {
         val prefs = settings.value
         if (prefs.providers.isEmpty()) throw NoProviderException("No model is connected yet. Connect an account or a key in Accounts and models.")
-        val chosen = sessionModel ?: (if (prefs.autoModel) auto(prefs) else null) ?: prefs.defaultModel
+        val chosen = (sessionModel ?: (if (prefs.autoModel) auto(prefs) else null) ?: prefs.defaultModel)?.let(ModelRenames::current)
         val sessionProvider = chosen?.provider
         val keys = LinkedHashMap<String, String>()
         val custom = ArrayList<OmpProvider>()
@@ -203,3 +210,19 @@ class AppProviderResolver(
 }
 
 class NoProviderException(message: String) : IllegalStateException(message)
+
+/**
+ * Model ids the pinned omp no longer has, and what takes their place: a saved choice, an older session, or a cached
+ * model list from before an omp update would otherwise start omp on a model it refuses.
+ */
+object ModelRenames {
+    private val renamed = mapOf(
+        // omp 18.12.1's catalog has no gpt-5.5 for ChatGPT accounts.
+        ("openai-codex" to "gpt-5.5") to "gpt-6.1-sol",
+        // Antigravity's Claude ids lost their "-medium" suffix.
+        ("google-antigravity" to "claude-sonnet-5-5-medium") to "claude-sonnet-5-5",
+        ("google-antigravity" to "claude-opus-5-5-medium") to "claude-opus-5-5",
+    )
+
+    fun current(ref: ModelRef): ModelRef = renamed[ref.provider to ref.modelId]?.let { ref.copy(modelId = it) } ?: ref
+}

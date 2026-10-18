@@ -12,7 +12,7 @@ environment to work in. This page is how to build it, test it and run it.
 | Android SDK, platform 37 + build-tools | the app | `ANDROID_HOME` or `~/Library/Android/sdk`. |
 | An Android 16 arm64 emulator **or** a rooted phone | live tests, running the app | `scripts/emulator.sh start` boots the `umbra36` AVD (google_apis, arm64, rootable with `adb shell su 0`). |
 | Docker | building the Linux environment image | Only for `runtime-build/rootfs/build.sh`. |
-| `omp` + Bun on the host | tests that run the real agent | `bun install -g @oh-my-pi/pi-coding-agent@18.6.1`. Tests skip themselves without it. |
+| `omp` + Bun on the host | tests that run the real agent | `bun install -g @oh-my-pi/pi-coding-agent@18.12.1`. Tests skip themselves without it. |
 
 `source scripts/env.sh` once per shell: it exports `JAVA_HOME` and `ANDROID_HOME`.
 
@@ -78,7 +78,7 @@ a test method that returns a value.
 runtime-build/rootfs/build.sh dev     # build/rootfs/umbra-rootfs-dev-arm64.tar.xz (+ .sha256, manifest.json)
 ```
 
-The archive is a Debian trixie arm64 root filesystem with Bun, the pinned omp (18.6.1), git, Python
+The archive is a Debian trixie arm64 root filesystem with Bun, the pinned omp (18.12.1), git, Python
 and ripgrep; larger toolchains are *packs* (`guest/packs/*.apt`, plus an optional executable `<pack>.post`
 step for what Debian does not package) installed on demand from the app: `dev`, `java`, `node`, `android`
 (Java 21, aapt2, apksigner, d8 and the SDK platform) and `gui` (Xvfb, openbox, AT-SPI).

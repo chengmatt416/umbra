@@ -136,7 +136,7 @@ private fun ModelSheet(conversation: ConversationState, ops: SessionOps, onClose
         Kicker(stringResource(R.string.omp_thinking))
         FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             levels.forEach { l ->
-                PButton(l, { ops.launch("Setting thinking") { it.setThinkingLevel(l) } }, style = if (session?.thinkingLevel == l) ButtonStyle.Primary else ButtonStyle.Alt, tiny = true)
+                PButton(l, { ops.setEffort(l) }, style = if (session?.thinkingLevel == l) ButtonStyle.Primary else ButtonStyle.Alt, tiny = true)
             }
         }
         Gap(8.dp)

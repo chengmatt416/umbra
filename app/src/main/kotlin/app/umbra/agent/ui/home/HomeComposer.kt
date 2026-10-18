@@ -43,8 +43,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.umbra.agent.R
 import app.umbra.agent.container
 import app.umbra.agent.data.UiMode
+import app.umbra.agent.ui.models.EffortPicker
 import app.umbra.agent.ui.models.ModelPicker
+import app.umbra.agent.ui.models.effortLabel
 import app.umbra.agent.ui.models.modelLabel
+import app.umbra.core.session.Effort
 import app.umbra.agent.ui.porcelain.P
 import app.umbra.agent.ui.porcelain.PIcon
 import app.umbra.agent.ui.porcelain.PIcons
@@ -66,11 +69,12 @@ fun HomeComposer(modifier: Modifier = Modifier, dimmed: Boolean = false, hint: S
     val projects by container.projects.all.collectAsStateWithLifecycle()
     val homeProject by container.ui.homeProject.collectAsStateWithLifecycle()
     var picker by remember { mutableStateOf(false) }
+    var effortPicker by remember { mutableStateOf(false) }
     var projectMenu by remember { mutableStateOf(false) }
     val canListen = remember { SpeechRecognizer.isRecognitionAvailable(context) }
     val listening by container.ui.listening.collectAsStateWithLifecycle()
     val power = prefs.uiMode != UiMode.SIMPLE
-    val shape = RoundedCornerShape(if (power) 26.dp else 28.dp)
+    val shape = RoundedCornerShape(26.dp)
     // The draft is cleared by the send itself once the message went (ScreenContext.send), not before.
     val send = { if (draft.isNotBlank()) onSend(draft.trim()) }
 
@@ -90,12 +94,11 @@ fun HomeComposer(modifier: Modifier = Modifier, dimmed: Boolean = false, hint: S
         modifier.alpha(if (dimmed) 0.35f else 1f)
             .shadow(6.dp, shape, ambientColor = pcHue(0x1A455F49), spotColor = pcHue(0x26455F49))
             .clip(shape).background(pc(0xFFF6F8F2)).border(1.dp, P.line, shape)
-            .padding(start = 10.dp, end = 6.dp, top = if (power) 12.dp else 6.dp, bottom = 6.dp),
+            .padding(start = 10.dp, end = 6.dp, top = 8.dp, bottom = 6.dp),
     ) {
         chips.forEach { chip -> app.umbra.agent.capsule.ChipRow(chip) { container.ui.removeContext(chip.id) } }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (!power) ModelChip(modelLabel(prefs, container.modelDirectory)) { picker = true }
-            Box(Modifier.weight(1f).padding(start = if (power) 8.dp else 4.dp).heightIn(min = 44.dp), contentAlignment = Alignment.CenterStart) {
+            Box(Modifier.weight(1f).padding(start = 8.dp).heightIn(min = 44.dp), contentAlignment = Alignment.CenterStart) {
                 if (draft.isEmpty()) Text(hint ?: stringResource(R.string.r_composer_hint), fontSize = 15.sp, color = P.muted, maxLines = 1)
                 val label = stringResource(R.string.cap_message)
                 BasicTextField(
@@ -104,26 +107,37 @@ fun HomeComposer(modifier: Modifier = Modifier, dimmed: Boolean = false, hint: S
                     textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = P.ink), cursorBrush = SolidColor(P.accent2), maxLines = 5,
                 )
             }
-            if (!power) SendOrMic(draft.isNotBlank(), canListen, onMic = {
+            SendOrMic(draft.isNotBlank(), canListen, onMic = {
                 container.ui.listening.value = true
             }, onSend = send)
         }
-        if (power) Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Box {
+        // The words on top, what the next task takes underneath: the model, its effort, and in Power where it works.
+        Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ModelChip(modelLabel(prefs, container.modelDirectory), mono = power) { picker = true }
+            EffortChip(effortLabel(prefs)) { effortPicker = true }
+            // The project's name gives way first (it shortens), never the model or the effort.
+            if (power) Box(Modifier.weight(1f, fill = false)) {
                 ModelChip(homeProject?.let { projects[it]?.name } ?: stringResource(R.string.composer_independent), mono = true) { projectMenu = true }
                 DropdownMenu(projectMenu, { projectMenu = false }) {
                     DropdownMenuItem(text = { Text(stringResource(R.string.composer_independent_session)) }, onClick = { projectMenu = false; container.ui.setHomeProject(null) })
                     projects.values.sortedBy { it.createdAtMs }.forEach { p -> DropdownMenuItem(text = { Text(p.name) }, onClick = { projectMenu = false; container.ui.setHomeProject(p.id) }) }
                 }
             }
-            ModelChip(modelLabel(prefs, container.modelDirectory), mono = true) { picker = true }
-            Box(Modifier.weight(1f))
-            SendOrMic(draft.isNotBlank(), canListen, onMic = {
-                container.ui.listening.value = true
-            }, onSend = send)
         }
     }
     if (picker) ModelPicker(onDismiss = { picker = false }, onConnect = { picker = false; onAccounts() })
+    if (effortPicker) {
+        // The levels of the model the next task runs on; with "Auto" choosing the model, every level stays open.
+        val fixed = if (prefs.autoModel) null else prefs.defaultModel
+        EffortPicker(
+            current = if (prefs.autoEffort || prefs.thinkingLevel == null) null else Effort(prefs.thinkingLevel!!),
+            supported = container.modelDirectory.model(fixed)?.efforts.orEmpty(),
+            modelName = fixed?.let { modelLabel(prefs, container.modelDirectory) },
+            modelIsAuto = fixed == null,
+            onChoose = { e -> container.settings.update { if (e.auto) it.copy(autoEffort = true) else it.copy(autoEffort = false, thinkingLevel = e.level) } },
+            onDismiss = { effortPicker = false },
+        )
+    }
 }
 
 /** The small chip that names the model (or the project) and opens its choices. */
@@ -135,6 +149,22 @@ fun ModelChip(label: String, mono: Boolean = false, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(label, fontSize = if (mono) 12.sp else 13.sp, fontFamily = if (mono) P.mono else P.sans, fontWeight = FontWeight.Medium, color = P.ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(vertical = 6.dp))
+        PIcon(PIcons.chevronDown, size = 14.dp, tint = P.sub)
+    }
+}
+
+/** The effort chip: a gauge and the level ("Auto", "High"); its name is read out, not printed, to keep the row short. */
+@Composable
+fun EffortChip(level: String, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    val described = stringResource(R.string.r_effort_chip, level)
+    Row(
+        Modifier.clip(shape).background(P.base2).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = described }
+            .padding(start = 8.dp, end = 6.dp).heightIn(min = 32.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        PIcon(PIcons.gauge, size = 15.dp, tint = P.sub)
+        Text(level, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = P.ink, maxLines = 1, modifier = Modifier.padding(vertical = 6.dp))
         PIcon(PIcons.chevronDown, size = 14.dp, tint = P.sub)
     }
 }

@@ -209,4 +209,20 @@
     <string name="r_rec_channel">Screen recording</string>
     <string name="r_rec_notification">Umbra is recording the screen. Tap the Capsule to stop.</string>
     <string name="r_rec_finishing">Getting the recording ready…</string>
+    <!-- Effort (docs/design/agents-2026-10.md §5) -->
+    <string name="r_effort_title">Effort</string>
+    <string name="r_effort_chip">Effort · %1$s</string>
+    <string name="r_effort_auto_body">Laya decides from the task (omp decides when Laya is off)</string>
+    <string name="r_effort_auto_to">Auto → %1$s</string>
+    <string name="r_effort_minimal">Minimal</string>
+    <string name="r_effort_low">Low</string>
+    <string name="r_effort_low_body">Fast and cheap, for simple things</string>
+    <string name="r_effort_medium">Medium</string>
+    <string name="r_effort_high">High</string>
+    <string name="r_effort_xhigh">Extra high</string>
+    <string name="r_effort_xhigh_body">Long, hard tasks</string>
+    <string name="r_effort_max">Max</string>
+    <string name="r_effort_off">Off</string>
+    <string name="r_effort_unsupported">Not on this model</string>
+    <string name="r_effort_by_model">Levels follow the model Auto picks</string>
 </resources>

@@ -385,7 +385,8 @@ class AgentSession internal constructor(
         loadExtensions = false,
         extraArgs = buildList {
             addAll(listOf("--append-system-prompt", "${files.ompPath.trimEnd('/')}/$SYSTEM_PROMPT_FILE"))
-            selection.thinkingLevel?.let { addAll(listOf("--thinking", it)) }
+            // The session's own effort (chosen for it, or by Auto) wins over the user's default.
+            (session.effort?.level ?: selection.thinkingLevel)?.let { addAll(listOf("--thinking", it)) }
         },
     )
 

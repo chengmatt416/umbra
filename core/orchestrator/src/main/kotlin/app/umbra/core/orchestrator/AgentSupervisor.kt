@@ -103,6 +103,7 @@ class AgentSupervisor(
         workspaceId: String? = null,
         model: ModelRef? = null,
         projectId: String? = null,
+        effort: app.umbra.core.session.Effort? = null,
     ): Session {
         val now = deps.clock.nowMs()
         val id = SessionIds.generate(now)
@@ -118,19 +119,20 @@ class AgentSupervisor(
             workspaceId = workspace,
             model = model,
             projectId = projectId,
+            effort = effort,
         )
         return deps.store.create(session)
     }
 
     /** Creates a session and starts working on the request, with [images] (a screen selection, a photo) attached. */
-    suspend fun launch(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList()): Session {
+    suspend fun launch(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList(), effort: app.umbra.core.session.Effort? = null): Session {
         // What would refuse the start refuses it before a session exists: a refused request leaves no failed session.
         // (send checks again, and takes the slot.)
         checkFence()
         deps.admission(projectId, runningByProject())?.let { throw CapacityException(it) }
         deps.serviceAdmission(null)?.let { throw CapacityException(it) }
         governor?.decision?.value?.let { if (!it.allowNewSessions) throw CapacityException(capacityReason()) }
-        val session = create(request, title, workspaceId, model, projectId = projectId)
+        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort)
         try {
             send(session.id, request, images)
         } catch (e: Exception) {
@@ -152,13 +154,13 @@ class AgentSupervisor(
      * what the phone can take. Refused outright: during a lockdown, when [QUEUE_LIMIT] requests already wait, and a
      * request with pictures that cannot start now (pictures are not kept for later).
      */
-    suspend fun submit(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList()): Session {
+    suspend fun submit(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList(), effort: app.umbra.core.session.Effort? = null): Session {
         checkFence()
         val problem = waitingReason(projectId)
-        if (problem == null && (images.isNotEmpty() || queued().isEmpty())) return launch(request, title, workspaceId, model, projectId, images)
+        if (problem == null && (images.isNotEmpty() || queued().isEmpty())) return launch(request, title, workspaceId, model, projectId, images, effort)
         if (images.isNotEmpty()) throw CapacityException("$problem A request with a picture is not queued; send it again when a slot is free.")
         if (queued().size >= QUEUE_LIMIT) throw CapacityException("${problem ?: "Requests are waiting."} The queue is full ($QUEUE_LIMIT waiting); stop or wait for some.")
-        val session = create(request, title, workspaceId, model, projectId = projectId)
+        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort)
         val waiting = deps.store.update(session.id) { it.copy(queuedAtMs = deps.clock.nowMs()) } ?: session
         wake.trySend(Unit)
         return waiting
@@ -241,6 +243,15 @@ class AgentSupervisor(
         val session = sessionFor(sessionId)
         if (!session.isProcessAlive) governor?.decision?.value?.let { if (!it.allowNewSessions) throw CapacityException(capacityReason()) }
         return session.withOmp(block)
+    }
+
+    /**
+     * Changes how hard a session thinks, from now on: kept on the session (a restarted process starts with it) and
+     * given to its omp process when one is running. A session without a process takes it at its next start.
+     */
+    suspend fun setEffort(sessionId: String, effort: app.umbra.core.session.Effort) {
+        deps.store.update(sessionId) { it.copy(effort = effort) } ?: throw app.umbra.core.session.SessionNotFoundException(sessionId)
+        live[sessionId]?.takeIf { it.isProcessAlive }?.withOmp { it.setThinkingLevel(effort.level) }
     }
 
     /** After a command that changed the transcript (branch, fork, switch, new): the GUI reads it again. */

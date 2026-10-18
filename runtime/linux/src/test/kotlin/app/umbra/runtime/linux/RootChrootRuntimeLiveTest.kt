@@ -54,7 +54,7 @@ class RootChrootRuntimeLiveTest {
         val versions = guest.versions()
         assertTrue(versions != null, "versions() must work on a mounted guest")
         assertEquals("1.3.14", versions!!["bun"])
-        assertEquals("18.6.1", versions["omp"])
+        assertEquals("18.12.1", versions["omp"])
         assertTrue(versions["debian"]!!.startsWith("13"), "Debian 13: $versions")
         assertTrue(versions["git"]!!.startsWith("2."), "git: $versions")
     }

@@ -45,6 +45,8 @@ object PIcons {
     val download = IconSpec(listOf("M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4" to false))
     val copy = IconSpec(listOf("M10 8h9a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-9a2 2 0 0 1 -2 -2v-9a2 2 0 0 1 2 -2z" to false, "M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" to false))
     val eye = IconSpec(listOf("M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" to false, "M9 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0z" to false))
+    /** Effort (how hard the model thinks): a gauge. */
+    val gauge = IconSpec(listOf("m12 14 4-4" to false, "M3.34 19a10 10 0 1 1 17.32 0" to false))
     val activity = IconSpec(listOf("M2 12h4l3-8 5 16 3-8h5" to false))
     val file = IconSpec(listOf("M5 2h9l5 5v15H5V2Zm9 0v5h5" to false))
     val box = IconSpec(listOf("m12 2 9 5v10l-9 5-9-5V7l9-5Zm-9 5 9 5 9-5m-9 5v10" to false))

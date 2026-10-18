@@ -117,7 +117,7 @@ fun ModelPicker(onDismiss: () -> Unit, onConnect: () -> Unit) {
 private fun Group(text: String) = Text(text, Modifier.padding(start = 4.dp, top = 12.dp, bottom = 4.dp), fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = P.sub)
 
 @Composable
-private fun Option(name: String, sub: String?, selected: Boolean, enabled: Boolean, mono: Boolean, onClick: () -> Unit) {
+internal fun Option(name: String, sub: String?, selected: Boolean, enabled: Boolean, mono: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(16.dp)
     Row(
         Modifier.fillMaxWidth().alpha(if (enabled) 1f else 0.55f).clip(shape).then(if (selected) Modifier.background(P.accent3.copy(alpha = 0.6f)) else Modifier)

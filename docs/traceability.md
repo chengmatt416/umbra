@@ -10,7 +10,7 @@
 | § | Requirement | Where | Verified by |
 | --- | --- | --- | --- |
 | 1, 2 | Product, Android 16 only | `build-logic` (minSdk 36), `README.md` | build |
-| 3 | omp runtime, persistent sessions, locked version | `runtime/omp` (RPC client, config writer, spawner), `core/orchestrator`, omp 18.6.1 pinned in `runtime-build/rootfs/Dockerfile` | unit (`OmpClientProtocolTest`, `RpcFrameDecoderTest`, `OmpConfigTest`), omp (`OmpIntegrationTest`, `AgentSessionTest`), emulator (`GuestOmpLiveTest`; whole agent runs through the installed app: `scripts/ondevice-scripted-agent.py`, `ondevice-scenario.py`) |
+| 3 | omp runtime, persistent sessions, locked version | `runtime/omp` (RPC client, config writer, spawner), `core/orchestrator`, omp 18.12.1 pinned in `runtime-build/rootfs/Dockerfile` | unit (`OmpClientProtocolTest`, `RpcFrameDecoderTest`, `OmpConfigTest`), omp (`OmpIntegrationTest`, `AgentSessionTest`), emulator (`GuestOmpLiveTest`; whole agent runs through the installed app: `scripts/ondevice-scripted-agent.py`, `ondevice-scenario.py`) |
 | 4 | Fast decision engine | `core/decision` (router, heuristics, `LayaHttpEngine`, `SwitchableEngine`), `app/.../LayaSidecar.kt`, `decide` tool | unit (`DecisionRouterTest`, `HeuristicDecisionEngineTest`, `LayaHttpEngineTest`); Laya sidecar install/start: phone (needs ~2 GB) |
 | 5 | Android control | `platform/*`, `tools` (`UiExecutor`, `SystemExecutors`) | emulator (`DeviceBackendsLiveTest`, `HostSideLiveTest`, `OnDeviceLiveTest`) |
 | 6 | Accessibility computer use | `platform/android` (`AccessibilityUiBackend`), `tools/ElementTargeting`, `core/model` (resolver) | unit (`ElementResolverTest`), emulator (`OnDeviceLiveTest`) |

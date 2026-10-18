@@ -22,7 +22,7 @@ export. omp's terminal UI cannot be the app's UI, and a second implementation of
 
 ## Consequences
 
-* New omp features appear in the GUI through the same protocol; the pinned omp version (18.6.1) is what the tests
+* New omp features appear in the GUI through the same protocol; the pinned omp version (18.12.1) is what the tests
   run against (`scripts/omp-pinned.sh`).
 * Verified against the real omp on the host (`OmpGuiTest`) and on the emulator by driving the app
   (`scripts/ondevice-omp-gui.py`).

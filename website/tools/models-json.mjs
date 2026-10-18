@@ -14,9 +14,9 @@ const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'));
 // What the app offers, in order: the provider ids are omp's, the models a short list per provider, the first marked
 // recommended is what "Auto" picks once that provider is connected.
 const providers = [
-  { id: 'openai-codex', label: 'OpenAI', auth: 'oauth', models: ['gpt-5.5', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna'], recommended: 'gpt-5.5' },
+  { id: 'openai-codex', label: 'OpenAI', auth: 'oauth', models: ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-terra'], recommended: 'gpt-6.1-sol' },
   { id: 'anthropic', label: 'Anthropic', auth: 'oauth', models: ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-haiku-4-5'], recommended: 'claude-sonnet-5-5' },
-  { id: 'google-antigravity', label: 'Google Antigravity', auth: 'oauth', models: ['gemini-3.1-pro', 'gemini-3.8-flash', 'claude-sonnet-5-5-medium', 'claude-opus-5-5-medium', 'gpt-oss-120b'], recommended: 'gemini-3.1-pro' },
+  { id: 'google-antigravity', label: 'Google Antigravity', auth: 'oauth', models: ['gemini-3.1-pro', 'gemini-3.8-flash', 'claude-sonnet-5-5', 'claude-opus-5-5', 'gpt-oss-120b'], recommended: 'gemini-3.1-pro' },
   { id: 'openai', label: 'OpenAI', auth: 'key', models: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4-mini', 'gpt-5.3-codex'], recommended: 'gpt-5.5' },
 ];
 
@@ -32,6 +32,8 @@ const out = {
         name: m.name ?? id,
         images: (m.input ?? []).includes('image'),
         reasoning: !!m.reasoning,
+        // The thinking efforts omp accepts for this model (low … max), so the effort picker greys out the rest.
+        efforts: m.reasoning && m.thinking?.efforts?.length ? m.thinking.efforts : undefined,
         contextWindow: m.contextWindow ?? undefined,
         recommended: id === p.recommended || undefined,
       };

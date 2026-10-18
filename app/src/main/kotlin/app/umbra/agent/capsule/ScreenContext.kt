@@ -159,9 +159,9 @@ class ScreenContext(private val context: Context, private val container: AppCont
                 sessionId
             } else {
                 AgentService.start(context)
-                // Auto: Laya reads the task and picks the model it keeps (null: the default answers).
-                val model = container.autoModel.choose(text, pictures = images.isNotEmpty())
-                container.supervisor.submit(message, title = AgentSupervisor.titleOf(text), model = model, projectId = projectId, images = images).id
+                // Auto: Laya reads the task and picks the model and effort it keeps (null: the defaults answer).
+                val choice = container.autoModel.choose(text, pictures = images.isNotEmpty())
+                container.supervisor.submit(message, title = AgentSupervisor.titleOf(text), model = choice.model, projectId = projectId, images = images, effort = choice.effort).id
             }
         } catch (e: Exception) {
             if (container.ui.draft.value.isEmpty()) container.ui.saveDraft(draft)
