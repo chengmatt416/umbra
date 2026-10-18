@@ -13,7 +13,7 @@ m = ScriptedModel([
 ]).start()
 b.control("provider.set", {"id": "scripted", "base_url": m.url_for_emulator, "model": "scripted-model", "key": ""})
 b.control("approval_mode", {"mode": "balanced"}); b.control("capsule.set", {"on": False})
-ui_set(b, mode="simple", onboarded=True)
+ui_set(b, mode="simple", onboarded=True, effort="auto")
 fresh_app("home", 2)
 sid = None
 for _ in range(60):

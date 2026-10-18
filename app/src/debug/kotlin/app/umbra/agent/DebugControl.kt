@@ -134,10 +134,12 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
                 (args["mode"] as? JsonPrimitive)?.content?.let { q = q.copy(uiMode = app.umbra.agent.data.UiMode.valueOf(it.uppercase())) }
                 (args["onboarded"] as? JsonPrimitive)?.content?.let { q = q.copy(onboarded = it == "true") }
                 (args["providers"] as? JsonPrimitive)?.content?.takeIf { it == "none" }?.let { q = q.copy(providers = emptyList(), defaultModel = null) }
+                // "auto", or one of omp's levels (low, medium, high...) for new tasks.
+                (args["effort"] as? JsonPrimitive)?.content?.let { e -> q = if (e == "auto") q.copy(autoEffort = true) else q.copy(autoEffort = false, thinkingLevel = e) }
                 q
             }
             val p = container.settings.value
-            buildJsonObject { put("mode", p.uiMode.name); put("onboarded", p.onboarded); put("providers", p.providers.size) }
+            buildJsonObject { put("mode", p.uiMode.name); put("onboarded", p.onboarded); put("providers", p.providers.size); put("effort", if (p.autoEffort) "auto" else p.thinkingLevel.orEmpty()) }
         }
         "approval_mode" -> {
             container.settings.update { it.copy(approvalMode = app.umbra.core.safety.ApprovalMode.valueOf(str(args, "mode").uppercase())) }

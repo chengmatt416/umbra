@@ -86,6 +86,12 @@ data class AppPrefs(
     val layaOffered: Boolean = false,
     /** Laya should be installed and start with every task. */
     val layaWanted: Boolean = false,
+    /**
+     * How these settings were written. Defaults are not stored (UmbraJson), so a missing "autoModel" is ambiguous in
+     * older files: Auto chosen, or a file from before Auto existed. From [AppSettings.VERSION] on, a missing switch is
+     * its default; only older files get the "keep the model (or level) chosen before Auto" reading.
+     */
+    val prefsVersion: Int = 0,
 )
 
 /** Simple shows the essentials, Power adds the working views, Dev every control the app has, resources by hand. */
@@ -142,7 +148,7 @@ class AppSettings(context: Context) {
 
     @Synchronized
     fun update(change: (AppPrefs) -> AppPrefs) {
-        val next = change(state.value)
+        val next = change(state.value).copy(prefsVersion = VERSION)
         prefs.edit().putString(KEY, UmbraJson.encodeToString(AppPrefs.serializer(), next)).apply()
         state.value = next
     }
@@ -150,10 +156,13 @@ class AppSettings(context: Context) {
     private fun load(): AppPrefs = prefs.getString(KEY, null)?.let {
         try {
             var loaded = UmbraJson.decodeFromString(AppPrefs.serializer(), it)
-            // Saved before "Auto" existed: a model the person had chosen stays chosen.
-            if ("\"autoModel\"" !in it && loaded.defaultModel != null) loaded = loaded.copy(autoModel = false)
-            // The same for effort: a thinking level the person had set stays set.
-            if ("\"autoEffort\"" !in it && loaded.thinkingLevel != null) loaded = loaded.copy(autoEffort = false)
+            if (loaded.prefsVersion < VERSION) {
+                // Saved before "Auto" existed: a model the person had chosen stays chosen.
+                if ("\"autoModel\"" !in it && loaded.defaultModel != null) loaded = loaded.copy(autoModel = false)
+                // The same for effort: a thinking level the person had set stays set.
+                if ("\"autoEffort\"" !in it && loaded.thinkingLevel != null) loaded = loaded.copy(autoEffort = false)
+                loaded = loaded.copy(prefsVersion = VERSION)
+            }
             loaded.defaultModel?.let { m -> ModelRenames.current(m).takeIf { it != m }?.let { loaded = loaded.copy(defaultModel = it) } }
             loaded
         } catch (_: Exception) {
@@ -161,8 +170,10 @@ class AppSettings(context: Context) {
         }
     } ?: AppPrefs()
 
-    private companion object {
-        const val KEY = "prefs.v1"
+    companion object {
+        private const val KEY = "prefs.v1"
+        /** 1: every save carries its version, so a missing switch means its default (see [AppPrefs.prefsVersion]). */
+        const val VERSION = 1
     }
 }
 

@@ -75,7 +75,12 @@ class ScreenContext(private val context: Context, private val container: AppCont
     suspend fun select(capture: Capture, stroke: List<Point>): ContextChip = withContext(Dispatchers.Default) {
         val selection = Lasso.select(capture.tree ?: UiSnapshot(), stroke, capture.screen)
         val r = selection.region
-        val crop = Bitmap.createBitmap(capture.image, r.left, r.top, r.width, r.height)
+        // A circle drawn past the screen's edge gives a region partly outside the picture: crop what is on it.
+        val left = r.left.coerceIn(0, capture.image.width - 1)
+        val top = r.top.coerceIn(0, capture.image.height - 1)
+        val right = (r.left + r.width).coerceIn(left + 1, capture.image.width)
+        val bottom = (r.top + r.height).coerceIn(top + 1, capture.image.height)
+        val crop = Bitmap.createBitmap(capture.image, left, top, right - left, bottom - top)
         val scale = MAX_SIDE.toFloat() / maxOf(crop.width, crop.height)
         val sized = if (scale < 1f) Bitmap.createScaledBitmap(crop, (crop.width * scale).toInt().coerceAtLeast(1), (crop.height * scale).toInt().coerceAtLeast(1), true) else crop
         val file = File(container.ui.snapshotDir, "selection-${capture.atMs}.jpg")

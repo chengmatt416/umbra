@@ -168,3 +168,11 @@ def fresh_app(route="home", wait=3.0):
     """A new activity at [route]: pages keep their scroll and disclosures while the app runs."""
     sh("am", "start", "-f", "0x10008000", "-n", "app.umbra.agent/.MainActivity", "--es", "page", route)
     time.sleep(wait)
+
+
+def delete_session(sid):
+    """Deletes a task through its menu (the app's own Delete), e.g. a take that went wrong."""
+    sh("am", "start", "-n", "app.umbra.agent/.MainActivity", "--es", "session", sid); time.sleep(2.0)
+    tap_text("Session actions", exact=True)
+    time.sleep(1.2); tap_text("Delete…", exact=True); time.sleep(1.2)
+    tap_text("Delete", exact=True, below=900); time.sleep(2.0)

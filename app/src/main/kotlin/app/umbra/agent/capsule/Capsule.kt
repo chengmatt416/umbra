@@ -502,6 +502,7 @@ class Capsule(private val context: Context, private val container: AppContainer)
                 screen.send(text, null, container.ui.homeProject.value)
                 notice.value = null
             } catch (e: Exception) {
+                android.util.Log.w("Capsule", "sending a selection failed", e)
                 notice.value = e.message ?: e::class.simpleName
                 closeSelection()
                 expanded.value = true
