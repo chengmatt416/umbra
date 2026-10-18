@@ -17,6 +17,8 @@ import app.umbra.agent.container
 import app.umbra.agent.data.LayaSidecar
 import app.umbra.agent.data.ThemeStyle
 import app.umbra.agent.data.UiMode
+import app.umbra.agent.update.AppUpdater
+import app.umbra.agent.ui.updateStatusLine
 import app.umbra.agent.ui.models.ModelPicker
 import app.umbra.agent.ui.models.modelLabel
 import app.umbra.agent.ui.onboarding.PermissionsSheet
@@ -71,7 +73,11 @@ fun SettingsScreen(onBack: () -> Unit, onGo: (Dest) -> Unit) {
                 NavRow(PIcons.grid, stringResource(R.string.r_set_laya), stringResource(if (layaOn) R.string.r_set_laya_on else R.string.r_set_laya_off)) {
                     if (!prefs.layaWanted) { container.settings.update { it.copy(layaWanted = true, layaOffered = true) }; container.laya.download() } else onGo(Dest.MoreSettings)
                 }
-                NavRow(PIcons.refresh, stringResource(R.string.r_set_update), stringResource(R.string.r_set_update_body, container.updater.installedVersionName), value = stringResource(R.string.r_set_update_check)) {
+                val update by container.updater.state.collectAsStateWithLifecycle()
+                // Until something happens, the version and when it is checked; after a check, what the check found.
+                val updateLine = if (update == AppUpdater.State.Idle) stringResource(R.string.r_set_update_body, container.updater.installedVersionName)
+                else "${container.updater.installedVersionName} · ${updateStatusLine(update, prefs)}"
+                NavRow(PIcons.refresh, stringResource(R.string.r_set_update), updateLine, value = stringResource(R.string.r_set_update_check)) {
                     container.updater.updateNow()
                 }
                 NavRow(PIcons.shield, stringResource(R.string.r_set_permissions), value = "${permissionsGranted(context)}/3") { permissions = true }

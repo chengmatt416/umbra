@@ -39,7 +39,7 @@
 
     <!-- models -->
     <string name="r_model_auto">Auto</string>
-    <string name="r_model_auto_body">Picks the best model of an account you connected</string>
+    <string name="r_model_auto_body">Laya picks a connected model for each task</string>
     <string name="r_model_title">Model</string>
     <string name="r_model_updated">Updated %1$s</string>
     <string name="r_model_bundled">List from this version</string>
@@ -190,4 +190,17 @@
     <string name="r_cap_help_prompt">Take care of this for me.</string>
     <string name="r_stop">Stop</string>
     <string name="r_allow">Allow</string>
+    <string name="r_acc_open_page">Open the page</string>
+    <string name="r_acc_copy_link">Copy link</string>
+    <string name="r_acc_no_browser">The sign-in page did not open. Open it here, or copy the link into a browser.</string>
+    <string name="r_voice_listening">Listening…</string>
+    <string name="r_voice_done">Done</string>
+    <string name="r_voice_again">Try again</string>
+    <string name="r_voice_nothing">Didn’t catch that. Try again.</string>
+    <string name="r_voice_needs_mic">Umbra needs the microphone to hear you.</string>
+    <string name="r_voice_offline">Speech recognition needs a connection right now.</string>
+    <string name="r_voice_language">Speech recognition doesn’t support this language on this phone.</string>
+    <string name="r_voice_busy">The speech recognizer is busy. Try again in a moment.</string>
+    <string name="r_voice_stopped">Speech recognition stopped. Try again.</string>
+    <string name="r_voice_unavailable">This phone has no speech recognition.</string>
 </resources>

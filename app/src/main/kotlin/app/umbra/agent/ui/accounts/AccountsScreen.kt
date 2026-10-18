@@ -182,6 +182,18 @@ private fun SignIn(a: Account, onDone: () -> Unit) {
         }
         state is OmpLogin.State.Starting || state is OmpLogin.State.Browser -> {
             Waiting(stringResource(if (state is OmpLogin.State.Browser) R.string.r_acc_waiting else R.string.r_acc_starting), if (state is OmpLogin.State.Browser) stringResource(R.string.r_acc_waiting_body) else null)
+            if (state is OmpLogin.State.Browser) {
+                // The page opens by itself; when the phone did not let it (or it was closed), a tap opens it again.
+                var failed by remember(state.url) { mutableStateOf(!state.opened) }
+                if (failed) Callout(stringResource(R.string.r_acc_no_browser), Tone.Danger)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PButton(stringResource(R.string.r_acc_copy_link), {
+                        context.getSystemService(android.content.ClipboardManager::class.java)
+                            .setPrimaryClip(android.content.ClipData.newRawUri(a.name, Uri.parse(state.url)))
+                    }, Modifier.weight(1f), style = ButtonStyle.Alt)
+                    PButton(stringResource(R.string.r_acc_open_page), { failed = !openSignInPage(context, state.url) }, Modifier.weight(1f), icon = PIcons.arrowRight)
+                }
+            }
             PButton(stringResource(R.string.action_cancel), { container.scope.launch { container.ompLogin.cancel(id) } }, Modifier.fillMaxWidth(), style = ButtonStyle.Ghost)
         }
         signedIn != null -> {
@@ -207,14 +219,19 @@ private fun SignIn(a: Account, onDone: () -> Unit) {
     }
 }
 
+/** Opens [url] in the phone's browser; false when no app can show it or Android would not start it. */
+internal fun openSignInPage(context: Context, url: String): Boolean {
+    val view = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    if (view.resolveActivity(context.packageManager) == null) return false
+    return runCatching { context.startActivity(view) }.isSuccess
+}
+
 /** Starts `omp login` in the app's scope (it outlives this sheet while the browser is in front). */
 internal fun startSignIn(container: AppContainer, context: Context, a: Account) {
     val id = a.oauthId ?: return
     container.scope.launch {
         val account = runCatching {
-            container.ompLogin.login(id) { url ->
-                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            }
+            container.ompLogin.login(id) { url -> openSignInPage(context, url) }
         }.getOrElse { return@launch }
         container.settings.update { p -> p.copy(providers = p.providers.filterNot { it.id == id } + ProviderConfig(id, a.name, oauth = true, account = account)) }
         // Back to Umbra by itself once the browser has handed the sign-in over.

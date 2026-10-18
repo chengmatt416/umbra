@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 // src/apk.json is written by publish.sh from the real file; the defaults only keep a fresh checkout building.
 const fromDisk = existsSync(new URL('./apk.json', import.meta.url)) ? JSON.parse(readFileSync(new URL('./apk.json', import.meta.url), 'utf8')) : {};
-export const APK = { version: '0.2.1', versionCode: 3, file: 'umbra-0.2.1.apk', size: '? MiB', sha256: '(see /download/umbra-0.2.1.apk.sha256)', bytes: 0, ...fromDisk };
+export const APK = { version: '0.3.1', versionCode: 5, file: 'umbra-0.3.1.apk', size: '? MiB', sha256: '(see /download/umbra-0.3.1.apk.sha256)', bytes: 0, ...fromDisk };
 export const GITHUB = 'https://github.com/chengmatt416/umbra';
 
 export const L = {
@@ -97,7 +97,7 @@ export const L = {
         ['Which models can I use?', 'Anthropic, OpenAI, Google, OpenRouter, or any OpenAI-compatible server — with your own key. Umbra is built on omp, a coding agent with a mature tool and planning loop.'],
         ['Why is the APK so large?', 'It carries a complete Debian environment (about 2 GB once unpacked) so that setup needs no network.'],
         ['Is it on Google Play?', 'No. Install the APK directly. The source is on GitHub.'],
-        ['How do I get updates?', 'From version 0.2.0 on, Umbra updates itself. Twice a day it checks this site, downloads a new version (on Wi-Fi unless you check by hand), verifies that it is signed with the same key, and installs it when no task is running: by itself with the helper or root, otherwise Android asks you to tap Update. The switches are in Settings → About. On 0.1.0, install 0.2.0 from this page once.'],
+        ['How do I get updates?', 'From version 0.2.0 on, Umbra updates itself. From 0.3.0, when you open it, it checks this site and asks; say Update and it downloads the new version, verifies that it is signed with the same key, installs it once no task is running and opens again. It also checks twice a day in the background (on Wi-Fi). Check by hand in Settings → Updates. On 0.1.0, install a newer version from this page once.'],
         ['Can I change how it looks?', 'Yes. Settings → Appearance has three looks: Porcelain (the original grey-green glaze), Liquid (living colour in a hue you pick, light or dark) and an iOS-style look with glass. The change reaches every screen, the Capsule included.'],
         ['Is the app in Chinese?', 'Yes. The app is in English and Traditional Chinese, and follows your phone’s language (or pick one in Android’s app language settings).'],
         ['Does it work on iPhone?', 'No. Umbra is built for Android 16.'],
@@ -198,7 +198,7 @@ export const L = {
         ['可以用哪些模型？', 'Anthropic、OpenAI、Google、OpenRouter，或任何相容 OpenAI 的伺服器，使用你自己的金鑰。Umbra 建立在 omp 之上，這是一個工具與規劃迴圈都相當成熟的程式碼代理。'],
         ['為什麼 APK 這麼大？', '它內含完整的 Debian 環境（解開後約 2 GB），讓安裝設定不需要網路。'],
         ['有上架 Google Play 嗎？', '沒有。請直接安裝 APK，原始碼在 GitHub。'],
-        ['要怎麼更新？', '從 0.2.0 起，Umbra 會自動更新：每天檢查本網站兩次，下載新版本（手動檢查以外只用 Wi-Fi），確認它以相同的金鑰簽署，並在沒有任務執行時安裝；有輔助程式或 root 時會自行完成，否則由 Android 請你點「更新」。開關在「設定 → 關於」。若你用的是 0.1.0，請從本頁安裝一次 0.2.0。'],
+        ['要怎麼更新？', '從 0.2.0 起，Umbra 會自動更新。從 0.3.0 起，每次開啟時會檢查本網站並詢問你；按「更新」後會下載新版本、確認它以相同的金鑰簽署，在沒有任務執行時安裝並重新開啟。它也會在背景每天檢查兩次（使用 Wi-Fi）。可在「設定 → 更新」手動檢查。若你用的是 0.1.0，請從本頁安裝一次新版本。'],
         ['可以改變外觀嗎？', '可以。「設定 → 外觀」有三種：瓷釉（原本的灰綠瓷釉）、流體（你選的顏色，淺色或深色）以及帶玻璃質感的 iOS 風格。變更會套用到每個畫面，包括膠囊。'],
         ['App 有中文介面嗎？', '有。App 提供英文與繁體中文，會跟隨手機的語言，也可以在 Android 的 App 語言設定中選擇。'],
         ['iPhone 能用嗎？', '不行，Umbra 是為 Android 16 打造的。'],

@@ -165,7 +165,7 @@ class AppProviderResolver(
     private val secrets: SecretStore,
     /** Whether a key may reach a session whose model belongs to the given provider (the vault's scopes, §12.1). */
     private val admits: (keyName: String, sessionProvider: String?) -> Boolean = { _, _ -> true },
-    /** What "Auto" picks for a task that names no model (the model directory's recommendation). */
+    /** What "Auto" takes for a task Laya did not pick a model for (the model directory's recommendation). */
     private val auto: (AppPrefs) -> ModelRef? = { null },
 ) : ProviderResolver {
     override suspend fun resolve(sessionModel: ModelRef?): ProviderSelection {

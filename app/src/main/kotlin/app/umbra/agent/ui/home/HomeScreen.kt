@@ -131,7 +131,8 @@ fun HomeScreen(onOpenSession: (String) -> Unit, entries: List<MenuEntry>, onAcco
             }
         }
 
-        if (empty) {
+        val listening by container.ui.listening.collectAsStateWithLifecycle()
+        if (empty && !listening) {
             Text(
                 stringResource(R.string.r_home_empty),
                 Modifier.align(Alignment.BottomStart).navigationBarsPadding().imePadding().padding(start = 24.dp, end = 24.dp, bottom = if (power) 140.dp else 100.dp),

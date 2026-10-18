@@ -145,7 +145,9 @@ class ScreenContext(private val context: Context, private val container: AppCont
             sessionId
         } else {
             AgentService.start(context)
-            container.supervisor.submit(message, title = AgentSupervisor.titleOf(text), projectId = projectId, images = images).id
+            // Auto: Laya reads the task and picks the model it keeps (null: the default answers).
+            val model = container.autoModel.choose(text, pictures = images.isNotEmpty())
+            container.supervisor.submit(message, title = AgentSupervisor.titleOf(text), model = model, projectId = projectId, images = images).id
         }
         container.ui.saveDraft("")
         container.ui.clearSent(chips)

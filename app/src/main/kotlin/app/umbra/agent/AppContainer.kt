@@ -233,6 +233,9 @@ class AppContainer(val context: Context) {
 
     /** Signing in with a provider's account through omp's own login. */
     val ompLogin by lazy { app.umbra.agent.data.OmpLogin(this) }
+
+    /** Auto: Laya picks each new task's model (data/AutoModel). */
+    val autoModel by lazy { app.umbra.agent.data.AutoModel(this) }
     val decisions = DecisionRouter(primary = laya.engine)
     val journal = ActionJournal()
     val leases = DisplayLeaseManager(onBlocked = { session, display, holder ->

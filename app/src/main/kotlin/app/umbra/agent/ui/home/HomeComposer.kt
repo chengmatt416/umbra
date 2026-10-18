@@ -1,11 +1,6 @@
 package app.umbra.agent.ui.home
 
-import android.app.Activity
-import android.content.Intent
-import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -73,16 +68,23 @@ fun HomeComposer(modifier: Modifier = Modifier, dimmed: Boolean = false, hint: S
     var picker by remember { mutableStateOf(false) }
     var projectMenu by remember { mutableStateOf(false) }
     val canListen = remember { SpeechRecognizer.isRecognitionAvailable(context) }
-    val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val heard = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty()
-            if (heard.isNotBlank()) container.ui.saveDraft(listOf(draft, heard).filter { it.isNotBlank() }.joinToString(" "))
-        }
-    }
+    val listening by container.ui.listening.collectAsStateWithLifecycle()
     val power = prefs.uiMode != UiMode.SIMPLE
     val shape = RoundedCornerShape(if (power) 26.dp else 28.dp)
     // The draft is cleared by the send itself once the message went (ScreenContext.send), not before.
     val send = { if (draft.isNotBlank()) onSend(draft.trim()) }
+
+    // Speaking: the field turns into Umbra's listening panel where it is; the words join the draft.
+    if (listening) {
+        androidx.compose.runtime.DisposableEffect(Unit) { onDispose { container.ui.listening.value = false } }
+        app.umbra.agent.ui.voice.VoicePanel(
+            onHeard = { heard -> container.ui.saveDraft(listOf(container.ui.draft.value, heard).filter { it.isNotBlank() }.joinToString(" ")) },
+            onClose = { container.ui.listening.value = false },
+            modifier = modifier,
+        )
+        if (picker) ModelPicker(onDismiss = { picker = false }, onConnect = { picker = false; onAccounts() })
+        return
+    }
 
     Column(
         modifier.alpha(if (dimmed) 0.35f else 1f)
@@ -103,7 +105,7 @@ fun HomeComposer(modifier: Modifier = Modifier, dimmed: Boolean = false, hint: S
                 )
             }
             if (!power) SendOrMic(draft.isNotBlank(), canListen, onMic = {
-                speech.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))
+                container.ui.listening.value = true
             }, onSend = send)
         }
         if (power) Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -117,7 +119,7 @@ fun HomeComposer(modifier: Modifier = Modifier, dimmed: Boolean = false, hint: S
             ModelChip(modelLabel(prefs, container.modelDirectory), mono = true) { picker = true }
             Box(Modifier.weight(1f))
             SendOrMic(draft.isNotBlank(), canListen, onMic = {
-                speech.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))
+                container.ui.listening.value = true
             }, onSend = send)
         }
     }

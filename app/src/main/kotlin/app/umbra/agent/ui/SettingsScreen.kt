@@ -207,17 +207,12 @@ fun MoreSettingsScreen(onBack: () -> Unit, onGo: (app.umbra.agent.ui.shell.Dest)
     }
 }
 
-/** The installed version, what the updater is doing, and its two switches. */
+/** What the updater is doing, in one sentence: the Updates row in Settings and the update section say the same. */
 @Composable
-internal fun UpdateSection() {
+internal fun updateStatusLine(state: AppUpdater.State, prefs: app.umbra.agent.data.AppPrefs): String {
     val context = LocalContext.current
-    val container = context.container
-    val updater = container.updater
-    val prefs by container.settings.flow.collectAsStateWithLifecycle()
-    val state by updater.state.collectAsStateWithLifecycle()
-    Text(stringResource(R.string.set_version, updater.installedVersionName), fontSize = 14.sp, color = P.ink)
     val mib = { bytes: Long -> "${bytes / (1024 * 1024)} MiB" }
-    val line = when (val s = state) {
+    return when (val s = state) {
         AppUpdater.State.Idle -> stringResource(R.string.upd_idle)
         AppUpdater.State.Checking -> stringResource(R.string.upd_checking)
         is AppUpdater.State.UpToDate -> stringResource(R.string.upd_up_to_date, android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(s.checkedAtMs)))
@@ -229,6 +224,18 @@ internal fun UpdateSection() {
         is AppUpdater.State.Confirm -> stringResource(R.string.upd_confirm, s.update.version)
         is AppUpdater.State.Failed -> stringResource(R.string.upd_failed, s.message)
     }
+}
+
+/** The installed version, what the updater is doing, and its two switches. */
+@Composable
+internal fun UpdateSection() {
+    val context = LocalContext.current
+    val container = context.container
+    val updater = container.updater
+    val prefs by container.settings.flow.collectAsStateWithLifecycle()
+    val state by updater.state.collectAsStateWithLifecycle()
+    Text(stringResource(R.string.set_version, updater.installedVersionName), fontSize = 14.sp, color = P.ink)
+    val line = updateStatusLine(state, prefs)
     Subtle(line, Modifier.padding(top = 2.dp))
     (state as? AppUpdater.State.Downloading)?.let { PBar(it.bytes.toFloat() / it.update.bytes.coerceAtLeast(1), Modifier.padding(top = 8.dp).fillMaxWidth()) }
     Box(Modifier.padding(top = 10.dp)) {

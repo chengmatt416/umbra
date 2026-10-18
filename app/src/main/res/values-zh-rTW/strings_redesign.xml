@@ -34,7 +34,7 @@
     <string name="r_yesterday">昨天</string>
 
     <string name="r_model_auto">自動</string>
-    <string name="r_model_auto_body">依任務挑選已連線的模型</string>
+    <string name="r_model_auto_body">由 Laya 依每個任務挑選已連線的模型</string>
     <string name="r_model_title">模型</string>
     <string name="r_model_updated">%1$s更新</string>
     <string name="r_model_bundled">這個版本附帶的清單</string>
@@ -177,4 +177,17 @@
     <string name="r_cap_help_prompt">幫我處理這個。</string>
     <string name="r_stop">停止</string>
     <string name="r_allow">允許</string>
+    <string name="r_acc_open_page">打開頁面</string>
+    <string name="r_acc_copy_link">複製連結</string>
+    <string name="r_acc_no_browser">登入頁面沒有打開。請在這裡打開，或複製連結到瀏覽器。</string>
+    <string name="r_voice_listening">正在聽…</string>
+    <string name="r_voice_done">完成</string>
+    <string name="r_voice_again">再試一次</string>
+    <string name="r_voice_nothing">沒聽清楚，再說一次。</string>
+    <string name="r_voice_needs_mic">Umbra 需要麥克風才能聽到你。</string>
+    <string name="r_voice_offline">語音辨識目前需要網路連線。</string>
+    <string name="r_voice_language">這支手機的語音辨識不支援這個語言。</string>
+    <string name="r_voice_busy">語音辨識忙碌中，請稍後再試。</string>
+    <string name="r_voice_stopped">語音辨識停止了，請再試一次。</string>
+    <string name="r_voice_unavailable">這支手機沒有語音辨識功能。</string>
 </resources>

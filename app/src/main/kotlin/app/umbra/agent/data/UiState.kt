@@ -45,6 +45,9 @@ class UiState(context: Context) {
     val draft = MutableStateFlow(prefs.getString(KEY_DRAFT, "").orEmpty())
     val draftContext = MutableStateFlow<List<ContextChip>>(emptyList())
 
+    /** A composer on Home is listening (its field became the voice panel); Home steps back around it. */
+    val listening = MutableStateFlow(false)
+
     fun saveDraft(text: String) {
         draft.value = text
         prefs.edit().putString(KEY_DRAFT, text).apply()

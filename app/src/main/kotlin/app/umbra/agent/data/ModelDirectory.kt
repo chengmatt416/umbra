@@ -77,7 +77,7 @@ class ModelDirectory(private val context: Context, private val scope: CoroutineS
     /** The directory's providers the user has connected, in the directory's order. */
     fun connected(prefs: AppPrefs): List<DirectoryProvider> = connected(directory.value, prefs)
 
-    /** What "Auto" picks: the recommended model of the first connected provider, else its first model. */
+    /** What "Auto" falls back to when Laya did not pick (AutoModel): the first connected provider's recommended model. */
     fun auto(prefs: AppPrefs): ModelRef? = pick(directory.value, prefs)
 
     fun model(ref: ModelRef?): DirectoryModel? = ref?.let { r -> directory.value.providers.firstOrNull { it.id == r.provider }?.models?.firstOrNull { it.id == r.modelId } }

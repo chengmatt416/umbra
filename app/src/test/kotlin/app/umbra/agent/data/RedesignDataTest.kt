@@ -57,5 +57,6 @@ class RedesignDataTest {
         assertTrue("\"autoModel\"" in UmbraJson.encodeToString(AppPrefs.serializer(), AppPrefs()))
     }
 
-    private fun siteFile(): String = generateSequence(File("").absoluteFile) { it.parentFile }.map { it.resolve("website/public/models.json") }.first { it.isFile }.path
 }
+
+internal fun siteFile(): String = generateSequence(File("").absoluteFile) { it.parentFile }.map { it.resolve("website/public/models.json") }.first { it.isFile }.path

@@ -144,7 +144,8 @@ class AppUpdater(
                 when (val s = state.value) {
                     is State.Ready -> if (!busy()) { install(s.update); return@launch }
                     is State.Checking, is State.Downloading, is State.Available -> Unit
-                    else -> return@launch
+                    // Nothing to install (up to date, or it failed): no restart is pending, so none reopens the app later.
+                    else -> { prefs.edit().remove(KEY_REOPEN).apply(); return@launch }
                 }
                 delay(5_000)
             }

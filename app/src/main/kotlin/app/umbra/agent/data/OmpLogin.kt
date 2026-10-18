@@ -22,8 +22,9 @@ class OmpLogin(private val container: AppContainer) {
     sealed interface State {
         data object Idle : State
         data object Starting : State
-        /** The sign-in page is open in the browser; omp waits for the browser to come back. */
-        data class Browser(val url: String) : State
+        /** omp waits for the browser to come back from [url]; [opened]: the phone did open it (no browser, or Android
+         *  refused to bring one up from the background, leaves it to the person to open it). */
+        data class Browser(val url: String, val opened: Boolean = true) : State
         data class Done(val account: String?) : State
         data class Failed(val message: String) : State
     }
@@ -42,9 +43,9 @@ class OmpLogin(private val container: AppContainer) {
 
     /**
      * Runs the sign-in for [provider] (omp's id: "openai-codex", "anthropic", "google-antigravity"). [openUrl] opens the
-     * sign-in page once omp prints it. Returns who signed in; throws with omp's own reason when it fails.
+     * sign-in page once omp prints it and says whether it did. Returns who signed in; throws with omp's own reason when it fails.
      */
-    suspend fun login(provider: String, openUrl: (String) -> Unit): String? = running.withLock {
+    suspend fun login(provider: String, openUrl: (String) -> Boolean): String? = running.withLock {
         set(provider, State.Starting)
         try {
             val guest = container.guest.state.value
@@ -87,7 +88,7 @@ class OmpLogin(private val container: AppContainer) {
                 while (System.currentTimeMillis() < deadline) {
                     delay(500)
                     val text = rt.readFile(log, 64 * 1024).orEmpty()
-                    if (!opened) parseUrl(text)?.let { url -> opened = true; set(provider, State.Browser(url)); openUrl(url) }
+                    if (!opened) parseUrl(text)?.let { url -> opened = true; set(provider, State.Browser(url, opened = false)); set(provider, State.Browser(url, openUrl(url))) }
                     parseDone(text)?.let { account ->
                         set(provider, State.Done(account.ifBlank { null }))
                         return@coroutineScope account.ifBlank { null }
