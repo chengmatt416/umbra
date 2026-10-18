@@ -45,6 +45,9 @@ class UiState(context: Context) {
     val draft = MutableStateFlow(prefs.getString(KEY_DRAFT, "").orEmpty())
     val draftContext = MutableStateFlow<List<ContextChip>>(emptyList())
 
+    /** A composer on Home is listening (its field became the voice panel); Home steps back around it. */
+    val listening = MutableStateFlow(false)
+
     fun saveDraft(text: String) {
         draft.value = text
         prefs.edit().putString(KEY_DRAFT, text).apply()
@@ -89,9 +92,15 @@ class UiState(context: Context) {
         prefs.edit().putString(KEY_PROJECT, id).apply()
     }
 
+    /** The Home filter (Power and Dev); links to the old Inbox open it on "needs you". */
+    val homeFilter = MutableStateFlow(HomeFilter.ALL)
+
     private companion object {
         const val KEY_FOCUS = "focused_session"
         const val KEY_DRAFT = "draft"
         const val KEY_PROJECT = "home_project"
     }
 }
+
+/** What the Home task list shows. The old Inbox is the "needs you" filter. */
+enum class HomeFilter { ALL, NEEDS, RUNNING, QUEUED }

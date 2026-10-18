@@ -64,10 +64,15 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(
-    onBack: () -> Unit, onModels: () -> Unit, onSetup: () -> Unit, onApprovalHistory: () -> Unit, onDiagnostics: () -> Unit,
-    onWorkspaces: () -> Unit, onProcesses: () -> Unit, onDisplays: () -> Unit, onAppearance: () -> Unit = {},
-) {
+fun MoreSettingsScreen(onBack: () -> Unit, onGo: (app.umbra.agent.ui.shell.Dest) -> Unit) {
+    val onModels = { onGo(app.umbra.agent.ui.shell.Dest.Accounts) }
+    val onSetup = { onGo(app.umbra.agent.ui.shell.Dest.Linux) }
+    val onApprovalHistory = { onGo(app.umbra.agent.ui.shell.Dest.ApprovalHistory) }
+    val onDiagnostics = { onGo(app.umbra.agent.ui.shell.Dest.Diagnostics) }
+    val onWorkspaces = { onGo(app.umbra.agent.ui.shell.Dest.Workspaces) }
+    val onProcesses = { onGo(app.umbra.agent.ui.shell.Dest.Processes) }
+    val onDisplays = { onGo(app.umbra.agent.ui.shell.Dest.Displays) }
+    val onAppearance = { onGo(app.umbra.agent.ui.shell.Dest.Appearance) }
     val context = LocalContext.current
     val resources = androidx.compose.ui.platform.LocalResources.current
     val container = context.container
@@ -78,7 +83,7 @@ fun SettingsScreen(
     var confirm by remember { mutableStateOf<String?>(null) }
     var instructions by remember(prefs.standingInstructions) { mutableStateOf(prefs.standingInstructions) }
 
-    PorcelainPage(stringResource(R.string.dest_settings), onBack) {
+    PorcelainPage(stringResource(R.string.r_set_more), onBack) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 18.dp)) {
             PCard(padding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
                 PLink(stringResource(R.string.dest_models), prefs.defaultModel?.let { "${it.provider}/${it.modelId}" } ?: stringResource(R.string.set_models_none), icon = PIcons.spark, onClick = onModels)
@@ -202,17 +207,12 @@ fun SettingsScreen(
     }
 }
 
-/** The installed version, what the updater is doing, and its two switches. */
+/** What the updater is doing, in one sentence: the Updates row in Settings and the update section say the same. */
 @Composable
-private fun UpdateSection() {
+internal fun updateStatusLine(state: AppUpdater.State, prefs: app.umbra.agent.data.AppPrefs): String {
     val context = LocalContext.current
-    val container = context.container
-    val updater = container.updater
-    val prefs by container.settings.flow.collectAsStateWithLifecycle()
-    val state by updater.state.collectAsStateWithLifecycle()
-    Text(stringResource(R.string.set_version, updater.installedVersionName), fontSize = 14.sp, color = P.ink)
     val mib = { bytes: Long -> "${bytes / (1024 * 1024)} MiB" }
-    val line = when (val s = state) {
+    return when (val s = state) {
         AppUpdater.State.Idle -> stringResource(R.string.upd_idle)
         AppUpdater.State.Checking -> stringResource(R.string.upd_checking)
         is AppUpdater.State.UpToDate -> stringResource(R.string.upd_up_to_date, android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(s.checkedAtMs)))
@@ -224,6 +224,18 @@ private fun UpdateSection() {
         is AppUpdater.State.Confirm -> stringResource(R.string.upd_confirm, s.update.version)
         is AppUpdater.State.Failed -> stringResource(R.string.upd_failed, s.message)
     }
+}
+
+/** The installed version, what the updater is doing, and its two switches. */
+@Composable
+internal fun UpdateSection() {
+    val context = LocalContext.current
+    val container = context.container
+    val updater = container.updater
+    val prefs by container.settings.flow.collectAsStateWithLifecycle()
+    val state by updater.state.collectAsStateWithLifecycle()
+    Text(stringResource(R.string.set_version, updater.installedVersionName), fontSize = 14.sp, color = P.ink)
+    val line = updateStatusLine(state, prefs)
     Subtle(line, Modifier.padding(top = 2.dp))
     (state as? AppUpdater.State.Downloading)?.let { PBar(it.bytes.toFloat() / it.update.bytes.coerceAtLeast(1), Modifier.padding(top = 8.dp).fillMaxWidth()) }
     Box(Modifier.padding(top = 10.dp)) {
@@ -244,7 +256,7 @@ private fun UpdateSection() {
 fun UnverifiedTag() = Tag(stringResource(R.string.unverified), Tone.Warn)
 
 @Composable
-private fun LayaSection() {
+internal fun LayaSection() {
     val container = LocalContext.current.container
     val state by container.laya.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { container.laya.refresh() }

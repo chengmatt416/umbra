@@ -5,7 +5,9 @@ import app.umbra.agent.ui.porcelain.pcHue
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.speech.SpeechRecognizer
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -15,20 +17,24 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.DropdownMenu
@@ -46,15 +52,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -66,19 +77,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.umbra.agent.AppContainer
 import app.umbra.agent.R
+import app.umbra.agent.data.UiMode
 import app.umbra.agent.ui.inbox.ApprovalCountdown
 import app.umbra.agent.ui.localizedDescription
 import app.umbra.core.safety.ApprovalSurface
@@ -86,6 +99,7 @@ import app.umbra.core.safety.ApproveGesture
 import app.umbra.core.safety.approveGesture
 import app.umbra.agent.data.ContextChip
 import app.umbra.agent.ui.porcelain.ButtonStyle
+import app.umbra.agent.ui.porcelain.IconSpec
 import app.umbra.agent.ui.porcelain.P
 import app.umbra.agent.ui.porcelain.PButton
 import app.umbra.agent.ui.porcelain.PIcon
@@ -97,24 +111,32 @@ import app.umbra.core.control.EmergencyLevel
 import app.umbra.core.control.LeaseState
 import app.umbra.core.control.Principal
 import app.umbra.core.model.Point
+import app.umbra.core.model.observation.Lasso
+import app.umbra.core.model.observation.UiSnapshot
 import app.umbra.core.safety.ApprovalDecision
 import app.umbra.core.safety.RiskLevel
 import app.umbra.core.session.SessionState
 import app.umbra.core.session.Trails
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 
-private val Glaze get() = Brush.linearGradient(listOf(pcHue(0xFF34453B), pcHue(0xFF20352D)))
-private val Rim get() = pcHue(0xFF617A63)
+/** The capsule is black where it meets the camera, so the camera reads as part of it. */
+private val Ink get() = Color.Black
+/** The expanded card: the capsule's dark glaze. */
+private val Card get() = Brush.linearGradient(listOf(pcHue(0xFF18211C), pcHue(0xFF101612)))
+private val Line get() = pcHue(0xFF2A342E)
 internal val Label get() = pcHue(0xFFE9F3E6)
 internal val Small get() = pcHue(0xFFA4B9A4)
 internal val RowText get() = pcHue(0xFFD1E0D2)
 internal val Section get() = pcHue(0xFFA5C4A7)
 internal val Attention get() = pcHue(0xFFF9E5C3)
+private val Sage get() = pcHue(0xFF9DBBA1)
+private val Clay get() = pcHue(0xFFE7A493)
 private val LIVE = setOf(SessionState.RUNNING, SessionState.WAITING_APPROVAL, SessionState.PAUSED)
 
 /**
- * The capsule itself: collapsed, one companion per running task (docs/design/capsule-companion.md) and the task, or
- * a companion at rest; expanded, Previous / Current / Next for sessions and steps, the steps as a live activity feed.
+ * The capsule: collapsed, the companions and a short label in the zone left of the camera and the time (or a count)
+ * right of it; tucked, only the companion; expanded, the card under the camera (docs/design/redesign-2026-10.md §5).
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -124,16 +146,12 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     val questions by container.questions.pending.collectAsState()
     val focused by container.ui.focusedSession.collectAsState()
     val emergency by container.emergency.state.collectAsState()
-    val leases by container.inputLeases.all.collectAsState()
     val expanded by capsule.expanded.collectAsState()
-    val draft by container.ui.draft.collectAsState()
-    val chips by container.ui.draftContext.collectAsState()
-    val notice by capsule.notice.collectAsState()
+    val tucked by capsule.tucked.collectAsState()
     val dismissed by capsule.dismissedFailures.collectAsState()
     val hole by capsule.hole.collectAsState()
     val activity by capsule.watch.activity.collectAsState()
     val finished by capsule.watch.finished.collectAsState()
-    val density = LocalDensity.current
     val context = LocalContext.current
 
     val trail = remember(sessions, focused) { Trails.sessions(sessions, focused) }
@@ -144,8 +162,7 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     val needsYou = approvals.isNotEmpty() || questions.isNotEmpty()
     val atRest = current == null && !needsYou && !locked && failed == null
     val nowMs = System.currentTimeMillis()
-    // Elapsed times tick while the capsule is open.
-    val ticking by produceState(nowMs, expanded) { while (expanded) { delay(1_000); value = System.currentTimeMillis() } }
+    val ticking by produceState(nowMs, expanded, current?.id) { while (expanded || current != null) { delay(1_000); value = System.currentTimeMillis() } }
     val clockNow = maxOf(ticking, nowMs)
     val waitingOn = remember(approvals, questions) { approvals.map { it.sessionId }.toSet() + questions.map { it.sessionId } }
     val crew = Crews.of(sessions, activity, waitingOn, finished, dismissed, nowMs)
@@ -154,7 +171,7 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     val clock = rememberCompanionClock(crew.members.map { it.mood }.toSet() + headMood, moving)
     val tick: () -> Long = remember(clock) { { clock.value } }
     val done = crew.members.firstOrNull { it.mood == Mood.DONE }
-    LaunchedEffect(failed?.id) { if (failed != null && !container.ui.appVisible.value) capsule.expanded.value = true }
+    LaunchedEffect(failed?.id) { if (failed != null && !container.ui.appVisible.value) { capsule.tucked.value = false; capsule.expanded.value = true } }
 
     val label = when {
         locked -> stringResource(R.string.cap_lockdown)
@@ -162,145 +179,334 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
         questions.isNotEmpty() -> stringResource(R.string.cap_question)
         failed != null && current == null -> stringResource(R.string.cap_stopped_error)
         done != null && current == null -> stringResource(R.string.capc_done_label, done.title)
-        current != null -> (steps.current?.text ?: current.title).let { if (it.length > 30) it.take(29).trimEnd() + "…" else it }
+        current != null -> steps.current?.text ?: current.title
         else -> stringResource(R.string.cap_at_rest)
     }
-    val collapseLabel = stringResource(R.string.cap_collapse)
-    val composerLabel = stringResource(R.string.cap_open_composer)
-    val expandLabel = stringResource(R.string.cap_expand)
-    val selectLabel = stringResource(R.string.cap_select_screen)
+    val trailing = when {
+        needsYou -> "${approvals.size + questions.size}"
+        current != null -> elapsedText(clockNow - (activity[current.id]?.runStartedAtMs ?: current.createdAtMs))
+        crew.overflow > 0 -> "+${crew.overflow}"
+        else -> null
+    }
     val crewSaid = crewDescription(crew)
     val capsuleDescription = stringResource(R.string.cap_description, label).let { if (crewSaid.isEmpty()) it else stringResource(R.string.capc_description_more, it, crewSaid) }
-    val shape = RoundedCornerShape(24.dp)
-    Column(
-        Modifier.then(if (expanded) Modifier.fillMaxWidth() else Modifier)
-            .shadow(10.dp, shape, ambientColor = pcHue(0x4020372C), spotColor = pcHue(0x4020372C))
-            .clip(shape).background(Glaze).border(1.dp, Rim, shape).animateContentSize(),
+
+    if (expanded) {
+        CapsuleCard(capsule, container, current, headMood, steps, activity, trail, crew, sessions, clockNow, tick, moving, locked, failed, approvals, questions)
+        return
+    }
+    CollapsedPill(capsule, hole, tucked, atRest, label, trailing, needsYou, crew, headMood, tick, moving, capsuleDescription)
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CollapsedPill(
+    capsule: Capsule,
+    hole: Capsule.Hole?,
+    tucked: Boolean,
+    atRest: Boolean,
+    label: String,
+    trailing: String?,
+    needsYou: Boolean,
+    crew: Crew,
+    headMood: Mood,
+    tick: () -> Long,
+    moving: Boolean,
+    description: String,
+) {
+    val density = LocalDensity.current
+    val shape = RoundedCornerShape(50)
+    val selectLabel = stringResource(R.string.cap_select_screen)
+    val expandLabel = stringResource(R.string.cap_expand)
+    val height = hole?.let { with(density) { it.heightPx.toDp() } } ?: 34.dp
+    val small = tucked || atRest
+    Row(
+        Modifier
+            .clip(shape).background(Ink).animateContentSize(spring(dampingRatio = 0.82f, stiffness = 520f))
+            .pointerInput(hole, tucked) {
+                // Toward the camera tucks it (the task goes on); outward brings it back; down expands it.
+                var total = Offset.Zero
+                var startX = 0f
+                detectDragGestures(
+                    onDragStart = { at -> total = Offset.Zero; startX = at.x },
+                    onDragEnd = {
+                        val threshold = 22.dp.toPx()
+                        if (total.y > threshold && abs(total.y) > abs(total.x)) {
+                            capsule.tucked.value = false
+                            capsule.expanded.value = true
+                        } else if (abs(total.x) > threshold) {
+                            val fromLeft = startX < size.width / 2f
+                            val towardCentre = (fromLeft && total.x > 0) || (!fromLeft && total.x < 0)
+                            capsule.tucked.value = towardCentre
+                            capsule.haptic(HapticFeedbackConstants.GESTURE_THRESHOLD_ACTIVATE)
+                        }
+                    },
+                ) { change, drag -> change.consume(); total += drag }
+            }
+            .combinedClickable(onClickLabel = expandLabel, onLongClickLabel = selectLabel, onLongClick = { capsule.startSelection() }, onClick = { capsule.tap() })
+            .semantics { contentDescription = description }
+            .heightIn(min = height),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         val wrap = hole
-        // Expanded at the camera, the content starts below the hole; collapsed, the hole sits in a gap at one end.
-        if (expanded && wrap != null) Box(Modifier.height(with(density) { wrap.belowPx.toDp() }))
-        val around = if (!expanded) wrap else null
-        val gap = around?.let { with(density) { it.gapPx.toDp() } }
-        Row(
-            Modifier.combinedClickable(
-                onClickLabel = if (expanded) collapseLabel else if (atRest) composerLabel else expandLabel,
-                onLongClickLabel = selectLabel,
-                onLongClick = { capsule.startSelection() },
-                onClick = { if (expanded) capsule.expanded.value = false else if (atRest) capsule.openComposer(null) else capsule.expanded.value = true },
-            ).semantics { contentDescription = capsuleDescription }
-                .then(around?.let { Modifier.heightIn(min = with(density) { it.heightPx.toDp() }) } ?: Modifier)
-                .padding(vertical = if (atRest && !expanded) 6.dp else 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(Modifier.width(if (gap != null && around?.contentLeft == false) gap else 13.dp))
-            if (expanded) CompanionGlyph(headMood, tick, moving) else CrewRow(crew, tick, moving)
-            val labelRoom = (around?.let { a -> with(density) { a.labelMaxPx.toDp() } }?.coerceAtMost(180.dp) ?: 180.dp) - crewExtraWidth(crew)
-            if (expanded || labelRoom >= 40.dp) {
+        if (wrap != null && wrap.centered) {
+            val zone = with(density) { wrap.zonePx.toDp() }
+            val gap = with(density) { wrap.gapPx.toDp() }
+            val side = if (small) 26.dp else zone
+            Row(Modifier.width(side).padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (tucked || atRest) CompanionGlyph(if (atRest) Mood.IDLE else headMood, tick, moving, size = 18.dp)
+                else CrewRow(crew, tick, moving)
+                val labelRoom = zone - 10.dp - 6.dp - 18.dp - crewExtraWidth(crew)
+                if (!small && labelRoom >= 44.dp) Text(label, Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (needsYou) Attention else Label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Box(Modifier.width(gap))
+            Row(Modifier.width(side).padding(end = 12.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                when {
+                    tucked && !atRest -> Box(Modifier.size(6.dp).clip(CircleShape).background(Sage))
+                    !small && trailing != null -> Text(trailing, fontSize = 12.sp, color = if (needsYou) Attention else Small, maxLines = 1, style = TextStyle(fontFeatureSettings = P.tabular))
+                }
+            }
+        } else {
+            // A corner camera: the camera sits in a gap at one end, the content on the side with more room.
+            val gap = wrap?.let { with(density) { it.gapPx.toDp() } }
+            Box(Modifier.width(if (gap != null && wrap.contentLeft == false) gap else 12.dp))
+            if (tucked || atRest) CompanionGlyph(if (atRest) Mood.IDLE else headMood, tick, moving) else CrewRow(crew, tick, moving)
+            val room = (wrap?.let { with(density) { it.labelMaxPx.toDp() } }?.coerceAtMost(180.dp) ?: 180.dp) - crewExtraWidth(crew)
+            if (!small && room >= 40.dp) {
                 Box(Modifier.width(8.dp))
-                Text(
-                    if (expanded) (current?.let { "${it.title} · ${moodText(headMood).lowercase()}" } ?: stringResource(R.string.cap_smart_composer)) else label,
-                    Modifier.then(if (expanded) Modifier.weight(1f) else Modifier.widthIn(max = labelRoom)),
-                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Label, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
+                Text(label, Modifier.widthIn(max = room), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (needsYou) Attention else Label, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            if (expanded && current != null) Text(
-                elapsedText(clockNow - (activity[current.id]?.runStartedAtMs ?: current.createdAtMs)),
-                Modifier.padding(start = 8.dp), fontSize = 11.sp, color = Small, maxLines = 1, style = TextStyle(fontFeatureSettings = P.tabular),
-            )
-            if (expanded || !atRest) { Box(Modifier.width(8.dp)); PIcon(if (expanded) PIcons.close else PIcons.chevronDown, size = 13.dp, tint = Label) }
-            Box(Modifier.width(if (gap != null && around?.contentLeft == true) gap + 8.dp else 13.dp))
+            if (!small && trailing != null) Text(trailing, Modifier.padding(start = 8.dp), fontSize = 12.sp, color = Small, maxLines = 1)
+            Box(Modifier.width(if (gap != null && wrap.contentLeft) gap + 6.dp else 12.dp))
         }
-        if (!expanded) return@Column
+    }
+}
 
-        Box(Modifier.fillMaxWidth().height(1.dp).background(pcHue(0x24FFFFFF)))
-        val maxBody = with(density) { (LocalResources.current.displayMetrics.heightPixels * 0.8f).toDp() }
-        Column(Modifier.fillMaxWidth().heightIn(max = maxBody).verticalScroll(rememberScrollState()).padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 14.dp)) {
-            if (locked) {
-                Text((stringResource(R.string.cap_lockdown_text) + " " + (emergency.reason ?: "")).trim(), Modifier.padding(vertical = 4.dp), fontSize = 12.sp, color = Attention)
-                PButton(stringResource(R.string.dest_emergency), { capsule.open("emergency", null) }, style = ButtonStyle.Alt, tiny = true)
-                SectionGap()
-            }
-            approvals.firstOrNull()?.let { request ->
-                Text(request.description, Modifier.padding(vertical = 4.dp), fontSize = 12.sp, color = Attention, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                Text(request.assessment.localizedDescription(), fontSize = 11.sp, color = if (request.assessment.level >= RiskLevel.HIGH) pcHue(0xFFE7A493) else Small, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                ApprovalCountdown(request, Modifier.padding(top = 6.dp), dark = true)
-                Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PButton(stringResource(R.string.appr_deny), { container.approvals.resolve(request.id, ApprovalDecision.Denied("denied from the capsule")) }, style = ButtonStyle.Alt, tiny = true)
-                    when (approveGesture(request.assessment.level, ApprovalSurface.CAPSULE)) {
-                        ApproveGesture.ONE_TAP -> PButton(stringResource(R.string.appr_approve_once), { container.approvals.resolve(request.id, ApprovalDecision.Approved()) }, tiny = true)
-                        else -> PButton(stringResource(R.string.appr_review_inbox), { capsule.open("inbox", null) }, tiny = true)
+/**
+ * The card the capsule expands into, under the camera: the task (Previous / Current / Next), what it waits for, a
+ * field to add instructions and its controls at the bottom, nearest the thumb. At rest it is the Smart Composer.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CapsuleCard(
+    capsule: Capsule,
+    container: AppContainer,
+    current: app.umbra.core.session.Session?,
+    headMood: Mood,
+    steps: app.umbra.core.session.StepTrail,
+    activity: Map<String, SessionActivity>,
+    trail: app.umbra.core.session.SessionTrail,
+    crew: Crew,
+    sessions: List<app.umbra.core.session.Session>,
+    clockNow: Long,
+    tick: () -> Long,
+    moving: Boolean,
+    locked: Boolean,
+    failed: app.umbra.core.session.Session?,
+    approvals: List<app.umbra.core.safety.ApprovalRequest>,
+    questions: List<app.umbra.core.orchestrator.QuestionBroker.Pending>,
+) {
+    val density = LocalDensity.current
+    val emergency by container.emergency.state.collectAsState()
+    val leases by container.inputLeases.all.collectAsState()
+    val prefs by container.settings.flow.collectAsState()
+    val notice by capsule.notice.collectAsState()
+    val dismissed by capsule.dismissedFailures.collectAsState()
+    val power = prefs.uiMode != UiMode.SIMPLE
+    val shape = RoundedCornerShape(32.dp)
+    val maxBody = with(density) { (LocalResources.current.displayMetrics.heightPixels * 0.72f).toDp() }
+    Column(
+        Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 18.dp)
+            .shadow(16.dp, shape, ambientColor = Color.Black.copy(alpha = 0.3f), spotColor = Color.Black.copy(alpha = 0.4f))
+            .clip(shape).background(Card).animateContentSize(spring(dampingRatio = 0.86f, stiffness = 480f))
+            .padding(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 14.dp),
+    ) {
+        // The camera's row: the camera sits in the middle of it, between the companion and the collapse button.
+        Row(Modifier.fillMaxWidth().height(Capsule.CARD_ROW_DP.dp), verticalAlignment = Alignment.CenterVertically) {
+            CompanionGlyph(if (current == null) Mood.IDLE else headMood, tick, moving, size = 22.dp)
+            if (current != null) Text(
+                elapsedText(clockNow - (activity[current.id]?.runStartedAtMs ?: current.createdAtMs)), Modifier.padding(start = 8.dp),
+                fontSize = 13.sp, color = Small, style = TextStyle(fontFeatureSettings = P.tabular),
+            )
+            Box(Modifier.weight(1f))
+            RoundButton(PIcons.chevronDown, stringResource(R.string.cap_collapse), rotate = true) { capsule.expanded.value = false }
+        }
+        Column(Modifier.fillMaxWidth().heightIn(max = maxBody).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (current != null) {
+                Column {
+                    Text(current.title, fontSize = 18.sp, fontWeight = FontWeight.Medium, color = Label, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    val at = current.plan.indexOfFirst { it.status == "active" }
+                    if (at >= 0) Text(stringResource(R.string.r_home_step, at + 1, current.plan.size), fontSize = 12.5.sp, color = Small)
+                }
+                if (power && sessions.count(Crews::isLive) > 1) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        sessions.filter(Crews::isLive).forEach { s ->
+                            val on = s.id == current.id
+                            Row(
+                                Modifier.clip(RoundedCornerShape(16.dp)).background(if (on) Sage else Line).clickable { container.ui.focus(s.id) }.padding(start = 8.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                CompanionGlyph(crew.moodOf(s.id) ?: Mood.IDLE, tick, moving, size = 16.dp)
+                                Text(s.title, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = if (on) pcHue(0xFF26372F) else Label, maxLines = 1, modifier = Modifier.widthIn(max = 120.dp), overflow = TextOverflow.Ellipsis)
+                            }
+                        }
                     }
                 }
-                if (approvals.size > 1) Text(stringResource(R.string.appr_more_waiting, approvals.size - 1), Modifier.padding(top = 4.dp), fontSize = 11.sp, color = Small)
-                SectionGap()
-            }
-            if (questions.isNotEmpty()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(pluralStringResource(R.plurals.cap_questions, questions.size, questions.size), Modifier.weight(1f), fontSize = 12.sp, color = Attention)
-                    PButton(stringResource(R.string.cap_answer), { capsule.open("inbox", null) }, style = ButtonStyle.Alt, tiny = true)
+                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Line.copy(alpha = 0.6f)).padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    CrewSteps(current, activity[current.id], headMood, steps, clockNow, tick, moving)
                 }
-                SectionGap()
+            }
+            if (locked) {
+                Text((stringResource(R.string.cap_lockdown_text) + " " + (emergency.reason ?: "")).trim(), fontSize = 13.sp, color = Attention)
+                Row { DarkButton(stringResource(R.string.dest_emergency), null) { capsule.open("emergency", null) } }
+            }
+            approvals.firstOrNull()?.let { request ->
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Line.copy(alpha = 0.6f)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(request.description, fontSize = 14.sp, color = Attention, maxLines = 5, overflow = TextOverflow.Ellipsis)
+                    Text(request.assessment.localizedDescription(), fontSize = 12.sp, color = if (request.assessment.level >= RiskLevel.HIGH) Clay else Small, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    ApprovalCountdown(request, dark = true)
+                    if (approvals.size > 1) Text(stringResource(R.string.appr_more_waiting, approvals.size - 1), fontSize = 11.sp, color = Small)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DarkButton(stringResource(R.string.appr_deny), null) { container.approvals.resolve(request.id, ApprovalDecision.Denied("denied from the capsule")) }
+                    when (approveGesture(request.assessment.level, ApprovalSurface.CAPSULE)) {
+                        ApproveGesture.ONE_TAP -> DarkButton(stringResource(R.string.appr_approve_once), PIcons.check, primary = true) { container.approvals.resolve(request.id, ApprovalDecision.Approved()) }
+                        else -> DarkButton(stringResource(R.string.appr_review_inbox), null, primary = true) { capsule.open(null, request.sessionId) }
+                    }
+                }
+            }
+            if (questions.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(pluralStringResource(R.plurals.cap_questions, questions.size, questions.size), Modifier.weight(1f), fontSize = 13.sp, color = Attention)
+                Box(Modifier.width(120.dp)) { Row { DarkButton(stringResource(R.string.cap_answer), null) { capsule.open(null, questions.first().sessionId) } } }
             }
             failed?.let { f ->
-                Text(stringResource(R.string.cap_failed, f.title) + (f.lastError?.let { ": $it" } ?: ""), fontSize = 12.sp, color = Attention, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PButton(stringResource(R.string.cap_open), { capsule.open(null, f.id) }, style = ButtonStyle.Alt, tiny = true)
-                    PButton(stringResource(R.string.cap_dismiss), { capsule.dismissedFailures.value = dismissed + f.id }, style = ButtonStyle.Ghost, tiny = true)
-                }
-                SectionGap()
-            }
-
-            SectionTitle(stringResource(R.string.cap_section_sessions))
-            CrewSessions(trail, crew, sessions, activity, headMood, clockNow, tick, moving, onFocus = { container.ui.focus(it) })
-            SectionGap()
-            SectionTitle(stringResource(R.string.cap_section_steps))
-            CrewSteps(current, current?.let { activity[it.id] }, headMood, steps, clockNow, tick, moving)
-
-            Row(Modifier.padding(top = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(
-                    Modifier.weight(1f).heightIn(min = 40.dp).clip(RoundedCornerShape(10.dp)).background(pcHue(0x18FFFFFF)).border(1.dp, pcHue(0x2BFFFFFF), RoundedCornerShape(10.dp))
-                        .clickable(onClickLabel = stringResource(R.string.cap_write)) { capsule.openComposer(current?.id) }.padding(horizontal = 10.dp, vertical = 9.dp),
-                ) {
-                    Text(
-                        draft.ifBlank { stringResource(if (current != null) R.string.cap_ask_agent else R.string.cap_ask_umbra) } + if (chips.isNotEmpty()) "  · " + pluralStringResource(R.plurals.cap_attached, chips.size, chips.size) else "",
-                        fontSize = 12.sp, color = if (draft.isBlank()) pcHue(0xFFC5D8C5) else Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                PButton("", { capsule.startSelection() }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.target, contentDescription = selectLabel)
-            }
-            if (current != null) {
-                val screenLease = leases.values.firstOrNull { it.resourceId == "display:0" }
-                val userHolds = screenLease?.owner == Principal.User && screenLease.state == LeaseState.ACTIVE
-                FlowRow(Modifier.padding(top = 9.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    PButton(stringResource(R.string.cap_open), { capsule.open(null, current.id) }, style = ButtonStyle.Alt, tiny = true)
-                    if (current.state == SessionState.PAUSED) PButton(stringResource(R.string.cap_resume), { capsule.launch { container.supervisor.resume(current.id) } }, style = ButtonStyle.Alt, tiny = true)
-                    else PButton(stringResource(R.string.cap_pause), { capsule.launch { container.supervisor.pause(current.id) } }, style = ButtonStyle.Alt, tiny = true)
-                    PButton(stringResource(R.string.cap_stop), { capsule.launch { container.supervisor.stop(current.id) } }, style = ButtonStyle.Danger, tiny = true)
-                    if (!userHolds) PButton(stringResource(R.string.cap_take_back), { container.inputLeases.takeBack("display:0") }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.hand)
-                    else PButton(stringResource(R.string.cap_return), { container.inputLeases.release("display:0", Principal.User, "returned by the user") }, style = ButtonStyle.Ghost, tiny = true)
-                }
-            } else {
-                Row(Modifier.padding(top = 9.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    PButton(stringResource(R.string.cap_open_umbra), { capsule.open(null, null) }, style = ButtonStyle.Alt, tiny = true)
+                Text(stringResource(R.string.cap_failed, f.title) + (f.lastError?.let { ": $it" } ?: ""), fontSize = 13.sp, color = Attention, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DarkButton(stringResource(R.string.cap_open), PIcons.arrowRight) { capsule.open(null, f.id) }
+                    DarkButton(stringResource(R.string.cap_dismiss), null) { capsule.dismissedFailures.value = dismissed + f.id }
                 }
             }
-            notice?.let {
-                Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(it, Modifier.weight(1f), fontSize = 11.sp, color = Attention, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    PButton("", { capsule.notice.value = null }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.close, contentDescription = stringResource(R.string.cap_dismiss))
+            if (current == null) RecentTasks(capsule, sessions)
+        }
+        Box(Modifier.height(12.dp))
+        CardField(capsule, container, current?.id)
+        if (current != null) {
+            val screenLease = leases.values.firstOrNull { it.resourceId == "display:0" }
+            val userHolds = screenLease?.owner == Principal.User && screenLease.state == LeaseState.ACTIVE
+            // Four buttons share the row in Power: words only, so none is cut short.
+            val icons = !power
+            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DarkButton(stringResource(R.string.cap_open), if (icons) PIcons.arrowRight else null) { capsule.open(null, current.id) }
+                if (current.state == SessionState.PAUSED) DarkButton(stringResource(R.string.cap_resume), if (icons) PIcons.play else null) { capsule.launch { container.supervisor.resume(current.id) } }
+                else DarkButton(stringResource(R.string.cap_pause), if (icons) PIcons.pause else null) { capsule.launch { container.supervisor.pause(current.id) } }
+                DarkButton(stringResource(R.string.r_stop), if (icons) PIcons.stop else null, tone = Clay) { capsule.launch { container.supervisor.stop(current.id) } }
+                if (power) {
+                    if (!userHolds) DarkButton(stringResource(R.string.r_task_take_over), null) { container.inputLeases.takeBack("display:0") }
+                    else DarkButton(stringResource(R.string.r_task_give_back), null) { container.inputLeases.release("display:0", Principal.User, "returned by the user") }
                 }
+            }
+        }
+        notice?.let {
+            Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(it, Modifier.weight(1f), fontSize = 12.sp, color = Attention, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                RoundButton(PIcons.close, stringResource(R.string.cap_dismiss)) { capsule.notice.value = null }
             }
         }
     }
 }
 
+/** The last two finished tasks, at rest: one tap opens them in the app. */
 @Composable
-private fun SectionTitle(text: String) =
-    Text(text.uppercase(), Modifier.padding(top = 4.dp, bottom = 5.dp), fontSize = 9.sp, letterSpacing = 1.sp, color = Section)
+private fun RecentTasks(capsule: Capsule, sessions: List<app.umbra.core.session.Session>) {
+    val recent = sessions.filter { it.state.isTerminal }.sortedByDescending { it.updatedAtMs }.take(2)
+    if (recent.isEmpty()) return
+    Column {
+        recent.forEach { s ->
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { capsule.open(null, s.id) }.padding(horizontal = 4.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                PIcon(PIcons.clock, size = 18.dp, tint = Small)
+                Text(s.title, Modifier.weight(1f), fontSize = 14.sp, color = Label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+/**
+ * The card's field: the shared draft (Home's composer shows the same). It takes the keyboard only when tapped; the
+ * button beside it selects on the screen, then becomes Send once there is something to send.
+ */
+@Composable
+private fun CardField(capsule: Capsule, container: AppContainer, target: String?) {
+    val context = LocalContext.current
+    val draft by container.ui.draft.collectAsState()
+    val chips by container.ui.draftContext.collectAsState()
+    val focused by capsule.cardFocused.collectAsState()
+    val busy by capsule.busy.collectAsState()
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val canListen = remember { SpeechRecognizer.isRecognitionAvailable(context) }
+    LaunchedEffect(focused) {
+        if (focused) {
+            delay(60)
+            runCatching { focus.requestFocus() }
+            keyboard?.show()
+        }
+    }
+    chips.forEach { chip -> ChipRow(chip) { container.ui.removeContext(chip.id) } }
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp)).background(Line).padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.weight(1f).padding(vertical = 12.dp)) {
+            if (draft.isEmpty()) Text(stringResource(if (target != null) R.string.r_cap_more else R.string.r_composer_hint), fontSize = 14.5.sp, color = Small, maxLines = 1)
+            val messageLabel = stringResource(R.string.cap_message)
+            BasicTextField(
+                draft, { container.ui.saveDraft(it) },
+                Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = messageLabel },
+                textStyle = TextStyle(fontSize = 14.5.sp, lineHeight = 21.sp, color = Label), cursorBrush = SolidColor(Sage), maxLines = 4,
+            )
+            if (!focused) Box(Modifier.matchParentSize().clickable(onClickLabel = stringResource(R.string.cap_type)) { capsule.focusCard(true) })
+        }
+        if (draft.isBlank()) {
+            RoundButton(PIcons.target, stringResource(R.string.cap_select_screen), size = 40.dp) { capsule.startSelection() }
+            if (canListen) RoundButton(PIcons.mic, stringResource(R.string.cap_speak), size = 40.dp) {
+                context.startActivity(Intent(context, VoiceInputActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        } else {
+            Box(
+                Modifier.size(44.dp).clip(CircleShape).background(Sage).clickable(enabled = busy == null, role = Role.Button, onClickLabel = stringResource(R.string.cap_send)) {
+                    capsule.send(draft.trim(), container.ui.homeProject.value, target = target)
+                },
+                contentAlignment = Alignment.Center,
+            ) { PIcon(PIcons.send, size = 20.dp, tint = pcHue(0xFF1C2A22)) }
+        }
+    }
+}
+
+/** A button of the card: dark, 48 dp tall, sharing the row with the others. [primary] is the sage one. */
+@Composable
+private fun RowScope.DarkButton(text: String, icon: IconSpec?, tone: Color = Label, primary: Boolean = false, onClick: () -> Unit) {
+    Row(
+        Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(24.dp)).background(if (primary) Sage else Line).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+    ) {
+        val ink = if (primary) pcHue(0xFF1C2A22) else tone
+        if (icon != null) PIcon(icon, size = 16.dp, tint = ink)
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
 
 @Composable
-private fun SectionGap() = Box(Modifier.padding(vertical = 9.dp).fillMaxWidth().height(1.dp).background(pcHue(0x22FFFFFF)))
+private fun RoundButton(icon: IconSpec, description: String, size: Dp = 32.dp, rotate: Boolean = false, onClick: () -> Unit) {
+    Box(
+        Modifier.size(size).clip(CircleShape).background(if (size <= 32.dp) Line else Color.Transparent).clickable(role = Role.Button, onClickLabel = description, onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) { PIcon(icon, Modifier.then(if (rotate) Modifier.rotate(180f) else Modifier), size = if (size <= 32.dp) 16.dp else 20.dp, tint = Label) }
+}
+
 
 /**
  * The bottom Quick Composer: the same draft and context as Home and the capsule, the target (new work or a running
@@ -409,72 +615,156 @@ internal fun ChipRow(chip: ContextChip, onRemove: () -> Unit) {
     }
 }
 
+
 /**
- * Snapshot selection (§3.1): the screenshot under a light glaze, a lasso drawn with a finger (or a tap on one
- * element), and a small toolbar. The screenshot is drawn where the real screen is, so the user circles exactly
- * what they see.
+ * Selecting on the screen (after Circle to Search): the screenshot, frozen, a light dim and a glow along the bottom
+ * edge; a circle, a tap (the element under it) or a line over text selects, the stroke settles into a rounded box
+ * with corner handles and the rest dims. Every control is in the card at the top, by the camera: close, Live,
+ * the selection's thumbnail and quick actions, and the field. Sending starts the task and the screen comes back.
  */
 @Composable
-internal fun SelectionView(capture: ScreenContext.Capture, topInsetPx: Int, bottomInsetPx: Int, onDone: (List<Point>) -> Unit, onCancel: () -> Unit) {
+internal fun SelectionView(capsule: Capsule, container: AppContainer, capture: ScreenContext.Capture, topInsetPx: Int, cameraCenterYPx: Int?, onCancel: () -> Unit) {
     val image = remember(capture) { capture.image.asImageBitmap() }
     val points = remember { mutableStateListOf<Offset>() }
     var origin by remember { mutableStateOf(Offset.Zero) }
+    var region by remember { mutableStateOf<app.umbra.core.model.Rect?>(null) }
+    var text by remember { mutableStateOf("") }
     val density = LocalDensity.current
-    val dim = pcHue(0x550C2414)
+    val prefs by container.settings.flow.collectAsState()
+    val focused by capsule.selectionFocused.collectAsState()
+    val busy by capsule.busy.collectAsState()
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
     val selectionDescription = stringResource(R.string.sel_description)
+    LaunchedEffect(focused) {
+        if (focused) {
+            delay(60)
+            runCatching { focus.requestFocus() }
+            keyboard?.show()
+        }
+    }
+    val strokeOnScreen = { points.map { Point((it.x + origin.x).toInt(), (it.y + origin.y).toInt()) } }
+    // Nothing selected: the question is about the whole screen.
+    val wholeScreen = listOf(Point(0, 0), Point(capture.screen.width - 1, 0), Point(capture.screen.width - 1, capture.screen.height - 1), Point(0, capture.screen.height - 1))
+    val settle = {
+        val stroke = strokeOnScreen()
+        region = if (stroke.isEmpty()) null else runCatching { Lasso.select(capture.tree ?: UiSnapshot(), stroke, capture.screen).region }.getOrNull()
+    }
+    val send = { message: String ->
+        if (message.isNotBlank()) capsule.sendSelection(capture, strokeOnScreen().takeIf { it.isNotEmpty() } ?: wholeScreen, message.trim())
+    }
+    val sage = Sage
+    val dim = pcHue(0x330C1A12)
+    val dimHard = pcHue(0x730C1A12)
     Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionOnScreen() }) {
         Canvas(
             Modifier.fillMaxSize()
                 .pointerInput(Unit) {
-                    detectDragGestures(onDragStart = { at -> points.clear(); points.add(at) }, onDrag = { change, _ -> points.add(change.position) })
+                    detectDragGestures(
+                        onDragStart = { at -> points.clear(); region = null; points.add(at); capsule.focusSelection(false) },
+                        onDragEnd = { settle() },
+                    ) { change, _ -> points.add(change.position) }
                 }
-                .pointerInput(Unit) { detectTapGestures { at -> points.clear(); points.add(at); points.add(at + Offset(1f, 1f)) } }
+                .pointerInput(Unit) { detectTapGestures { at -> points.clear(); points.add(at); points.add(at + Offset(1f, 1f)); capsule.focusSelection(false); settle() } }
                 .semantics { contentDescription = selectionDescription },
         ) {
             drawImage(image, topLeft = Offset(-origin.x, -origin.y))
-            if (points.size >= 3) {
-                val path = Path().apply {
-                    moveTo(points[0].x, points[0].y)
-                    for (i in 1 until points.size) lineTo(points[i].x, points[i].y)
-                    close()
-                }
-                clipPath(path, ClipOp.Difference) { drawRect(dim) }
-                drawPath(path, pcHue(0x19AEE7B0))
-                drawPath(path, pcHue(0xFFE0FAE6), style = Stroke(width = 2.dp.toPx() * 1.5f))
-            } else {
+            val r = region
+            if (r == null) {
                 drawRect(dim)
-                points.firstOrNull()?.let { drawCircle(pcHue(0xFFE0FAE6), radius = 18.dp.toPx(), center = it, style = Stroke(width = 3.dp.toPx())) }
+                // the glow rests on the bottom edge; the middle stays clear for the circle
+                drawRect(Brush.verticalGradient(listOf(Color.Transparent, pcHue(0x59E3B470), pcHue(0xD99DBBA1)), startY = size.height - 220.dp.toPx(), endY = size.height), topLeft = Offset(0f, size.height - 220.dp.toPx()))
+                if (points.size >= 2) {
+                    val path = Path().apply { moveTo(points[0].x, points[0].y); for (i in 1 until points.size) lineTo(points[i].x, points[i].y) }
+                    drawPath(path, sage.copy(alpha = 0.55f), style = Stroke(width = 16.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    drawPath(path, Color.White, style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+            } else {
+                val left = r.left - origin.x
+                val top = r.top - origin.y
+                val w = r.width.toFloat()
+                val h = r.height.toFloat()
+                val corner = 24.dp.toPx()
+                val box = Path().apply { addRoundRect(androidx.compose.ui.geometry.RoundRect(left, top, left + w, top + h, CornerRadius(corner))) }
+                clipPath(box, ClipOp.Difference) { drawRect(dimHard) }
+                for ((width, alpha) in listOf(14.dp.toPx() to 0.18f, 8.dp.toPx() to 0.3f)) drawPath(box, sage.copy(alpha = alpha), style = Stroke(width))
+                drawPath(box, Color.White.copy(alpha = 0.55f), style = Stroke(1.5.dp.toPx()))
+                // the corner handles: an L at each corner, following the rounding
+                val arm = 26.dp.toPx().coerceAtMost(minOf(w, h) / 2)
+                val handle = Path().apply {
+                    moveTo(left, top + arm); lineTo(left, top + corner); quadraticTo(left, top, left + corner, top); lineTo(left + arm, top)
+                    moveTo(left + w - arm, top); lineTo(left + w - corner, top); quadraticTo(left + w, top, left + w, top + corner); lineTo(left + w, top + arm)
+                    moveTo(left + w, top + h - arm); lineTo(left + w, top + h - corner); quadraticTo(left + w, top + h, left + w - corner, top + h); lineTo(left + w - arm, top + h)
+                    moveTo(left + arm, top + h); lineTo(left + corner, top + h); quadraticTo(left, top + h, left, top + h - corner); lineTo(left, top + h - arm)
+                }
+                drawPath(handle, Color.White, style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
         }
-        Row(
-            Modifier.align(Alignment.TopCenter).padding(top = with(density) { topInsetPx.toDp() } + 10.dp)
-                .clip(RoundedCornerShape(50)).background(Glaze).border(1.dp, Rim, RoundedCornerShape(50)).padding(horizontal = 14.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+
+        // The selection's card: at the top, its first row on the camera's row.
+        val cardTop = with(density) { (((cameraCenterYPx ?: (topInsetPx / 2)) - Capsule.CARD_ROW_DP.dp.roundToPx() / 2 - 6.dp.roundToPx()).coerceAtLeast(0)).toDp() }
+        val shape = RoundedCornerShape(32.dp)
+        Column(
+            Modifier.align(Alignment.TopCenter).padding(top = cardTop, start = 12.dp, end = 12.dp).fillMaxWidth()
+                .shadow(16.dp, shape, ambientColor = Color.Black.copy(alpha = 0.3f), spotColor = Color.Black.copy(alpha = 0.4f))
+                .clip(shape).background(Card).animateContentSize(spring(dampingRatio = 0.86f, stiffness = 480f))
+                .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            PIcon(PIcons.target, size = 14.dp, tint = Label)
-            Text(stringResource(R.string.sel_banner), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Label)
-        }
-        if (points.isEmpty()) Text(
-            stringResource(R.string.sel_hint),
-            Modifier.align(Alignment.Center).clip(RoundedCornerShape(14.dp)).background(pcHue(0xAA17251D)).padding(horizontal = 14.dp, vertical = 9.dp),
-            fontSize = 14.sp, color = Color.White,
-        )
-        // A solid glaze base under the three buttons: nothing of the screenshot shows between them, and Clear is always
-        // there (unavailable until something is selected), so no button moves on the first touch.
-        Row(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                .padding(start = 12.dp, end = 12.dp, bottom = with(density) { bottomInsetPx.toDp() } + 12.dp)
-                .shadow(12.dp, RoundedCornerShape(22.dp), ambientColor = pcHue(0x4020372C), spotColor = pcHue(0x4020372C))
-                .clip(RoundedCornerShape(22.dp)).background(Glaze).border(1.dp, Rim, RoundedCornerShape(22.dp))
-                .padding(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            PButton(stringResource(R.string.sel_cancel), onCancel, Modifier.weight(1f), style = ButtonStyle.Ghost)
-            PButton(stringResource(R.string.sel_clear), { points.clear() }, Modifier.weight(1f), style = ButtonStyle.Alt, enabled = points.isNotEmpty())
-            PButton(stringResource(R.string.sel_done), {
-                onDone(points.map { Point((it.x + origin.x).toInt(), (it.y + origin.y).toInt()) })
-            }, Modifier.weight(1.3f), enabled = points.isNotEmpty(), icon = PIcons.check)
+            Row(Modifier.fillMaxWidth().height(Capsule.CARD_ROW_DP.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RoundButton(PIcons.close, stringResource(R.string.sel_cancel), onClick = onCancel)
+                Text(stringResource(R.string.r_cap_select_title), fontSize = 13.sp, color = Small)
+                Box(Modifier.weight(1f))
+                val live = prefs.liveContext
+                Row(
+                    Modifier.clip(RoundedCornerShape(16.dp)).background(if (live) pcHue(0xFF8A6A3C) else Line).clickable(role = Role.Switch) { container.settings.update { it.copy(liveContext = !it.liveContext) } }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    PIcon(PIcons.eye, size = 15.dp, tint = Label)
+                    Text(stringResource(if (live) R.string.r_cap_live_on else R.string.r_cap_live), fontSize = 12.5.sp, color = Label)
+                }
+            }
+            region?.let { r ->
+                val thumb = remember(r) {
+                    runCatching {
+                        val crop = android.graphics.Bitmap.createBitmap(capture.image, r.left.coerceAtLeast(0), r.top.coerceAtLeast(0), r.width.coerceAtMost(capture.image.width - r.left.coerceAtLeast(0)), r.height.coerceAtMost(capture.image.height - r.top.coerceAtLeast(0)))
+                        val scale = 120f / maxOf(crop.width, crop.height)
+                        android.graphics.Bitmap.createScaledBitmap(crop, (crop.width * scale).toInt().coerceAtLeast(1), (crop.height * scale).toInt().coerceAtLeast(1), true).asImageBitmap()
+                    }.getOrNull()
+                }
+                Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    thumb?.let { Image(it, null, Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Crop) }
+                    for ((labelRes, promptRes, icon) in listOf(Triple(R.string.r_cap_what, R.string.r_cap_what_prompt, PIcons.search), Triple(R.string.r_cap_translate, R.string.r_cap_translate_prompt, PIcons.book), Triple(R.string.r_cap_help, R.string.r_cap_help_prompt, PIcons.spark))) {
+                        val prompt = stringResource(promptRes)
+                        Row(
+                            Modifier.clip(RoundedCornerShape(18.dp)).background(Line).clickable(enabled = busy == null) { send(prompt) }.padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            PIcon(icon, size = 15.dp, tint = Label)
+                            Text(stringResource(labelRes), fontSize = 13.sp, color = Label, maxLines = 1)
+                        }
+                    }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp)).background(Line).padding(start = 16.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.weight(1f).padding(vertical = 12.dp)) {
+                    if (text.isEmpty()) Text(stringResource(if (region != null) R.string.r_cap_select_ask else R.string.r_cap_select_hint), fontSize = 14.5.sp, color = Small, maxLines = 1)
+                    BasicTextField(
+                        text, { text = it }, Modifier.fillMaxWidth().focusRequester(focus),
+                        textStyle = TextStyle(fontSize = 14.5.sp, lineHeight = 21.sp, color = Label), cursorBrush = SolidColor(Sage), maxLines = 4,
+                    )
+                    if (!focused) Box(Modifier.matchParentSize().clickable(onClickLabel = stringResource(R.string.cap_type)) { capsule.focusSelection(true) })
+                }
+                Box(
+                    Modifier.size(44.dp).clip(CircleShape).background(if (text.isNotBlank()) Sage else Color.Transparent)
+                        .clickable(enabled = text.isNotBlank() && busy == null, role = Role.Button, onClickLabel = stringResource(R.string.cap_send)) { send(text) },
+                    contentAlignment = Alignment.Center,
+                ) { PIcon(PIcons.send, size = 20.dp, tint = if (text.isNotBlank()) pcHue(0xFF1C2A22) else Small) }
+            }
         }
     }
 }

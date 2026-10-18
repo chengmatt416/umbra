@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "updated": "2026-10-18",
+  "providers": [
+    {
+      "id": "openai-codex",
+      "label": "OpenAI",
+      "auth": "oauth",
+      "models": [
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 272000,
+          "recommended": true
+        },
+        {
+          "id": "gpt-6.1-sol",
+          "name": "GPT-6.1 Sol",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 272000
+        },
+        {
+          "id": "gpt-6-sol",
+          "name": "GPT-6 Sol",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 272000
+        },
+        {
+          "id": "gpt-6-luna",
+          "name": "GPT-6 Luna",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 272000
+        }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "label": "Anthropic",
+      "auth": "oauth",
+      "models": [
+        {
+          "id": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 1000000,
+          "recommended": true
+        },
+        {
+          "id": "claude-opus-5-5",
+          "name": "Claude Opus 5.5",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 1000000
+        },
+        {
+          "id": "claude-fable-5-1",
+          "name": "Claude Fable 5.1",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 1000000
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "name": "Claude Haiku 4.5",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 200000
+        }
+      ]
+    },
+    {
+      "id": "google-antigravity",
+      "label": "Google Antigravity",
+      "auth": "oauth",
+      "models": [
+        {
+          "id": "gemini-3.1-pro",
+          "name": "Gemini 3.1 Pro Preview",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 1048576,
+          "recommended": true
+        },
+        {
+          "id": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 1048576
+        },
+        {
+          "id": "claude-sonnet-5-5-medium",
+          "name": "Claude Sonnet 5.5 (Medium)",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 1000000
+        },
+        {
+          "id": "claude-opus-5-5-medium",
+          "name": "Claude Opus 5.5 (Medium)",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 1000000
+        },
+        {
+          "id": "gpt-oss-120b",
+          "name": "GPT OSS 120B",
+          "images": false,
+          "reasoning": true,
+          "contextWindow": 131072
+        }
+      ]
+    },
+    {
+      "id": "openai",
+      "label": "OpenAI",
+      "auth": "key",
+      "models": [
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 1050000,
+          "recommended": true
+        },
+        {
+          "id": "gpt-5.5-pro",
+          "name": "GPT-5.5 Pro",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 1050000
+        },
+        {
+          "id": "gpt-5.4-mini",
+          "name": "GPT-5.4 mini",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 400000
+        },
+        {
+          "id": "gpt-5.3-codex",
+          "name": "GPT-5.3 Codex",
+          "images": true,
+          "reasoning": true,
+          "contextWindow": 272000
+        }
+      ]
+    }
+  ]
+}

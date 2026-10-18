@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -66,7 +67,6 @@ import app.umbra.agent.ui.inbox.QuestionPanel
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.Callout
 import app.umbra.agent.ui.porcelain.Eyebrow
-import app.umbra.agent.ui.porcelain.FoldedOrb
 import app.umbra.agent.ui.porcelain.Gap
 import app.umbra.agent.ui.porcelain.P
 import app.umbra.agent.ui.porcelain.PButton
@@ -79,7 +79,6 @@ import app.umbra.agent.ui.porcelain.Tag
 import app.umbra.agent.ui.porcelain.Tone
 import app.umbra.agent.ui.sessions.sessionTone
 import app.umbra.agent.ui.sessions.stateText
-import app.umbra.agent.ui.shell.AppBar
 import app.umbra.core.orchestrator.ChatItem
 import app.umbra.core.orchestrator.ConversationEffect
 import app.umbra.core.orchestrator.ConversationState
@@ -166,14 +165,14 @@ class SessionOps(
     }
 }
 
-private enum class View(@param:androidx.annotation.StringRes val label: Int) { Chat(R.string.view_chat), Terminal(R.string.view_terminal), Activity(R.string.view_activity) }
+private enum class View(@param:androidx.annotation.StringRes val label: Int) { Chat(R.string.view_chat), Activity(R.string.r_task_view_steps), Terminal(R.string.view_terminal), Changes(R.string.r_task_view_changes) }
 
 /**
  * Current: the focused session as omp shows it (ADR 0013) — the conversation with tools, thinking and pictures,
  * omp's commands, model, branches, todos, subagents and goal — and the session's activity timeline.
  */
 @Composable
-fun CurrentScreen(onMenu: () -> Unit, onOpenSession: (String) -> Unit, onSessions: () -> Unit) {
+fun CurrentScreen(onBack: () -> Unit, onOpenSession: (String) -> Unit, onAccounts: () -> Unit, onCommit: () -> Unit = {}) {
     val container = LocalContext.current.container
     val context = LocalContext.current
     val resources = androidx.compose.ui.platform.LocalResources.current
@@ -182,22 +181,20 @@ fun CurrentScreen(onMenu: () -> Unit, onOpenSession: (String) -> Unit, onSession
     val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(null)
     val session = sessions?.firstOrNull { it.id == focused }
 
-    Column(Modifier.fillMaxSize()) {
-        AppBar(onMenu)
+    androidx.activity.compose.BackHandler(onBack = onBack)
+    Column(Modifier.fillMaxSize().statusBarsPadding()) {
         if (session == null && focused != null && sessions == null) return@Column
         if (session == null) {
-            app.umbra.agent.ui.porcelain.PEmpty(
-                stringResource(R.string.cur_none_title), stringResource(R.string.cur_none_body), icon = PIcons.activity,
-                action = { PButton(stringResource(R.string.dest_sessions), onSessions, style = ButtonStyle.Alt) },
-            )
+            Box(Modifier.padding(start = 12.dp, top = 10.dp)) { PIconButton(PIcons.chevronLeft, stringResource(R.string.action_back), onBack, size = 36.dp) }
+            app.umbra.agent.ui.porcelain.PEmpty(stringResource(R.string.cur_none_title), stringResource(R.string.cur_none_body), icon = PIcons.activity)
             return
         }
-        SessionView(session, context, onOpenSession)
+        SessionView(session, context, onOpenSession, onBack, onCommit)
     }
 }
 
 @Composable
-private fun SessionView(session: app.umbra.core.session.Session, context: Context, onOpenSession: (String) -> Unit) {
+private fun SessionView(session: app.umbra.core.session.Session, context: Context, onOpenSession: (String) -> Unit, onBack: () -> Unit, onCommit: () -> Unit) {
     val container = LocalContext.current.container
     val scope = rememberCoroutineScope()
     val id = session.id
@@ -207,7 +204,12 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
     val conversationFlow by produceState<kotlinx.coroutines.flow.StateFlow<ConversationState>?>(null, id) { value = runCatching { container.supervisor.conversation(id) }.getOrNull() }
     val conversation = conversationFlow?.collectAsStateWithLifecycle()?.value ?: ConversationState()
     var composer by remember(id) { mutableStateOf("") }
-    var view by remember(id) { mutableStateOf(View.Chat) }
+    var chosenView by remember(id) { mutableStateOf(View.Chat) }
+    val prefs by container.settings.flow.collectAsStateWithLifecycle()
+    // Simple shows the conversation only; Power and Dev the four views.
+    val simple = prefs.uiMode == app.umbra.agent.data.UiMode.SIMPLE
+    val view = if (simple) View.Chat else chosenView
+    var expanded by remember(id) { mutableStateOf(false) }
     var sheet by remember(id) { mutableStateOf(Sheet.None) }
     var menu by remember { mutableStateOf(false) }
     var contractDialog by remember { mutableStateOf(false) }
@@ -250,11 +252,13 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
         // Header: where this is and what state it is in (one line), the title (one line, tap for all of it), the
         // session's facts in a row that fades where it continues, then the views.
         Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
-            if (!typingInTerminal) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!typingInTerminal && !simple) Row(Modifier.padding(start = 44.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Eyebrow(project?.let { stringResource(R.string.cur_eyebrow_project, it.name) } ?: stringResource(R.string.cur_eyebrow_independent), Modifier.weight(1f))
                 Tag(stateText(session), sessionTone(session))
             }
             Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                PIconButton(PIcons.chevronLeft, stringResource(R.string.action_back), onBack, size = 36.dp)
+                Box(Modifier.padding(start = 8.dp))
                 Text(
                     conversation.title ?: session.title,
                     Modifier.weight(1f).clickable(role = androidx.compose.ui.semantics.Role.Button) { titleOpen = !titleOpen }.animateContentSize(),
@@ -271,7 +275,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                             scope.launch {
                                 try {
                                     container.ompTui.open(id, conversation.title ?: session.title)
-                                    view = View.Terminal
+                                    chosenView = View.Terminal
                                     info = context.getString(R.string.cur_tui_opened)
                                 } catch (e: Exception) { error = e.message ?: e::class.simpleName }
                             }
@@ -286,7 +290,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                     }
                 }
             }
-            if (!typingInTerminal) app.umbra.agent.ui.porcelain.FadingRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            if (!typingInTerminal && !simple) app.umbra.agent.ui.porcelain.FadingRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 PButton(conversation.session?.model?.name ?: session.model?.modelId ?: stringResource(R.string.cur_model), { sheet = Sheet.Model }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.spark)
                 conversation.session?.thinkingLevel?.let { PButton(stringResource(R.string.cur_thinking, it), { sheet = Sheet.Model }, style = ButtonStyle.Ghost, tiny = true) }
                 conversation.session?.contextUsage?.let { Tag(stringResource(R.string.cur_context, it.percent.toInt()), if (it.percent > 85) Tone.Warn else Tone.Neutral) }
@@ -296,7 +300,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                 }
                 if (showNotRunning) Tag(stringResource(R.string.cur_not_running), Tone.Neutral)
             }
-            Segmented(View.entries.map { it to stringResource(it.label) }, view, { view = it }, Modifier.padding(top = 8.dp), fill = true)
+            if (!simple) Segmented(View.entries.map { it to stringResource(it.label) }, view, { chosenView = it }, Modifier.padding(top = 8.dp), fill = true)
         }
         error?.let { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { Callout(it, Tone.Danger) } }
         info?.let { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { Callout(it, Tone.Good) } }
@@ -309,13 +313,18 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
             }
         }
 
+        val live = rememberLiveTarget(session, conversation)
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (view) {
-                View.Chat -> ChatList(session, conversation, mine, myQuestions, ops, onComposer = { composer = it })
+                View.Chat -> androidx.compose.runtime.CompositionLocalProvider(LocalCompactTools provides simple) {
+                    ChatList(session, conversation, mine, myQuestions, ops, onComposer = { composer = it }, live = live, onExpand = { expanded = true }, simple = simple)
+                }
                 View.Activity -> ActivityList(id)
                 View.Terminal -> Box(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 8.dp)) { app.umbra.agent.ui.terminal.TerminalsScreen(sessionId = id, embedded = true) }
+                View.Changes -> ChangesView(session, onCommit)
             }
         }
+        if (expanded && live != null) LiveDisplayDialog(session, live, onDismiss = { expanded = false })
         if (view == View.Chat) {
             ChatComposer(
                 conversation, composer, { composer = it }, busy = busy, paused = session.state == SessionState.PAUSED,
@@ -403,12 +412,16 @@ private fun ChatList(
     questions: List<app.umbra.core.orchestrator.QuestionBroker.Pending>,
     ops: SessionOps,
     onComposer: (String) -> Unit,
+    live: LiveTarget? = null,
+    onExpand: () -> Unit = {},
+    simple: Boolean = false,
 ) {
     val container = LocalContext.current.container
     val context = LocalContext.current
     val resources = androidx.compose.ui.platform.LocalResources.current
     val list = rememberLazyListState()
-    val items = conversation.items.filter { it !is ChatItem.ToolResult }
+    // Simple leaves out what is for developers: system notices and command output.
+    val items = conversation.items.filter { it !is ChatItem.ToolResult && !(simple && (it is ChatItem.Custom || it is ChatItem.CommandOutput)) }
     val resultImages = remember(conversation.items) { conversation.items.filterIsInstance<ChatItem.ToolResult>().filter { it.images.isNotEmpty() }.associate { it.toolCallId to it.images } }
     val atBottom by remember { derivedStateOf { list.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= list.layoutInfo.totalItemsCount - 2 } ?: true } }
     val streamedLength = (conversation.items.lastOrNull() as? ChatItem.Assistant)?.let { a -> a.blocks.sumOf { b -> (b as? app.umbra.core.orchestrator.Block.Text)?.text?.length ?: 0 } } ?: 0
@@ -424,8 +437,7 @@ private fun ChatList(
     }
     LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(18.dp, 10.dp, 18.dp, 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (items.isEmpty()) item(key = "empty") {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                FoldedOrb(Modifier.fillMaxWidth().height(150.dp), working = conversation.working)
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(top = 40.dp)) {
                 Subtle(stringResource(if (session.state == SessionState.CREATED) R.string.cur_empty_new else R.string.cur_empty_wait))
                 if (session.request.isNotBlank() && session.state != SessionState.CREATED) Subtle(stringResource(R.string.cur_request, session.request), Modifier.padding(top = 6.dp))
             }
@@ -451,6 +463,7 @@ private fun ChatList(
             }
         }
         if (conversation.compacting) item(key = "compacting") { Callout(stringResource(R.string.cur_compacting), Tone.Neutral) }
+        if (live != null) item(key = "live") { LiveDisplayCard(session, live, onExpand) }
         items(approvals, key = { it.id }) { r -> ApprovalPanel(r, null, onDecision = { container.approvals.resolve(r.id, it) }) }
         items(questions, key = { it.request.id }) { q -> QuestionPanel(q, null, onAnswer = { container.questions.answer(q.request.id, it) }) }
         if (session.state == SessionState.FAILED) item(key = "failed") { Callout(session.lastError ?: stringResource(R.string.cur_failed), Tone.Danger) }
