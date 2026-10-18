@@ -112,7 +112,7 @@ class OrchestratorRig(
                 model = ModelRef("fake", "fake-model"),
             )
         },
-        toolHosts = { id -> synchronized(hosts) { hosts.getOrPut(id) { UmbraToolHost(pipeline, id, DecisionRouter(primary = null), exclude = { it.startsWith("gui_") }) } } },
+        toolHosts = { id -> synchronized(hosts) { hosts.getOrPut(id) { UmbraToolHost(pipeline, id, DecisionRouter(primary = null), exclude = { it.startsWith("gui_") }, extra = sessionTools.forSession(id)) } } },
         gate = gate,
         approvals = approvals,
         questions = questions,
@@ -134,7 +134,11 @@ class OrchestratorRig(
         onDeleted = { id -> kotlinx.coroutines.delay(300); deleted += id },
     )
 
-    val supervisor = AgentSupervisor(deps, scope, governor).also { it.start() }
+    val supervisor: AgentSupervisor = AgentSupervisor(deps, scope, governor).also { it.start() }
+
+    /** Messages between sessions and the subagent tools, as the app wires them. */
+    val bus: SessionBus = SessionBus(supervisor, store, scope).also { it.start() }
+    val sessionTools: SessionTools = SessionTools(bus, supervisor, store)
 
     // ---- helpers for tests ----
 

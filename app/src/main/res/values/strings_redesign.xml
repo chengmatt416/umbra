@@ -225,4 +225,24 @@
     <string name="r_effort_off">Off</string>
     <string name="r_effort_unsupported">Not on this model</string>
     <string name="r_effort_by_model">Levels follow the model Auto picks</string>
+    <!-- Sessions and subagents (docs/design/agents-2026-10.md §3, §4) -->
+    <string name="ses_from">From %1$s</string>
+    <string name="ses_reply_from">Reply from %1$s</string>
+    <string name="ses_report_from">Report from %1$s</string>
+    <string name="ses_subagent_done">Subagent %1$s finished</string>
+    <string name="ses_subagent_failed">Subagent %1$s failed</string>
+    <string name="ses_to">To %1$s</string>
+    <string name="ses_reply_to">Reply to %1$s</string>
+    <string name="ses_started">Started subagent %1$s · %2$s</string>
+    <string name="ses_subagents">Subagents %1$d</string>
+    <string name="ses_queued">Queued: starts when the phone can take another agent</string>
+    <string name="ses_subagent_of">Subagent of %1$s</string>
+    <string name="ses_directory">Sessions</string>
+    <string name="ses_directory_count">%1$d</string>
+    <string name="ses_kind_here">you are here</string>
+    <string name="ses_kind_agent">agent</string>
+    <string name="ses_kind_subagent">subagent</string>
+    <string name="ses_kind_coding">coding</string>
+    <string name="ses_menu_directory">Sessions on this phone…</string>
+    <string name="ses_home_subagents">%1$d subagents</string>
 </resources>

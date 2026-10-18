@@ -218,11 +218,13 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
     var expanded by remember(id) { mutableStateOf(false) }
     var sheet by remember(id) { mutableStateOf(Sheet.None) }
     var effortSheet by remember(id) { mutableStateOf(false) }
+    var directory by remember(id) { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var contractDialog by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var titleOpen by remember(id) { mutableStateOf(false) }
 
+    if (directory) SessionsDirectorySheet(current = id, onOpenSession = onOpenSession, onDismiss = { directory = false })
     if (effortSheet) {
         val live = conversation.session?.model
         app.umbra.agent.ui.models.EffortPicker(
@@ -288,6 +290,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                     PIconButton(PIcons.more, stringResource(R.string.cur_actions), { menu = true }, size = 36.dp)
                     DropdownMenu(menu, { menu = false }) {
                         MenuItem(stringResource(R.string.cur_menu_conversation)) { menu = false; sheet = Sheet.Session }
+                        MenuItem(stringResource(R.string.ses_menu_directory)) { menu = false; directory = true }
                         MenuItem(stringResource(R.string.cur_menu_contract)) { menu = false; contractDialog = true }
                         MenuItem(stringResource(R.string.cur_menu_tui)) {
                             menu = false
@@ -321,6 +324,10 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                     PButton(stringResource(R.string.cur_todos, tasks.count { it.status == "completed" }, tasks.size), { sheet = Sheet.Todos }, style = ButtonStyle.Ghost, tiny = true)
                 }
                 if (showNotRunning) Tag(stringResource(R.string.cur_not_running), Tone.Neutral)
+            }
+            if (!typingInTerminal) {
+                ParentLink(session, onOpenSession)
+                SubagentStrip(session, onOpenSession)
             }
             if (!simple) Segmented(View.entries.map { it to stringResource(it.label) }, view, { chosenView = it }, Modifier.padding(top = 8.dp), fill = true)
         }

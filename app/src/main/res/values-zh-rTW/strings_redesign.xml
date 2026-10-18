@@ -212,4 +212,24 @@
     <string name="r_effort_off">關閉</string>
     <string name="r_effort_unsupported">此模型不支援</string>
     <string name="r_effort_by_model">等級依「自動」選到的模型調整</string>
+    <!-- 工作階段與子代理（docs/design/agents-2026-10.md §3、§4） -->
+    <string name="ses_from">來自 %1$s</string>
+    <string name="ses_reply_from">%1$s 的回覆</string>
+    <string name="ses_report_from">%1$s 的回報</string>
+    <string name="ses_subagent_done">子代理 %1$s 完成</string>
+    <string name="ses_subagent_failed">子代理 %1$s 失敗</string>
+    <string name="ses_to">傳給 %1$s</string>
+    <string name="ses_reply_to">回覆 %1$s</string>
+    <string name="ses_started">開了子代理 %1$s・%2$s</string>
+    <string name="ses_subagents">子代理 %1$d</string>
+    <string name="ses_queued">排隊中：手機能再跑一個代理時開始</string>
+    <string name="ses_subagent_of">%1$s 的子代理</string>
+    <string name="ses_directory">工作階段</string>
+    <string name="ses_directory_count">%1$d 個</string>
+    <string name="ses_kind_here">你在這裡</string>
+    <string name="ses_kind_agent">代理</string>
+    <string name="ses_kind_subagent">子代理</string>
+    <string name="ses_kind_coding">編碼</string>
+    <string name="ses_menu_directory">這支手機上的工作階段…</string>
+    <string name="ses_home_subagents">%1$d 個子代理</string>
 </resources>

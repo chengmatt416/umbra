@@ -19,6 +19,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.NonCancellable
 
+/** What kind of session to make, who made it, and the name others call it by (sessions, subagents, agents). */
+data class SessionSpec(
+    val kind: app.umbra.core.session.SessionKind = app.umbra.core.session.SessionKind.CODING,
+    val handle: String? = null,
+    val spawnedBy: String? = null,
+    val agentId: String? = null,
+)
+
 /** Raised when the device cannot take another running session right now (spec §30). */
 class CapacityException(message: String) : IllegalStateException(message)
 
@@ -104,6 +112,10 @@ class AgentSupervisor(
         model: ModelRef? = null,
         projectId: String? = null,
         effort: app.umbra.core.session.Effort? = null,
+        kind: app.umbra.core.session.SessionKind = app.umbra.core.session.SessionKind.CODING,
+        handle: String? = null,
+        spawnedBy: String? = null,
+        agentId: String? = null,
     ): Session {
         val now = deps.clock.nowMs()
         val id = SessionIds.generate(now)
@@ -120,19 +132,23 @@ class AgentSupervisor(
             model = model,
             projectId = projectId,
             effort = effort,
+            kind = kind,
+            handle = handle,
+            spawnedBy = spawnedBy,
+            agentId = agentId,
         )
         return deps.store.create(session)
     }
 
     /** Creates a session and starts working on the request, with [images] (a screen selection, a photo) attached. */
-    suspend fun launch(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList(), effort: app.umbra.core.session.Effort? = null): Session {
+    suspend fun launch(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList(), effort: app.umbra.core.session.Effort? = null, spec: SessionSpec = SessionSpec()): Session {
         // What would refuse the start refuses it before a session exists: a refused request leaves no failed session.
         // (send checks again, and takes the slot.)
         checkFence()
         deps.admission(projectId, runningByProject())?.let { throw CapacityException(it) }
         deps.serviceAdmission(null)?.let { throw CapacityException(it) }
         governor?.decision?.value?.let { if (!it.allowNewSessions) throw CapacityException(capacityReason()) }
-        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort)
+        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId)
         try {
             send(session.id, request, images)
         } catch (e: Exception) {
@@ -154,13 +170,13 @@ class AgentSupervisor(
      * what the phone can take. Refused outright: during a lockdown, when [QUEUE_LIMIT] requests already wait, and a
      * request with pictures that cannot start now (pictures are not kept for later).
      */
-    suspend fun submit(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList(), effort: app.umbra.core.session.Effort? = null): Session {
+    suspend fun submit(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList(), effort: app.umbra.core.session.Effort? = null, spec: SessionSpec = SessionSpec()): Session {
         checkFence()
         val problem = waitingReason(projectId)
-        if (problem == null && (images.isNotEmpty() || queued().isEmpty())) return launch(request, title, workspaceId, model, projectId, images, effort)
+        if (problem == null && (images.isNotEmpty() || queued().isEmpty())) return launch(request, title, workspaceId, model, projectId, images, effort, spec)
         if (images.isNotEmpty()) throw CapacityException("$problem A request with a picture is not queued; send it again when a slot is free.")
         if (queued().size >= QUEUE_LIMIT) throw CapacityException("${problem ?: "Requests are waiting."} The queue is full ($QUEUE_LIMIT waiting); stop or wait for some.")
-        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort)
+        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId)
         val waiting = deps.store.update(session.id) { it.copy(queuedAtMs = deps.clock.nowMs()) } ?: session
         wake.trySend(Unit)
         return waiting
@@ -253,6 +269,44 @@ class AgentSupervisor(
         deps.store.update(sessionId) { it.copy(effort = effort) } ?: throw app.umbra.core.session.SessionNotFoundException(sessionId)
         live[sessionId]?.takeIf { it.isProcessAlive }?.withOmp { it.setThinkingLevel(effort.level) }
     }
+
+    /** The session's last answer: the text of its latest assistant message (empty when it has none). */
+    suspend fun finalText(sessionId: String): String {
+        val items = runCatching { conversation(sessionId).value.items }.getOrNull() ?: return ""
+        return items.asReversed().firstNotNullOfOrNull { (it as? ChatItem.Assistant)?.text?.takeIf(String::isNotBlank) } ?: ""
+    }
+
+    /**
+     * What the session did lately, one line per thing, oldest first: messages, tool calls and their results. Used by
+     * other sessions to follow its progress without interrupting it.
+     */
+    suspend fun activity(sessionId: String, limit: Int = 20): List<String> {
+        val state = runCatching { conversation(sessionId).value }.getOrNull() ?: return emptyList()
+        val lines = ArrayList<String>()
+        for (item in state.items) {
+            when (item) {
+                is ChatItem.User -> lines += "user: " + item.text.oneLine(200)
+                is ChatItem.Assistant -> {
+                    item.blocks.forEach { b ->
+                        when (b) {
+                            is Block.Text -> if (b.text.isNotBlank()) lines += "said: " + b.text.oneLine(300)
+                            is Block.ToolCall -> lines += "ran ${b.name}: " + (b.intent ?: b.arguments.toString()).oneLine(160)
+                            else -> Unit
+                        }
+                    }
+                    item.error?.let { lines += "error: " + it.oneLine(200) }
+                }
+                is ChatItem.ToolResult -> if (item.isError) lines += "${item.toolName} failed: " + item.text.oneLine(200)
+                is ChatItem.Bash -> lines += "bash: " + item.command.oneLine(120) + (item.exitCode?.let { " → exit $it" } ?: "")
+                is ChatItem.Notice -> lines += "notice: " + item.text.oneLine(160)
+                else -> Unit
+            }
+        }
+        if (state.working) lines += "(working now)"
+        return lines.takeLast(limit)
+    }
+
+    private fun String.oneLine(max: Int): String = replace('\n', ' ').trim().let { if (it.length > max) it.take(max - 1) + "…" else it }
 
     /** After a command that changed the transcript (branch, fork, switch, new): the GUI reads it again. */
     suspend fun reloadConversation(sessionId: String) {

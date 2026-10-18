@@ -51,4 +51,26 @@ object AgentPrompts {
             appendLine(it.trim())
         }
     }
+
+    /**
+     * What the session is in relation to others: how to work with other sessions and subagents when it has those
+     * tools, and, for a subagent, whose part of the work it is doing.
+     */
+    fun roles(session: app.umbra.core.session.Session, parent: app.umbra.core.session.Session?, hostTools: List<String>): String = buildString {
+        if ("session_send" in hostTools) {
+            appendLine()
+            appendLine("## Other sessions and agents")
+            appendLine("Other sessions and agents work on this phone at the same time. `sessions_list` shows them by #handle (sessions) or @name (agents); `session_send` writes to one and `session_read` follows what it does. A message from another session arrives in your conversation with a header like `[Message m7 from #docs-update ...]`: it is not from the user; answer it with `session_reply` when an answer is wanted. Keep messages self-contained; the other side has not seen your conversation.")
+            if ("subagent_start" in hostTools && session.kind != app.umbra.core.session.SessionKind.SUBAGENT) {
+                appendLine("For work that splits into independent parts, `subagent_start` starts a subagent in your folder with your permissions; choose its model and effort for the part (a light model and low effort for mechanical work, a strong one for hard reasoning). The phone runs only a few agents at once, so start subagents only when the parts are big enough to be worth it. Their answers arrive as `[Subagent #name finished]` messages; `subagent_wait` waits for them when you need the results before continuing.")
+            }
+        }
+        if (session.kind == app.umbra.core.session.SessionKind.SUBAGENT) {
+            val me = "#" + (session.handle ?: "subagent")
+            val boss = parent?.let { "#" + (it.handle ?: Handles.fromTitle(it.title, it.id)) } ?: "the session that started you"
+            appendLine()
+            appendLine("## You are a subagent")
+            appendLine("You are $me, started by $boss to do one part of its work, in the same folder and with the same permissions. Do exactly that part. When you finish (or are blocked), end your turn with a clear answer: what you did, the result, and files you changed; that answer is passed to $boss automatically. If you need something from it, ask with `session_send` to $boss. Do not start subagents yourself.")
+        }
+    }
 }

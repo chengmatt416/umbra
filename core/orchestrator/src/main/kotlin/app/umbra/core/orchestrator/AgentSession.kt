@@ -75,6 +75,8 @@ class SessionDeps(
     val journal: ActionJournal? = null,
     val artifacts: ArtifactSink = ArtifactSink.None,
     val approvalMode: () -> app.umbra.core.safety.ApprovalMode = { app.umbra.core.safety.ApprovalMode.BALANCED },
+    /** What only this session is told (an agent's soul and memory), appended to the system prompt at each start. */
+    val sessionPrompt: suspend (Session) -> String? = { null },
     /** Called when a session reaches a terminal state: release what it held (background displays, leases). */
     val onFinished: suspend (Session) -> Unit = {},
     val clock: Clock = Clock.System,
@@ -338,7 +340,7 @@ class AgentSession internal constructor(
         val selection = deps.providers.resolve(session.model)
         if (selection.secrets.isNotEmpty()) runCatching { deps.exposed(sessionId, selection.secrets.keys, "the agent's omp process (its model calls)") }
         val files = env.agentFiles(selection.profile)
-        files.write(SYSTEM_PROMPT_FILE, AgentPrompts.appendix(deps.prompts(), toolHost.toolNames))
+        files.write(SYSTEM_PROMPT_FILE, systemPrompt(session))
 
         // The session's own folders (files, artifacts, logs) exist before anything refers to them.
         runCatching { deps.workspaces.sessionDirs(sessionId) }
@@ -372,10 +374,21 @@ class AgentSession internal constructor(
             // The pinned omp is the only version this product supports, and there is no desktop to notify.
             extra = mapOf(
                 "startup" to mapOf("checkUpdate" to false),
+                // Subagents are Umbra sessions (subagent_start: own model, effort, messages); omp's in-process `task`
+                // tool cannot take a model per call or be written to while it runs, so it is not offered.
+                "task" to mapOf("maxRecursionDepth" to 0),
                 "completion" to mapOf("notify" to "off"),
                 "ask" to mapOf("notify" to "off"),
             ),
         )
+
+    /** omp's system prompt appendix: the device, then what this session is (a subagent, an agent), then the app's additions. */
+    private suspend fun systemPrompt(session: Session): String {
+        val parent = session.spawnedBy?.let { deps.store.get(it) }
+        return AgentPrompts.appendix(deps.prompts(), toolHost.toolNames) +
+            AgentPrompts.roles(session, parent, toolHost.toolNames) +
+            (runCatching { deps.sessionPrompt(session) }.getOrNull()?.takeIf { it.isNotBlank() }?.let { "\n\n" + it } ?: "")
+    }
 
     private fun ompLaunch(session: Session, selection: ProviderSelection, files: app.umbra.runtime.omp.AgentFiles, cwd: String) = OmpLaunch(
         executable = deps.environment.ompExecutable,
@@ -403,7 +416,7 @@ class AgentSession internal constructor(
         val selection = deps.providers.resolve(session.model)
         if (selection.secrets.isNotEmpty()) runCatching { deps.exposed(sessionId, selection.secrets.keys, "omp's terminal UI in a terminal") }
         val files = env.agentFiles(selection.profile)
-        files.write(SYSTEM_PROMPT_FILE, AgentPrompts.appendix(deps.prompts(), emptyList()))
+        files.write(SYSTEM_PROMPT_FILE, AgentPrompts.appendix(deps.prompts(), emptyList()) + AgentPrompts.roles(session, session.spawnedBy?.let { deps.store.get(it) }, emptyList()))
         if (selection.providers.isNotEmpty()) files.write(OmpProcess.MODELS_FILE, app.umbra.runtime.omp.OmpModelsFile.toYaml(selection.providers))
         files.write(OmpProcess.OVERLAY_FILE, ompSettings().toYaml())
         val cwd = workingDirectory(session)

@@ -266,7 +266,32 @@ class AppContainer(val context: Context) {
     fun toolHost(sessionId: String): UmbraToolHost = hosts.getOrPut(sessionId) {
         // The Linux desktop tools are offered only once the desktop pack is installed.
         val desktop = guest.desktopInstalled
-        UmbraToolHost(pipeline, sessionId, decisions, exclude = { it.startsWith("gui_") && !desktop })
+        UmbraToolHost(pipeline, sessionId, decisions, exclude = { it.startsWith("gui_") && !desktop }, extra = sessionTools.forSession(sessionId))
+    }
+
+    /** Messages between sessions and agents (docs/design/agents-2026-10.md §3). */
+    val sessionBus by lazy { app.umbra.core.orchestrator.SessionBus(supervisor, sessionStore, scope) }
+
+    /** sessions_*, session_* and subagent_* tools, given to every session. */
+    val sessionTools by lazy { app.umbra.core.orchestrator.SessionTools(sessionBus, supervisor, sessionStore, resolveModel = ::resolveModelName) }
+
+    /**
+     * A model the agent named for a subagent: `provider/id`, or a bare id or name looked up among the connected
+     * accounts' models and the user's own providers. Null when no connected account has it.
+     */
+    private fun resolveModelName(name: String): app.umbra.core.session.ModelRef? {
+        val prefs = settings.value
+        val connected = prefs.providers.map { it.id }.toSet()
+        if ('/' in name) {
+            val (p, m) = name.split('/', limit = 2)
+            return if (p in connected) app.umbra.core.session.ModelRef(p, m) else null
+        }
+        val wanted = name.trim().lowercase()
+        app.umbra.agent.data.ModelDirectory.connected(modelDirectory.directory.value, prefs).forEach { p ->
+            p.models.firstOrNull { it.id.lowercase() == wanted || it.name.lowercase() == wanted }?.let { return app.umbra.core.session.ModelRef(p.id, it.id) }
+        }
+        prefs.providers.filter { it.custom }.forEach { p -> p.models.firstOrNull { it.lowercase() == wanted }?.let { return app.umbra.core.session.ModelRef(p.id, it) } }
+        return null
     }
 
     fun releaseSession(sessionId: String) {
@@ -443,6 +468,7 @@ class AppContainer(val context: Context) {
             }
             governor.start(scope)
             supervisor.start()
+            sessionBus.start()
             val interrupted = sessionStore.list().filter { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL }.map { it.id }
             supervisor.recover()
             launch { resumeUnderContracts(interrupted) }

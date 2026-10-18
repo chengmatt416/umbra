@@ -76,6 +76,8 @@ data class MessageActions(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun UserMessage(item: ChatItem.User, actions: MessageActions) {
+    // A message another session sent arrives as a user turn: shown as theirs.
+    if (SessionMessageCard(item)) return
     var menu by remember(item.key) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Box(Modifier.padding(start = 40.dp)) {
@@ -158,6 +160,8 @@ val LocalCompactTools = androidx.compose.runtime.staticCompositionLocalOf { fals
 /** One tool call: what it does, whether it runs, its output; specialised for the common tools. */
 @Composable
 fun ToolCard(call: Block.ToolCall, run: ToolRun?, images: List<app.umbra.core.orchestrator.Image>) {
+    // Writing to another session or starting a subagent reads as the message it sent.
+    if (OutgoingSessionCard(call, run)) return
     var open by remember(call.id) { mutableStateOf(false) }
     val running = run?.running ?: false
     val failed = run?.isError == true

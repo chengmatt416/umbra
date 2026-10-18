@@ -48,6 +48,8 @@ data class ProcessRef(
 enum class SessionKind {
     @SerialName("coding") CODING,
     @SerialName("agent") AGENT,
+    /** A coding session another session started to do part of its work (same folder, same permissions). */
+    @SerialName("subagent") SUBAGENT,
 }
 
 /**
@@ -128,6 +130,10 @@ data class Session(
     val agentId: String? = null,
     /** The thinking effort the session runs with; null leaves it to the user's default. */
     val effort: Effort? = null,
+    /** The short name other sessions address it by (`refactor-auth`, without the `#`); null: derived from the title. */
+    val handle: String? = null,
+    /** The session that started this one as its subagent. */
+    val spawnedBy: String? = null,
 )
 
 @Serializable

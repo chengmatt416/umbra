@@ -76,7 +76,10 @@ fun HomeScreen(onOpenSession: (String) -> Unit, entries: List<MenuEntry>, onAcco
     val container = LocalContext.current.container
     val scope = rememberCoroutineScope()
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
-    val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
+    val all by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
+    // Subagents are shown under the session that started them (its page), not as tasks of their own.
+    val sessions = all.filter { it.kind != app.umbra.core.session.SessionKind.SUBAGENT }
+    val subagents = all.filter { it.kind == app.umbra.core.session.SessionKind.SUBAGENT && !it.state.isTerminal }.groupingBy { it.spawnedBy }.eachCount()
     val approvals by container.approvals.pending.collectAsStateWithLifecycle()
     val questions by container.questions.pending.collectAsStateWithLifecycle()
     val filter by container.ui.homeFilter.collectAsStateWithLifecycle()
@@ -121,7 +124,7 @@ fun HomeScreen(onOpenSession: (String) -> Unit, entries: List<MenuEntry>, onAcco
                 }
                 items(list, key = { it.id }) { s ->
                     TaskRow(
-                        s, power,
+                        s, power, subagents[s.id] ?: 0,
                         approval = approvals.firstOrNull { it.sessionId == s.id },
                         question = questions.any { it.sessionId == s.id },
                         onOpen = { onOpenSession(s.id) },
@@ -183,7 +186,7 @@ private fun FilterChip(label: String, on: Boolean, onClick: () -> Unit) {
 
 /** One task: its companion, title, what it is doing, when; what it waits for, answerable right here. */
 @Composable
-private fun TaskRow(s: Session, power: Boolean, approval: ApprovalRequest?, question: Boolean, onOpen: () -> Unit, onDecide: (ApprovalRequest, ApprovalDecision) -> Unit) {
+private fun TaskRow(s: Session, power: Boolean, subagents: Int, approval: ApprovalRequest?, question: Boolean, onOpen: () -> Unit, onDecide: (ApprovalRequest, ApprovalDecision) -> Unit) {
     val container = LocalContext.current.container
     val needsYou = approval != null || question
     val shape = RoundedCornerShape(22.dp)
@@ -211,7 +214,7 @@ private fun TaskRow(s: Session, power: Boolean, approval: ApprovalRequest?, ques
                 )
                 if (power) {
                     val project = s.projectId?.let { container.projects[it]?.name }
-                    val meta = listOfNotNull(project, s.model?.modelId, if (s.plan.isNotEmpty()) "${s.plan.count { it.status == "done" }}/${s.plan.size}" else null).joinToString(" · ")
+                    val meta = listOfNotNull(project, s.model?.modelId, if (s.plan.isNotEmpty()) "${s.plan.count { it.status == "done" }}/${s.plan.size}" else null, if (subagents > 0) stringResource(R.string.ses_home_subagents, subagents) else null).joinToString(" · ")
                     if (meta.isNotEmpty()) Text(meta, Modifier.padding(top = 2.dp), fontSize = 11.sp, fontFamily = P.mono, color = P.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }

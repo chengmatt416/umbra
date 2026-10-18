@@ -45,6 +45,10 @@ object PIcons {
     val download = IconSpec(listOf("M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4" to false))
     val copy = IconSpec(listOf("M10 8h9a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-9a2 2 0 0 1 -2 -2v-9a2 2 0 0 1 2 -2z" to false, "M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" to false))
     val eye = IconSpec(listOf("M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" to false, "M9 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0z" to false))
+    /** A message between sessions: arrows both ways. */
+    val swap = IconSpec(listOf("m16 3 4 4-4 4M20 7H4M8 21l-4-4 4-4M4 17h16" to false))
+    /** Subagents: one line forking into others. */
+    val fork = IconSpec(listOf("M6 7.5v9M8.5 5H12a3 3 0 0 1 3 3v1.5" to false, "M6 2.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 1 1 0-5zM6 16.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 1 1 0-5zM18 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 1 1 0-5z" to false))
     /** Effort (how hard the model thinks): a gauge. */
     val gauge = IconSpec(listOf("m12 14 4-4" to false, "M3.34 19a10 10 0 1 1 17.32 0" to false))
     val activity = IconSpec(listOf("M2 12h4l3-8 5 16 3-8h5" to false))

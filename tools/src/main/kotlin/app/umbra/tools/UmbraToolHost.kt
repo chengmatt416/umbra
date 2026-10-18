@@ -17,8 +17,17 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
+ * A tool the host answers itself, outside the action pipeline: talking to other sessions, subagents, an agent's
+ * memory and timers. [run] gets the raw call and returns what the model reads.
+ */
+class HostSideTool(val definition: HostToolDefinition, val run: suspend (call: HostToolCall, progress: HostToolProgress) -> HostToolPayload) {
+    val name: String get() = definition.name
+}
+
+/**
  * The tools of one agent session, ready to hand to omp (`set_host_tools`): definitions for the model
  * and a handler that decodes each call, runs it through the [ActionPipeline] and renders the answer.
+ * [extra] are tools the app answers itself ([HostSideTool]).
  */
 class UmbraToolHost(
     private val pipeline: ActionPipeline,
@@ -28,18 +37,30 @@ class UmbraToolHost(
     private val loadMode: (toolName: String) -> ToolLoadMode = { ToolLoadMode.ESSENTIAL },
     /** Tools to leave out, e.g. `gui_*` while no Linux desktop is configured. */
     private val exclude: (toolName: String) -> Boolean = { false },
+    private val extra: List<HostSideTool> = emptyList(),
 ) {
     private val specs = HostToolRegistry.all.filterNot { exclude(it.name) }
     private val byName = specs.associateBy { it.name }
+    private val extraByName = extra.associateBy { it.name }
 
-    val toolNames: List<String> = specs.map { it.name }
+    val toolNames: List<String> = specs.map { it.name } + extra.map { it.name }
 
     fun definitions(): List<HostToolDefinition> =
-        specs.map { HostToolDefinition(it.name, it.description, it.schema, loadMode = loadMode(it.name)) }
+        specs.map { HostToolDefinition(it.name, it.description, it.schema, loadMode = loadMode(it.name)) } +
+            extra.map { it.definition.copy(loadMode = loadMode(it.name)) }
 
     val handler: HostToolHandler = HostToolHandler { call, progress -> handle(call, progress) }
 
-    suspend fun handle(call: HostToolCall, @Suppress("UNUSED_PARAMETER") progress: HostToolProgress): HostToolPayload {
+    suspend fun handle(call: HostToolCall, progress: HostToolProgress): HostToolPayload {
+        extraByName[call.toolName]?.let { tool ->
+            return try {
+                tool.run(call, progress)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                HostToolPayload.error("${call.toolName} failed: ${e.message ?: e::class.simpleName}")
+            }
+        }
         val spec = byName[call.toolName] ?: return HostToolPayload.error("Unknown tool '${call.toolName}'.")
         val decoded = try {
             spec.decode(ToolArgs(call.arguments), DecodeContext(state, sessionId, call.toolCallId))
