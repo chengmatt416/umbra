@@ -16,7 +16,7 @@ rec.mark("home"); time.sleep(2.0)
 tap_text("Auto", exact=True, below=1300); rec.mark("models"); time.sleep(2.6)      # the model chip
 swipe(360, 1300, 360, 700, 900); time.sleep(2.2)
 swipe(360, 700, 360, 1300, 700); time.sleep(1.4)
-sh("input", "keyevent", "4"); time.sleep(1.4)
+tap(360, 200); time.sleep(1.4)                                                     # close the sheet (tap above it)
 tap_text("Effort", below=1300); rec.mark("effort"); time.sleep(3.0)                # the effort chip
 swipe(360, 1350, 360, 900, 900); time.sleep(2.2)
 tap_text("Auto", exact=True); time.sleep(1.6)                                      # keep Auto

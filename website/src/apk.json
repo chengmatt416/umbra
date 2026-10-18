@@ -1,8 +1,8 @@
 {
-  "file": "umbra-0.3.1.apk",
+  "file": "umbra-0.3.2.apk",
   "size": "640 MiB",
-  "sha256": "2db4c02b3c8657095e72a48a68f60f32ecd0797a8bdcd5b386e3f61e02510e25",
-  "bytes": 670586009,
-  "version": "0.3.1",
-  "versionCode": 5
+  "sha256": "ab397a6d2d6add144b8a2dff045cb80dce82be4087c2190e8cd9f49fe9584195",
+  "bytes": 671330509,
+  "version": "0.3.2",
+  "versionCode": 6
 }
