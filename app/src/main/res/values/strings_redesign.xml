@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The redesign (docs/design/redesign-2026-10.md). Every string has its zh-rTW twin. -->
+<resources>
+    <!-- modes -->
+    <string name="r_mode_simple">Simple</string>
+    <string name="r_mode_power">Power</string>
+    <string name="r_mode_dev">Dev</string>
+    <string name="r_mode_simple_body">Hand it the job; it asks only when you need to decide.</string>
+    <string name="r_mode_power_body">See every step, the terminal, the screens and which model does what.</string>
+
+    <!-- menu -->
+    <string name="r_menu_open">Open the menu</string>
+    <string name="r_menu_close">Close the menu</string>
+    <string name="r_menu_select">Select on screen</string>
+    <string name="r_menu_accounts">Accounts and models</string>
+    <string name="r_menu_settings">Settings</string>
+    <string name="r_menu_workspaces">Workspaces</string>
+    <string name="r_menu_screens">Screens</string>
+    <string name="r_menu_nodes">Nodes</string>
+    <string name="r_menu_safety">Safety</string>
+    <string name="r_menu_developer">Developer</string>
+
+    <!-- home -->
+    <string name="r_home_title">Tasks</string>
+    <string name="r_home_empty">What should your phone do for you?</string>
+    <string name="r_home_recent">Recent</string>
+    <string name="r_home_all">All %1$d</string>
+    <string name="r_home_needs">Needs you %1$d</string>
+    <string name="r_home_running">Running %1$d</string>
+    <string name="r_home_queued">Queued %1$d</string>
+    <string name="r_home_see">See it</string>
+    <string name="r_home_answer">Answer</string>
+    <string name="r_home_step">Step %1$d of %2$d</string>
+    <string name="r_home_setup">Finish setting up</string>
+    <string name="r_composer_hint">What should it do?</string>
+    <string name="r_composer_more">More instructions…</string>
+    <string name="r_now">now</string>
+    <string name="r_yesterday">yesterday</string>
+
+    <!-- models -->
+    <string name="r_model_auto">Auto</string>
+    <string name="r_model_auto_body">Picks the best model of an account you connected</string>
+    <string name="r_model_title">Model</string>
+    <string name="r_model_updated">Updated %1$s</string>
+    <string name="r_model_bundled">List from this version</string>
+    <string name="r_model_connected">%1$s · connected</string>
+    <string name="r_model_connect_first">%1$s · connect to use</string>
+    <string name="r_model_other">Other model…</string>
+    <string name="r_model_other_title">Other model</string>
+    <string name="r_model_other_id">Model ID</string>
+    <string name="r_model_other_use">Use this model</string>
+    <string name="r_model_other_none">Connect an account first.</string>
+    <string name="r_model_none">Connect an account to choose a model.</string>
+    <string name="r_model_refresh">Refresh</string>
+    <string name="r_model_list">Model list</string>
+    <string name="r_model_list_from">From the Umbra site · %1$s</string>
+
+    <!-- accounts -->
+    <string name="r_acc_title">Accounts and models</string>
+    <string name="r_acc_sources">Model sources</string>
+    <string name="r_acc_other">Other compatible API</string>
+    <string name="r_acc_other_body">OpenRouter, a server of your own…</string>
+    <string name="r_acc_not_connected">Not connected</string>
+    <string name="r_acc_account">Account · %1$s</string>
+    <string name="r_acc_account_plain">Signed in with an account</string>
+    <string name="r_acc_key">API key · …%1$s</string>
+    <string name="r_acc_tab_account">Account</string>
+    <string name="r_acc_tab_key">API key</string>
+    <string name="r_acc_sign_in_openai">Sign in with ChatGPT</string>
+    <string name="r_acc_sign_in_anthropic">Sign in with Claude</string>
+    <string name="r_acc_sign_in_google">Sign in with Google</string>
+    <string name="r_acc_waiting">Finish signing in in the browser</string>
+    <string name="r_acc_waiting_body">You come back here by yourself when it is done</string>
+    <string name="r_acc_starting">Getting the sign-in page…</string>
+    <string name="r_acc_connected">Connected</string>
+    <string name="r_acc_done">Done</string>
+    <string name="r_acc_retry">Try again</string>
+    <string name="r_acc_sign_out">Sign out</string>
+    <string name="r_acc_remove_key">Remove key</string>
+    <string name="r_acc_key_hint">Paste the key</string>
+    <string name="r_acc_save_key">Check and save</string>
+    <string name="r_acc_checking">Checking…</string>
+    <string name="r_acc_risk_anthropic">Anthropic\'s terms do not allow third-party apps to sign in with a subscription; the account can be suspended. An API key has no such problem.</string>
+    <string name="r_acc_risk_google">Google suspends accounts that use Antigravity sign-in from third-party tools, paid plans included.</string>
+    <string name="r_acc_needs_linux">Signing in runs in the Linux environment; it is being prepared.</string>
+    <string name="r_acc_models">Models</string>
+
+    <!-- task -->
+    <string name="r_task_live">Working · %1$s</string>
+    <string name="r_task_live_phone">background screen</string>
+    <string name="r_task_live_linux">Linux desktop</string>
+    <string name="r_task_take_over">Take over</string>
+    <string name="r_task_give_back">Give back</string>
+    <string name="r_task_view_steps">Steps</string>
+    <string name="r_task_view_changes">Changes</string>
+    <string name="r_task_no_changes">No changes in this task\'s folder.</string>
+    <string name="r_task_no_repo">This task\'s folder is not a Git repository.</string>
+
+    <!-- screens -->
+    <string name="r_screens_title">Screens</string>
+    <string name="r_screens_background">Background screens</string>
+    <string name="r_screens_linux">Linux desktop</string>
+    <string name="r_screens_none">No background screen is open. One opens when a task works in another app.</string>
+    <string name="r_screens_full">Full screen</string>
+    <string name="r_screens_idle">Idle</string>
+    <string name="r_screens_driven">The agent is working here</string>
+    <string name="r_screens_keyboard">Keyboard</string>
+    <string name="r_screens_type">Type and press Send</string>
+    <string name="r_screens_linux_off">The Linux desktop is not running.</string>
+    <string name="r_screens_linux_start">Start the desktop</string>
+    <string name="r_screens_linux_install">Install the desktop</string>
+
+    <!-- hubs -->
+    <string name="r_safety_title">Safety</string>
+    <string name="r_safety_stop_all">Hold to stop everything</string>
+    <string name="r_safety_vault">Credential vault</string>
+    <string name="r_safety_vault_body">Keys and Git, held by the broker</string>
+    <string name="r_safety_history">Approval history</string>
+    <string name="r_safety_events">Security events</string>
+    <string name="r_safety_emergency">Emergency control</string>
+    <string name="r_dev_title">Developer</string>
+    <string name="r_dev_ops">Operations</string>
+    <string name="r_dev_trust">Trust</string>
+    <string name="r_dev_system">System</string>
+    <string name="r_dev_product">Work</string>
+
+    <!-- settings -->
+    <string name="r_set_title">Settings</string>
+    <string name="r_set_accounts_body">%1$d connected</string>
+    <string name="r_set_appearance">Appearance</string>
+    <string name="r_set_hand">Menu button</string>
+    <string name="r_set_hand_right">Right</string>
+    <string name="r_set_hand_left">Left</string>
+    <string name="r_set_laya">Laya</string>
+    <string name="r_set_laya_on">Downloaded · starts with every task</string>
+    <string name="r_set_laya_off">Not downloaded</string>
+    <string name="r_set_update">Updates</string>
+    <string name="r_set_update_body">%1$s · checked when the app opens</string>
+    <string name="r_set_update_check">Check now</string>
+    <string name="r_set_permissions">Permissions</string>
+    <string name="r_set_linux">Linux environment</string>
+    <string name="r_set_capsule">Capsule</string>
+    <string name="r_set_capsule_body">Long press opens screen selection</string>
+    <string name="r_set_about">About Umbra</string>
+    <string name="r_set_more">Everything else</string>
+
+    <!-- onboarding -->
+    <string name="r_ob_mode">How do you want to use it?</string>
+    <string name="r_ob_connect">Connect a model</string>
+    <string name="r_ob_laya">Faster small decisions?</string>
+    <string name="r_ob_laya_body">Laya answers \"which button\" and \"did it work\" on the phone itself. Kept on the phone; updates do not download it again.</string>
+    <string name="r_ob_laya_download">Download on Wi-Fi</string>
+    <string name="r_ob_laya_downloading">Downloading Laya</string>
+    <string name="r_ob_laya_background">It downloads in the background; carry on.</string>
+    <string name="r_ob_laya_wait_linux">Starts once the Linux environment is ready</string>
+    <string name="r_ob_perm">Let it work for you</string>
+    <string name="r_ob_perm_access">Use other apps</string>
+    <string name="r_ob_perm_access_body">Accessibility service</string>
+    <string name="r_ob_perm_capsule">Show the Capsule</string>
+    <string name="r_ob_perm_capsule_body">Over other apps</string>
+    <string name="r_ob_perm_notify">Notifications</string>
+    <string name="r_ob_perm_notify_body">When it needs you</string>
+    <string name="r_ob_later">Later</string>
+    <string name="r_ob_continue">Continue</string>
+    <string name="r_ob_done">Done</string>
+
+    <!-- updates -->
+    <string name="r_upd_title">Version %1$s is out</string>
+    <string name="r_upd_body">About %1$s. It installs and reopens by itself.</string>
+    <string name="r_upd_later">Later</string>
+    <string name="r_upd_now">Update</string>
+    <string name="r_upd_downloading">Updating to %1$s · downloading</string>
+    <string name="r_upd_installing">Updating to %1$s · installing</string>
+    <string name="r_upd_waiting">Updating to %1$s · after the current task</string>
+    <string name="r_upd_failed">The update stopped: %1$s</string>
+
+    <!-- capsule -->
+    <string name="r_cap_tucked">Tucked away; swipe outward or tap to bring it back</string>
+    <string name="r_cap_select_title">Select on screen</string>
+    <string name="r_cap_select_hint">Circle, tap, or just ask</string>
+    <string name="r_cap_select_ask">Ask about this…</string>
+    <string name="r_cap_live">Live</string>
+    <string name="r_cap_live_on">Live: on</string>
+    <string name="r_cap_what">What is this</string>
+    <string name="r_cap_translate">Translate</string>
+    <string name="r_cap_help">Do it for me</string>
+    <string name="r_cap_more">More instructions…</string>
+    <string name="r_cap_what_prompt">What is this?</string>
+    <string name="r_cap_translate_prompt">Translate this.</string>
+    <string name="r_cap_help_prompt">Take care of this for me.</string>
+    <string name="r_stop">Stop</string>
+    <string name="r_allow">Allow</string>
+</resources>

@@ -98,7 +98,6 @@ import app.umbra.agent.ui.DiagnosticsScreen
 import app.umbra.agent.ui.DisplaysScreen
 import app.umbra.agent.ui.ModelsScreen
 import app.umbra.agent.ui.ProcessesScreen
-import app.umbra.agent.ui.SettingsScreen
 import app.umbra.agent.ui.SetupScreen
 import app.umbra.agent.ui.WorkspaceBrowserScreen
 import app.umbra.agent.ui.WorkspacesScreen
@@ -115,56 +114,64 @@ import app.umbra.agent.ui.porcelain.hasCjk
 import app.umbra.agent.ui.sessions.SessionsScreen
 import kotlinx.coroutines.launch
 
-/** A place in the app. [tab] places sit in the bottom bar; the others are in the drawer, under their [group]. */
-enum class Dest(val route: String, @param:StringRes val title: Int, val icon: IconSpec, @param:StringRes val group: Int? = null, val tab: Boolean = false) {
-    Home("home", R.string.dest_home, PIcons.home, tab = true),
-    Sessions("sessions", R.string.dest_sessions, PIcons.layers, tab = true),
-    Current("current", R.string.dest_current, PIcons.activity, tab = true),
-    Inbox("inbox", R.string.dest_inbox, PIcons.shield, tab = true),
+/** A place in the app. [group] files the original pages under the Developer hub (Dev mode). */
+enum class Dest(val route: String, @param:StringRes val title: Int, val icon: IconSpec, @param:StringRes val group: Int? = null) {
+    Home("home", R.string.dest_home, PIcons.home),
+    Current("current", R.string.dest_current, PIcons.activity),
+    Accounts("accounts", R.string.r_acc_title, PIcons.key),
+    Screens("screens", R.string.r_screens_title, PIcons.monitor),
+    Safety("safety", R.string.r_safety_title, PIcons.shield),
+    Developer("developer", R.string.r_dev_title, PIcons.code),
 
-    Workspaces("workspaces", R.string.dest_workspaces, PIcons.grid, R.string.group_product),
-    Repositories("repositories", R.string.dest_repositories, PIcons.box, R.string.group_product),
-    Commit("commit", R.string.dest_commit, PIcons.git, R.string.group_product),
+    Sessions("sessions", R.string.dest_sessions, PIcons.layers, R.string.r_dev_product),
+    Inbox("inbox", R.string.dest_inbox, PIcons.shield, R.string.r_dev_product),
+    Workspaces("workspaces", R.string.dest_workspaces, PIcons.grid, R.string.r_dev_product),
+    Repositories("repositories", R.string.dest_repositories, PIcons.box, R.string.r_dev_product),
+    Commit("commit", R.string.dest_commit, PIcons.git, R.string.r_dev_product),
+    Terminals("terminals", R.string.dest_terminals, PIcons.terminal, R.string.r_dev_product),
 
-    Planning("planning", R.string.dest_planning, PIcons.workflow, R.string.group_operations),
-    Resources("resources", R.string.dest_resources, PIcons.sliders, R.string.group_operations),
-    Runtime("runtime", R.string.dest_runtime, PIcons.server, R.string.group_operations),
-    Services("services", R.string.dest_services, PIcons.recycle, R.string.group_operations),
-    Nodes("nodes", R.string.dest_nodes, PIcons.cloud, R.string.group_operations),
-    Terminals("terminals", R.string.dest_terminals, PIcons.terminal, R.string.group_operations),
+    Planning("planning", R.string.dest_planning, PIcons.workflow, R.string.r_dev_ops),
+    Resources("resources", R.string.dest_resources, PIcons.sliders, R.string.r_dev_ops),
+    Runtime("runtime", R.string.dest_runtime, PIcons.server, R.string.r_dev_ops),
+    Services("services", R.string.dest_services, PIcons.recycle, R.string.r_dev_ops),
+    Nodes("nodes", R.string.dest_nodes, PIcons.cloud, R.string.r_dev_ops),
+    Displays("displays", R.string.dest_displays, PIcons.monitor, R.string.r_dev_ops),
+    Processes("processes", R.string.dest_processes, PIcons.activity, R.string.r_dev_ops),
 
-    Vault("vault", R.string.dest_vault, PIcons.key, R.string.group_trust),
-    Security("security", R.string.dest_security, PIcons.shield, R.string.group_trust),
-    Emergency("emergency", R.string.dest_emergency, PIcons.alert, R.string.group_trust),
+    Vault("vault", R.string.dest_vault, PIcons.key, R.string.r_dev_trust),
+    Security("security", R.string.dest_security, PIcons.shield, R.string.r_dev_trust),
+    ApprovalHistory("approvals", R.string.dest_approvals, PIcons.check, R.string.r_dev_trust),
+    Emergency("emergency", R.string.dest_emergency, PIcons.alert, R.string.r_dev_trust),
 
-    Linux("linux", R.string.dest_linux, PIcons.terminal, R.string.group_system),
-    Models("models", R.string.dest_models, PIcons.spark, R.string.group_system),
-    Displays("displays", R.string.dest_displays, PIcons.monitor, R.string.group_system),
-    Processes("processes", R.string.dest_processes, PIcons.activity, R.string.group_system),
-    ApprovalHistory("approvals", R.string.dest_approvals, PIcons.check, R.string.group_system),
-    Diagnostics("diagnostics", R.string.dest_diagnostics, PIcons.info, R.string.group_system),
-    Settings("settings", R.string.dest_settings, PIcons.settings, R.string.group_system),
-    Appearance("appearance", R.string.dest_appearance, PIcons.drop, R.string.group_system),
-    Reference("reference", R.string.dest_reference, PIcons.book, R.string.group_system),
+    Linux("linux", R.string.dest_linux, PIcons.terminal, R.string.r_dev_system),
+    Models("models", R.string.dest_models, PIcons.spark, R.string.r_dev_system),
+    Diagnostics("diagnostics", R.string.dest_diagnostics, PIcons.info, R.string.r_dev_system),
+    Reference("reference", R.string.dest_reference, PIcons.book, R.string.r_dev_system),
+    Settings("settings", R.string.dest_settings, PIcons.settings),
+    MoreSettings("more_settings", R.string.r_set_more, PIcons.sliders),
+    Appearance("appearance", R.string.dest_appearance, PIcons.drop),
 }
 
-/** The app: Porcelain shell, bottom bar, drawer, and every screen. [openSession] deep-links into a task, [openPage] to a page. */
+/**
+ * The app (docs/design/redesign-2026-10.md): Home with the tasks, the message field and the menu button; every other
+ * place opens from that menu (what it holds depends on the mode) and goes back with Back. No tab bar, no drawer.
+ * [openSession] deep-links into a task, [openPage] to a page.
+ */
 @Composable
 fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () -> Unit) {
     val container = LocalContext.current.container
+    val context = LocalContext.current
     val nav = rememberNavController()
-    val drawer = rememberDrawerState(DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
-    val entry by nav.currentBackStackEntryAsState()
-    val route = entry?.destination?.route.orEmpty()
+    val prefs by container.settings.flow.collectAsStateWithLifecycle()
 
     fun go(dest: Dest) {
-        scope.launch { drawer.close() }
-        nav.navigate(dest.route) {
-            popUpTo(Dest.Home.route) { saveState = true }
-            launchSingleTop = true
-            restoreState = true
+        // The old Inbox is the "needs you" filter of Home.
+        if (dest == Dest.Inbox) {
+            container.ui.homeFilter.value = app.umbra.agent.data.HomeFilter.NEEDS
+            nav.navigate(Dest.Home.route) { popUpTo(Dest.Home.route) { inclusive = false }; launchSingleTop = true }
+            return
         }
+        nav.navigate(dest.route) { launchSingleTop = true }
     }
 
     fun openSessionNow(id: String) {
@@ -185,231 +192,147 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
     }
     if (stopAll) app.umbra.agent.ui.emergency.StopAllConfirm(onDismiss = { stopAll = false })
 
-    val approvals by container.approvals.pending.collectAsStateWithLifecycle()
-    val questions by container.questions.pending.collectAsStateWithLifecycle()
-    val attention = approvals.size + questions.size
+    val selectScreen: () -> Unit = {
+        if (!android.provider.Settings.canDrawOverlays(context) && !app.umbra.platform.android.UmbraAccessibilityService.connected.value) {
+            go(Dest.Settings)
+        } else {
+            (context as? android.app.Activity)?.moveTaskToBack(true)
+            container.capsule.startSelection(delayMs = 450)
+        }
+    }
+    val select = stringResource(R.string.r_menu_select)
+    val accountsLabel = stringResource(R.string.r_menu_accounts)
+    val settingsLabel = stringResource(R.string.r_menu_settings)
+    val workspacesLabel = stringResource(R.string.r_menu_workspaces)
+    val screensLabel = stringResource(R.string.r_menu_screens)
+    val nodesLabel = stringResource(R.string.r_menu_nodes)
+    val safetyLabel = stringResource(R.string.r_menu_safety)
+    val developerLabel = stringResource(R.string.r_menu_developer)
+    val entries = when (prefs.uiMode) {
+        app.umbra.agent.data.UiMode.SIMPLE -> listOf(
+            MenuEntry(PIcons.target, select, selectScreen),
+            MenuEntry(PIcons.key, accountsLabel) { go(Dest.Accounts) },
+            MenuEntry(PIcons.settings, settingsLabel) { go(Dest.Settings) },
+        )
+        app.umbra.agent.data.UiMode.POWER -> listOf(
+            MenuEntry(PIcons.target, select, selectScreen),
+            MenuEntry(PIcons.grid, workspacesLabel) { go(Dest.Workspaces) },
+            MenuEntry(PIcons.monitor, screensLabel) { go(Dest.Screens) },
+            MenuEntry(PIcons.cloud, nodesLabel) { go(Dest.Nodes) },
+            MenuEntry(PIcons.shield, safetyLabel) { go(Dest.Safety) },
+            MenuEntry(PIcons.settings, settingsLabel) { go(Dest.Settings) },
+        )
+        app.umbra.agent.data.UiMode.DEV -> listOf(
+            MenuEntry(PIcons.target, select, selectScreen),
+            MenuEntry(PIcons.grid, workspacesLabel) { go(Dest.Workspaces) },
+            MenuEntry(PIcons.monitor, screensLabel) { go(Dest.Screens) },
+            MenuEntry(PIcons.cloud, nodesLabel) { go(Dest.Nodes) },
+            MenuEntry(PIcons.code, developerLabel) { go(Dest.Developer) },
+            MenuEntry(PIcons.settings, settingsLabel) { go(Dest.Settings) },
+        )
+    }
 
-    androidx.activity.compose.BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
     val openEmergency: () -> Unit = { go(Dest.Emergency) }
     val liquid = Theme.liquid
     val view = androidx.compose.ui.platform.LocalView.current
-    // Liquid glass refracts the live backdrop: the page's for the pages, the drawer's own for the drawer.
     val pageGlass = rememberLayerBackdrop()
-    val drawerGlass = rememberLayerBackdrop()
-    // Apple's bars and sidebar refract the pages themselves, recorded live as they scroll
-    val contentGlass = rememberLayerBackdrop()
-    var contentOrigin by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     val apple = Theme.apple
     val appleGlass = apple && app.umbra.agent.ui.porcelain.appleGlassActive()
     LiquidLightSource(active = (liquid || appleGlass) && Theme.current.motion && androidx.compose.runtime.remember(Theme.current) { app.umbra.agent.ui.porcelain.motionAllowed(view.context) })
     // dialogs and sheets are glass in the app's own window: the whole app is recorded live for them to refract
     val appGlass = rememberLayerBackdrop()
     val styled = !Theme.current.porcelain
+    // Someone who used the app before this design has providers already; first-run setup is for a new install.
+    val onboarding = !prefs.onboarded && prefs.providers.isEmpty()
     Box(Modifier.fillMaxSize()) {
     Box(Modifier.fillMaxSize().then(if (styled) Modifier.layerBackdrop(appGlass) else Modifier)) {
     PageBackdrop(if (liquid) Modifier.layerBackdrop(pageGlass) else Modifier)
     androidx.compose.runtime.CompositionLocalProvider(LocalGlassHost provides if (liquid) GlassHost(pageGlass, view) else null, LocalPageGlass provides if (liquid) pageGlass else null) {
-    ModalNavigationDrawer(
-        drawerState = drawer,
-        drawerContent = {
-            val sheetShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)
-            ModalDrawerSheet(
-                drawerContainerColor = when {
-                    liquid || appleGlass -> Color.Transparent
-                    apple -> P.base
-                    else -> pc(0xFFE6ECE2)
+        if (onboarding) {
+            app.umbra.agent.ui.onboarding.Onboarding(onAccounts = { })
+        } else Box(Modifier.fillMaxSize().background(P.page)) {
+          androidx.compose.runtime.CompositionLocalProvider(LocalOpenEmergency provides openEmergency, LocalChromeBottom provides 0.dp) {
+            NavHost(
+                nav, startDestination = Dest.Home.route,
+                // Liquid pages surface like a drop rising to meet the glass; Apple pushes in from the right on a
+                // critically damped spring; Porcelain keeps its cross-fade.
+                enterTransition = {
+                    when {
+                        Theme.apple -> slideInHorizontally(appleSlide) { it }
+                        Theme.liquid -> fadeIn(tween(240)) + scaleIn(spring(dampingRatio = 0.72f, stiffness = 420f), initialScale = 0.94f)
+                        else -> fadeIn(tween(260))
+                    }
                 },
-                drawerShape = sheetShape,
+                exitTransition = {
+                    when {
+                        Theme.apple -> slideOutHorizontally(appleSlide) { -it / 3 } + fadeOut(tween(380), targetAlpha = 0.6f)
+                        Theme.liquid -> fadeOut(tween(160)) + scaleOut(tween(220), targetScale = 1.03f)
+                        else -> fadeOut(tween(200))
+                    }
+                },
+                popEnterTransition = {
+                    when {
+                        Theme.apple -> slideInHorizontally(appleSlide) { -it / 3 } + fadeIn(tween(380), initialAlpha = 0.6f)
+                        Theme.liquid -> fadeIn(tween(240)) + scaleIn(spring(dampingRatio = 0.72f, stiffness = 420f), initialScale = 1.04f)
+                        else -> fadeIn(tween(260))
+                    }
+                },
+                popExitTransition = {
+                    when {
+                        Theme.apple -> slideOutHorizontally(appleSlide) { it }
+                        Theme.liquid -> fadeOut(tween(160)) + scaleOut(tween(220), targetScale = 0.94f)
+                        else -> fadeOut(tween(200))
+                    }
+                },
             ) {
-                if (appleGlass) {
-                    // the sidebar is a sheet of glass over the page it slid across
-                    Box(
-                        Modifier
-                            .fillMaxHeight()
-                            .drawBackdrop(
-                                backdrop = contentGlass,
-                                shape = { sheetShape },
-                                effects = {
-                                    vibrancy()
-                                    blur(18.dp.toPx())
-                                    lens(20.dp.toPx(), 36.dp.toPx())
-                                },
-                                highlight = { app.umbra.agent.ui.porcelain.appleRim() },
-                                shadow = { app.umbra.agent.ui.porcelain.appleShadow(24.dp, if (Theme.dark) 0.45f else 0.16f) },
-                                onDrawSurface = { drawRect(if (Theme.dark) Color.Black.copy(alpha = 0.42f) else Color.White.copy(alpha = 0.56f)) },
-                            ),
-                    ) { DrawerContent(current = route, onGo = ::go) }
-                } else if (liquid) {
-                    Box(Modifier.fillMaxHeight()) {
-                        // flows only while the drawer is out; closed, it holds a still frame
-                        LiquidBackdrop(Modifier.matchParentSize().layerBackdrop(drawerGlass), Theme.current.let { it.copy(motion = it.motion && drawer.currentValue == DrawerValue.Open) }, seed = 40f)
-                        Box(Modifier.matchParentSize().background(if (Theme.dark) Color.Black.copy(alpha = 0.30f) else Color.White.copy(alpha = 0.38f)))
-                        androidx.compose.runtime.CompositionLocalProvider(LocalGlassHost provides GlassHost(drawerGlass, view)) {
-                            DrawerContent(current = route, onGo = ::go)
-                        }
-                    }
-                } else {
-                    DrawerContent(current = route, onGo = ::go)
+                val back: () -> Unit = { if (!nav.popBackStack()) go(Dest.Home) }
+                composable(Dest.Home.route) { HomeScreen(onOpenSession = ::openSessionNow, entries = entries, onAccounts = { go(Dest.Accounts) }) }
+                composable(Dest.Current.route) { CurrentScreen(onBack = back, onOpenSession = ::openSessionNow, onAccounts = { go(Dest.Accounts) }, onCommit = { go(Dest.Commit) }) }
+                composable(Dest.Accounts.route) { app.umbra.agent.ui.accounts.AccountsScreen(onBack = back, onGo = ::go) }
+                composable(Dest.Screens.route) { app.umbra.agent.ui.displays.ScreensScreen(onBack = back) }
+                composable(Dest.Safety.route) { app.umbra.agent.ui.hubs.SafetyHub(onBack = back, onGo = ::go) }
+                composable(Dest.Developer.route) { app.umbra.agent.ui.hubs.DeveloperHub(onBack = back, onGo = ::go) }
+                composable(Dest.Inbox.route) { Page(Dest.Inbox, back) { InboxScreen(onOpenSession = ::openSessionNow, onHistory = { go(Dest.ApprovalHistory) }) } }
+                composable(Dest.Sessions.route) { Page(Dest.Sessions, back) { SessionsScreen(onOpenSession = ::openSessionNow) } }
+                composable(Dest.Runtime.route) { Page(Dest.Runtime, back) { app.umbra.agent.ui.runtime.RuntimeScreen(onOpenSession = ::openSessionNow) } }
+                composable(Dest.Nodes.route) { Page(Dest.Nodes, back) { app.umbra.agent.ui.nodes.NodesScreen() } }
+                composable(Dest.Repositories.route) { Page(Dest.Repositories, back) { app.umbra.agent.ui.integration.RepositoryHubScreen(onCommit = { go(Dest.Commit) }) } }
+                composable(Dest.Commit.route) { Page(Dest.Commit, back) { app.umbra.agent.ui.integration.CommitScreen(onOpenVault = { go(Dest.Vault) }) } }
+                composable(Dest.Security.route) {
+                    Page(Dest.Security, back) { app.umbra.agent.ui.security.SecurityEvidenceScreen(onGo = { route -> Dest.entries.firstOrNull { it.route == route }?.let { go(it) } }) }
                 }
+                composable(Dest.Vault.route) { Page(Dest.Vault, back) { app.umbra.agent.ui.vault.CredentialVaultScreen() } }
+                composable(Dest.Services.route) { Page(Dest.Services, back) { app.umbra.agent.ui.services.SharedServicesScreen(onOpenSession = ::openSessionNow) } }
+                composable(Dest.Resources.route) { Page(Dest.Resources, back) { app.umbra.agent.ui.resources.ResourceScreen() } }
+                composable(Dest.Planning.route) { Page(Dest.Planning, back) { app.umbra.agent.ui.planning.PlanningScreen(onOpenSession = ::openSessionNow) } }
+                composable(Dest.Emergency.route) { Page(Dest.Emergency, back) { app.umbra.agent.ui.emergency.EmergencyScreen() } }
+                composable(Dest.Terminals.route) { Page(Dest.Terminals, back) { app.umbra.agent.ui.terminal.TerminalsScreen() } }
+                composable(Dest.Workspaces.route) { WorkspacesScreen(onBack = back, onOpen = { nav.navigate("workspace/$it") }) }
+                composable("workspace/{id}") { e -> WorkspaceBrowserScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
+                composable(Dest.Linux.route) { SetupScreen(onBack = back, onModels = { go(Dest.Accounts) }) }
+                composable(Dest.Models.route) { ModelsScreen(onBack = back, onSetup = { go(Dest.Linux) }) }
+                composable(Dest.Displays.route) { DisplaysScreen(onBack = back) }
+                composable(Dest.Processes.route) { ProcessesScreen(onBack = back) }
+                composable(Dest.ApprovalHistory.route) { ApprovalHistoryScreen(onBack = back) }
+                composable(Dest.Diagnostics.route) { DiagnosticsScreen(onBack = back) }
+                composable(Dest.Appearance.route) { app.umbra.agent.ui.AppearanceScreen(onBack = back) }
+                composable(Dest.Reference.route) { app.umbra.agent.ui.reference.ReferenceScreen(onBack = back) }
+                composable(Dest.Settings.route) { app.umbra.agent.ui.settings.SettingsScreen(onBack = back, onGo = ::go) }
+                composable(Dest.MoreSettings.route) { app.umbra.agent.ui.MoreSettingsScreen(onBack = back, onGo = ::go) }
             }
-        },
-    ) {
-        Scaffold(
-            containerColor = Color.Transparent,
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            // The keyboard covers the tab bar anyway; keeping its space under the keyboard would count it twice
-            // (the pages pad for the whole keyboard), so it steps aside while one is up.
-            bottomBar = {
-                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                val keyboard = WindowInsets.isImeVisible
-                if (!keyboard && Dest.entries.any { it.tab && route.startsWith(it.route) }) BottomBar(route, attention, ::go, contentGlass) { contentOrigin }
-            },
-            modifier = Modifier.background(P.page),
-        ) { padding ->
-            // Porcelain keeps its bar beside the pages; Liquid's and Apple's bars float, and the pages scroll under them
-            // (the tab pages pad their own ends by LocalChromeBottom; Current keeps its composer clear of the bar).
-            val floating = !Theme.current.porcelain
-            val barInset = padding.calculateBottomPadding()
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .padding(top = padding.calculateTopPadding())
-                    .padding(bottom = if (!floating || route.startsWith(Dest.Current.route)) barInset else 0.dp)
-                    .then(if (apple) Modifier.layerBackdrop(contentGlass) else Modifier)
-                    .onGloballyPositioned { contentOrigin = it.positionInRoot() }
-                    .background(P.page),
-            ) {
-              androidx.compose.runtime.CompositionLocalProvider(LocalOpenEmergency provides openEmergency, LocalChromeBottom provides if (floating) barInset else 0.dp) {
-                NavHost(
-                    nav, startDestination = Dest.Home.route,
-                    // Liquid pages surface like a drop rising to meet the glass; Porcelain keeps the default cross-fade.
-                    // Apple pushes in from the right and pops back the same way (the page underneath parallaxes a third and
-                    // dims), on a critically damped spring; switching tabs only cross-fades.
-                    enterTransition = {
-                        when {
-                            Theme.apple -> if (tabSwitch(initialState.destination.route, targetState.destination.route)) fadeIn(tween(160)) else slideInHorizontally(appleSlide) { it }
-                            Theme.liquid -> fadeIn(tween(240)) + scaleIn(spring(dampingRatio = 0.72f, stiffness = 420f), initialScale = 0.94f)
-                            tabSwitch(initialState.destination.route, targetState.destination.route) -> fadeIn(tween(180))
-                            else -> fadeIn(tween(700))
-                        }
-                    },
-                    exitTransition = {
-                        when {
-                            Theme.apple -> if (tabSwitch(initialState.destination.route, targetState.destination.route)) fadeOut(tween(120)) else slideOutHorizontally(appleSlide) { -it / 3 } + fadeOut(tween(380), targetAlpha = 0.6f)
-                            Theme.liquid -> fadeOut(tween(160)) + scaleOut(tween(220), targetScale = 1.03f)
-                            tabSwitch(initialState.destination.route, targetState.destination.route) -> fadeOut(tween(120))
-                            else -> fadeOut(tween(700))
-                        }
-                    },
-                    popEnterTransition = {
-                        when {
-                            Theme.apple -> if (tabSwitch(initialState.destination.route, targetState.destination.route)) fadeIn(tween(160)) else slideInHorizontally(appleSlide) { -it / 3 } + fadeIn(tween(380), initialAlpha = 0.6f)
-                            Theme.liquid -> fadeIn(tween(240)) + scaleIn(spring(dampingRatio = 0.72f, stiffness = 420f), initialScale = 1.04f)
-                            tabSwitch(initialState.destination.route, targetState.destination.route) -> fadeIn(tween(180))
-                            else -> fadeIn(tween(700))
-                        }
-                    },
-                    popExitTransition = {
-                        when {
-                            Theme.apple -> if (tabSwitch(initialState.destination.route, targetState.destination.route)) fadeOut(tween(120)) else slideOutHorizontally(appleSlide) { it }
-                            Theme.liquid -> fadeOut(tween(160)) + scaleOut(tween(220), targetScale = 0.94f)
-                            tabSwitch(initialState.destination.route, targetState.destination.route) -> fadeOut(tween(120))
-                            else -> fadeOut(tween(700))
-                        }
-                    },
-                ) {
-                    composable(Dest.Home.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) {
-                            HomeScreen(onOpenSession = ::openSessionNow, onSetup = { go(Dest.Linux) }, onInbox = { go(Dest.Inbox) })
-                        }
-                    }
-                    composable(Dest.Sessions.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) { SessionsScreen(onOpenSession = ::openSessionNow) }
-                    }
-                    composable(Dest.Current.route) {
-                        CurrentScreen(onMenu = { scope.launch { drawer.open() } }, onOpenSession = ::openSessionNow, onSessions = { go(Dest.Sessions) })
-                    }
-                    composable(Dest.Inbox.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) { InboxScreen(onOpenSession = ::openSessionNow, onHistory = { go(Dest.ApprovalHistory) }) }
-                    }
-                    composable(Dest.Runtime.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.runtime.RuntimeScreen(onOpenSession = ::openSessionNow) }
-                    }
-                    composable(Dest.Nodes.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.nodes.NodesScreen() }
-                    }
-                    composable(Dest.Repositories.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.integration.RepositoryHubScreen(onCommit = { go(Dest.Commit) }) }
-                    }
-                    composable(Dest.Commit.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.integration.CommitScreen(onOpenVault = { go(Dest.Vault) }) }
-                    }
-                    composable(Dest.Security.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) {
-                            app.umbra.agent.ui.security.SecurityEvidenceScreen(onGo = { route -> Dest.entries.firstOrNull { it.route == route }?.let { go(it) } })
-                        }
-                    }
-                    composable(Dest.Vault.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.vault.CredentialVaultScreen() }
-                    }
-                    composable(Dest.Services.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.services.SharedServicesScreen(onOpenSession = ::openSessionNow) }
-                    }
-                    composable(Dest.Resources.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.resources.ResourceScreen() }
-                    }
-                    composable(Dest.Planning.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.planning.PlanningScreen(onOpenSession = ::openSessionNow) }
-                    }
-                    composable(Dest.Emergency.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.emergency.EmergencyScreen() }
-                    }
-                    composable(Dest.Terminals.route) {
-                        TabPage(onMenu = { scope.launch { drawer.open() } }) { app.umbra.agent.ui.terminal.TerminalsScreen() }
-                    }
-                    composable(Dest.Workspaces.route) { WorkspacesScreen(onBack = { nav.popBackStack() }, onOpen = { nav.navigate("workspace/$it") }) }
-                    composable("workspace/{id}") { e -> WorkspaceBrowserScreen(e.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() }) }
-                    composable(Dest.Linux.route) { SetupScreen(onBack = { nav.popBackStack() }, onModels = { go(Dest.Models) }) }
-                    composable(Dest.Models.route) { ModelsScreen(onBack = { nav.popBackStack() }, onSetup = { go(Dest.Linux) }) }
-                    composable(Dest.Displays.route) { DisplaysScreen(onBack = { nav.popBackStack() }) }
-                    composable(Dest.Processes.route) { ProcessesScreen(onBack = { nav.popBackStack() }) }
-                    composable(Dest.ApprovalHistory.route) { ApprovalHistoryScreen(onBack = { nav.popBackStack() }) }
-                    composable(Dest.Diagnostics.route) { DiagnosticsScreen(onBack = { nav.popBackStack() }) }
-                    composable(Dest.Appearance.route) { app.umbra.agent.ui.AppearanceScreen(onBack = { nav.popBackStack() }) }
-                    composable(Dest.Reference.route) { app.umbra.agent.ui.reference.ReferenceScreen(onBack = { nav.popBackStack() }) }
-                    composable(Dest.Settings.route) {
-                        SettingsScreen(
-                            onBack = { nav.popBackStack() },
-                            onModels = { go(Dest.Models) },
-                            onSetup = { go(Dest.Linux) },
-                            onApprovalHistory = { go(Dest.ApprovalHistory) },
-                            onDiagnostics = { go(Dest.Diagnostics) },
-                            onWorkspaces = { go(Dest.Workspaces) },
-                            onProcesses = { go(Dest.Processes) },
-                            onDisplays = { go(Dest.Displays) },
-                            onAppearance = { go(Dest.Appearance) },
-                        )
-                    }
-                }
-              }
-            }
+          }
         }
     }
-    }
+    app.umbra.agent.ui.update.UpdatePrompt()
     OverlayScrim()
     }
     if (styled) OverlayHost(appGlass) { androidx.compose.ui.geometry.Offset.Zero }
     }
 }
 
-/** A bottom-bar page: the phone app bar (spark badge, name, menu) above the content. */
+/** One of the original pages, under the one header every page has (back, its name, the emergency shield). */
 @Composable
-fun TabPage(onMenu: () -> Unit, actions: @Composable () -> Unit = {}, content: @Composable () -> Unit) {
-    Column(Modifier.fillMaxSize()) {
-        AppBar(onMenu, actions)
-        Box(Modifier.weight(1f).fillMaxWidth().scrollEdge()) { content() }
-    }
-}
+private fun Page(dest: Dest, onBack: () -> Unit, content: @Composable () -> Unit) = PorcelainPage(stringResource(dest.title), onBack, content = content)
 
 /** Opens Emergency Control from any app bar. */
 val LocalOpenEmergency = androidx.compose.runtime.staticCompositionLocalOf<() -> Unit> { {} }
@@ -478,181 +401,11 @@ fun PorcelainPage(title: String, onBack: () -> Unit, actions: @Composable () -> 
     }
 }
 
-@Composable
-private fun BottomBar(route: String, attention: Int, onGo: (Dest) -> Unit, content: com.kyant.backdrop.backdrops.LayerBackdrop, contentOrigin: () -> androidx.compose.ui.geometry.Offset) {
-    if (Theme.liquid) return LiquidBottomBar(route, attention, onGo, LocalPageGlass.current)
-    if (Theme.apple) {
-        val tabs = Dest.entries.filter { it.tab }
-        val labels = tabs.map { stringResource(it.title) }
-        return app.umbra.agent.ui.porcelain.AppleTabBar(
-            tabs.mapIndexed { i, d -> app.umbra.agent.ui.porcelain.AppleTab(d.icon, labels[i], if (d == Dest.Inbox) attention else 0) },
-            tabs.indexOfFirst { route.startsWith(it.route) }.coerceAtLeast(0),
-            { i -> onGo(tabs[i]) },
-            content,
-            contentOrigin,
-        )
-    }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(pc(0xFFE0E9DF))
-            .border(width = 1.dp, color = pc(0x5CA9B9A7), shape = RoundedCornerShape(0.dp))
-            .navigationBarsPadding()
-            .height(64.dp),
-        horizontalArrangement = Arrangement.SpaceAround,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Dest.entries.filter { it.tab }.forEach { d ->
-            val on = route.startsWith(d.route)
-            val color = if (on) pc(0xFF44694B) else pc(0xFF839683)
-            Column(
-                Modifier.clip(RoundedCornerShape(14.dp)).clickable(role = Role.Tab, onClickLabel = stringResource(d.title)) { onGo(d) }.padding(horizontal = 14.dp, vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Box {
-                    PIcon(d.icon, size = 20.dp, tint = color)
-                    if (d == Dest.Inbox && attention > 0) {
-                        Box(Modifier.align(Alignment.TopEnd).padding(start = 14.dp).size(16.dp).clip(CircleShape).background(P.amber), contentAlignment = Alignment.Center) {
-                            Text("${attention.coerceAtMost(9)}", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-                Text(stringResource(d.title), Modifier.padding(top = 4.dp), fontSize = 11.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium, color = color)
-            }
-        }
-    }
-}
-
-@Composable
-private fun DrawerContent(current: String, onGo: (Dest) -> Unit) {
-    Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 20.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 6.dp, bottom = 18.dp)) {
-            BadgeIcon(PIcons.spark, size = 44.dp)
-            Column(Modifier.padding(start = 12.dp)) {
-                Text("Umbra", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = P.ink)
-                Text(stringResource(R.string.drawer_tagline).uppercase(), fontSize = 9.sp, letterSpacing = 2.sp, color = P.muted)
-            }
-        }
-        DrawerItem(Dest.Home, current.startsWith(Dest.Home.route), onGo)
-        Dest.entries.filter { it.group != null }.groupBy { it.group!! }.forEach { (group, dests) ->
-            Text(stringResource(group).uppercase(), Modifier.padding(start = 12.dp, top = 18.dp, bottom = 6.dp), fontSize = 10.sp, letterSpacing = if (stringResource(group).hasCjk()) 0.8.sp else 2.4.sp, fontWeight = FontWeight.Bold, color = P.eyebrow)
-            dests.forEach { DrawerItem(it, current.startsWith(it.route), onGo) }
-        }
-    }
-}
-
-@Composable
-private fun DrawerItem(d: Dest, active: Boolean, onGo: (Dest) -> Unit) {
-    val shape = RoundedCornerShape(15.dp)
-    val press = rememberPress()
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp)
-            .liquidPress(press, 0.5f)
-            .let {
-                when {
-                    !active -> it.clip(shape)
-                    Theme.apple -> it.clip(RoundedCornerShape(12.dp)).background(Theme.current.accentColor)
-                    Theme.liquid -> it.liquidGlass(shape, GlassKind.Control, 4.dp)
-                    else -> it.clip(shape).background(P.ceramic).border(1.dp, pc(0xA8FFFFFF), shape)
-                }
-            }
-            .clickable(interactionSource = press, indication = androidx.compose.foundation.LocalIndication.current, role = Role.Button) { onGo(d) }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        val tint = if (active) (if (Theme.apple) Color.White else if (Theme.liquid) P.accent2 else pc(0xFF395941)) else if (Theme.apple) P.ink else pc(0xFF647965)
-        PIcon(d.icon, size = 18.dp, tint = tint)
-        Text(stringResource(d.title), Modifier.padding(start = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = tint)
-    }
-}
-
-/**
- * The Liquid tab bar: a glass capsule floating above the backdrop. The chosen tab sits in a drop of the accent that
- * flows to the next tab (stretching on the way), and the tab's icon bounces as the drop arrives.
- */
-@Composable
-private fun LiquidBottomBar(route: String, attention: Int, onGo: (Dest) -> Unit, backdrop: com.kyant.backdrop.backdrops.LayerBackdrop?) {
-    val tabs = Dest.entries.filter { it.tab }
-    val index = tabs.indexOfFirst { route.startsWith(it.route) }
-    val drop = remember { GooeyDrop() }
-    val bounds = remember { androidx.compose.runtime.mutableStateListOf<Pair<Float, Float>>().apply { repeat(tabs.size) { add(0f to 0f) } } }
-    val target = bounds.getOrNull(index)?.takeIf { it.second > it.first }
-    LaunchedEffect(index, target) { if (target != null) drop.moveTo(target.first, target.second) }
-    val spec = Theme.current
-    // the bar's tint follows the drops passing under it: over a dark one it turns dark glass with light ink
-    val tone = app.umbra.agent.ui.porcelain.rememberBackdropTone(backdrop?.graphicsLayer, { androidx.compose.ui.geometry.Offset.Zero }, spec.dark, spec.tokens.base)
-    val lightTokens = remember(spec.hue) { app.umbra.agent.ui.porcelain.Tokens.liquid(spec.hue, false) }
-    val darkTokens = remember(spec.hue) { app.umbra.agent.ui.porcelain.Tokens.liquid(spec.hue, true) }
-    val dropColor = androidx.compose.ui.graphics.lerp(hsl(spec.hue, 0.75f, 0.62f, 0.22f), hsl(spec.hue, 0.70f, 0.62f, 0.30f), tone.value)
-    val shape = RoundedCornerShape(30.dp)
-    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 14.dp, end = 14.dp, bottom = 10.dp, top = 4.dp).then(tone.modifier)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .liquidGlass(shape, GlassKind.Bar, 16.dp, tone = tone.value)
-                .padding(6.dp)
-                .drawBehind {
-                    if (target == null) return@drawBehind
-                    val l = drop.left.value
-                    val r = drop.right.value
-                    val st = drop.stretch(target.second - target.first)
-                    val h = size.height * (1f - 0.2f * st)
-                    val top = (size.height - h) / 2f
-                    drawRoundRect(dropColor, topLeft = androidx.compose.ui.geometry.Offset(l, top), size = androidx.compose.ui.geometry.Size(r - l, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(h / 2f))
-                }
-                .height(56.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            tabs.forEachIndexed { i, d ->
-                val on = i == index
-                val press = rememberPress()
-                val onColor = androidx.compose.ui.graphics.lerp(lightTokens.accent2, darkTokens.accent2, tone.value)
-                val offColor = androidx.compose.ui.graphics.lerp(lightTokens.muted, darkTokens.muted, tone.value)
-                val color by androidx.compose.animation.animateColorAsState(if (on) onColor else offColor, tween(240), label = "tab")
-                val bounce = remember { androidx.compose.animation.core.Animatable(1f) }
-                LaunchedEffect(on) {
-                    if (on) {
-                        bounce.snapTo(0.82f)
-                        bounce.animateTo(1f, spring(dampingRatio = 0.32f, stiffness = 380f))
-                    }
-                }
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .onPlaced { c -> val x = c.positionInParent().x; bounds[i] = x to x + c.size.width }
-                        .jelly(press, 0.8f, glow = RoundedCornerShape(24.dp))
-                        .clip(RoundedCornerShape(24.dp))
-                        .clickable(interactionSource = press, indication = null, role = Role.Tab, onClickLabel = stringResource(d.title)) { onGo(d) },
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Box(Modifier.graphicsLayer { scaleX = bounce.value; scaleY = bounce.value }) {
-                        PIcon(d.icon, size = 20.dp, tint = color)
-                        if (d == Dest.Inbox && attention > 0) {
-                            Box(Modifier.align(Alignment.TopEnd).padding(start = 14.dp).size(16.dp).clip(CircleShape).background(P.amber), contentAlignment = Alignment.Center) {
-                                Text("${attention.coerceAtMost(9)}", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                    Text(stringResource(d.title), Modifier.padding(top = 3.dp), fontSize = 11.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium, color = color, maxLines = 1)
-                }
-            }
-        }
-    }
-}
-
 /** The Liquid backdrop's live layer, for the tab bar to read its tone from. */
 private val LocalPageGlass = androidx.compose.runtime.staticCompositionLocalOf<com.kyant.backdrop.backdrops.LayerBackdrop?> { null }
 
 /** How far the floating tab bar reaches into the page: tab pages pad the end of their scrolling content by it. */
 val LocalChromeBottom = androidx.compose.runtime.staticCompositionLocalOf { 0.dp }
-
-private val tabRoutes = Dest.entries.filter { it.tab }.map { it.route }.toSet()
-
-private fun tabSwitch(from: String?, to: String?) = from in tabRoutes && to in tabRoutes
 
 /** UINavigationController's push: critically damped, response 0.4 s. */
 private val appleSlide = app.umbra.agent.ui.porcelain.appleSpring(1f, 0.4f, androidx.compose.ui.unit.IntOffset.VisibilityThreshold)

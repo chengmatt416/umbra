@@ -152,6 +152,9 @@ private fun Thinking(block: Block.Thinking, live: Boolean) {
     }
 }
 
+/** Simple mode: tool calls are one line each (what it does), opened by a tap; no output until then. */
+val LocalCompactTools = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 /** One tool call: what it does, whether it runs, its output; specialised for the common tools. */
 @Composable
 fun ToolCard(call: Block.ToolCall, run: ToolRun?, images: List<app.umbra.core.orchestrator.Image>) {
@@ -177,10 +180,10 @@ fun ToolCard(call: Block.ToolCall, run: ToolRun?, images: List<app.umbra.core.or
         call.intent?.takeIf { it.isNotBlank() }?.let { Text(it, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = P.sub) }
         val output = run?.result ?: run?.partial
         if (call.name == "edit" && open) EditDiff(call.arguments)
-        if (open && call.name != "edit" && call.name != "bash") {
+        if (open && call.name != "edit" && call.name != "bash" && !LocalCompactTools.current) {
             Text(call.arguments.toString().take(4_000), Modifier.padding(top = 6.dp), fontSize = 11.sp, fontFamily = P.mono, color = P.sub)
         }
-        if (!output.isNullOrBlank() && (open || failed || running || call.name == "bash")) {
+        if (!output.isNullOrBlank() && (open || ((failed || running || call.name == "bash") && !LocalCompactTools.current))) {
             val shown = if (open) output.takeLast(30_000) else output.lines().takeLast(if (running) 6 else 4).joinToString("\n")
             Text(
                 shown,

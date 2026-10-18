@@ -24,6 +24,10 @@ data class ProviderConfig(
     val label: String,
     /** Name of the secret (and of the environment variable omp reads) that holds the API key. */
     val apiKeyEnv: String? = null,
+    /** Signed in with the provider's account (omp's own login, its credentials kept by omp), not with a key. */
+    val oauth: Boolean = false,
+    /** Who signed in, as omp reported it ("name@example.com (Org)"), for an OAuth provider. */
+    val account: String? = null,
     val custom: Boolean = false,
     val baseUrl: String? = null,
     val api: String = "openai-completions",
@@ -63,7 +67,27 @@ data class AppPrefs(
     val updateOnWifiOnly: Boolean = true,
     /** How the app looks: Porcelain (the original glaze) or Liquid (a living backdrop in a colour the user picks). */
     val theme: ThemePrefs = ThemePrefs(),
+    /** How much of the app shows (docs/design/redesign-2026-10.md §2). Never changes what runs. */
+    val uiMode: UiMode = UiMode.SIMPLE,
+    /** First-run setup finished (or skipped through): Home opens straight away. */
+    val onboarded: Boolean = false,
+    /** The menu button and its menu sit bottom-left instead of bottom-right. */
+    val leftHanded: Boolean = false,
+    /** "Auto": each new task takes the best model of a connected provider, from the model directory. Always saved, so a file without it is one written before "Auto" existed. */
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault
+    val autoModel: Boolean = true,
+    /** The update the user said "later" to at launch: not asked again for that version. */
+    val skippedUpdateVersion: Long = 0,
+    /** Laya was offered (first-run setup): its answer is final until the user changes it in Settings. */
+    val layaOffered: Boolean = false,
+    /** Laya should be installed and start with every task. */
+    val layaWanted: Boolean = false,
 )
+
+/** Simple shows the essentials, Power adds the working views, Dev every control the app has, resources by hand. */
+@Serializable
+enum class UiMode { SIMPLE, POWER, DEV }
 
 @Serializable
 enum class ThemeStyle { PORCELAIN, LIQUID, APPLE }
@@ -122,7 +146,9 @@ class AppSettings(context: Context) {
 
     private fun load(): AppPrefs = prefs.getString(KEY, null)?.let {
         try {
-            UmbraJson.decodeFromString(AppPrefs.serializer(), it)
+            val loaded = UmbraJson.decodeFromString(AppPrefs.serializer(), it)
+            // Saved before "Auto" existed: a model the person had chosen stays chosen.
+            if ("\"autoModel\"" !in it && loaded.defaultModel != null) loaded.copy(autoModel = false) else loaded
         } catch (_: Exception) {
             null
         }
@@ -139,11 +165,14 @@ class AppProviderResolver(
     private val secrets: SecretStore,
     /** Whether a key may reach a session whose model belongs to the given provider (the vault's scopes, §12.1). */
     private val admits: (keyName: String, sessionProvider: String?) -> Boolean = { _, _ -> true },
+    /** What "Auto" picks for a task that names no model (the model directory's recommendation). */
+    private val auto: (AppPrefs) -> ModelRef? = { null },
 ) : ProviderResolver {
     override suspend fun resolve(sessionModel: ModelRef?): ProviderSelection {
         val prefs = settings.value
-        if (prefs.providers.isEmpty()) throw NoProviderException("No model provider is set up yet. Add one in Settings → Models.")
-        val sessionProvider = (sessionModel ?: prefs.defaultModel)?.provider
+        if (prefs.providers.isEmpty()) throw NoProviderException("No model is connected yet. Connect an account or a key in Accounts and models.")
+        val chosen = sessionModel ?: (if (prefs.autoModel) auto(prefs) else null) ?: prefs.defaultModel
+        val sessionProvider = chosen?.provider
         val keys = LinkedHashMap<String, String>()
         val custom = ArrayList<OmpProvider>()
         for (p in prefs.providers) {
@@ -163,8 +192,7 @@ class AppProviderResolver(
                 )
             }
         }
-        val model = sessionModel ?: prefs.defaultModel
-        if (model == null) throw NoProviderException("No model is chosen yet. Pick a default model in Settings → Models.")
+        val model = chosen ?: throw NoProviderException("No model is chosen yet. Pick a model from the model button beside the message field.")
         val own = prefs.providers.firstOrNull { it.id == model.provider }
             ?: throw NoProviderException("The provider '${model.provider}' of the chosen model is not set up.")
         own.apiKeyEnv?.let { env ->

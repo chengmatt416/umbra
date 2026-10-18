@@ -1,281 +1,246 @@
 package app.umbra.agent.ui.home
 
-import app.umbra.agent.ui.porcelain.pc
-import app.umbra.agent.ui.porcelain.pcHue
-import app.umbra.agent.ui.sessionsFlow
-import android.app.Activity
-import android.content.Intent
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import android.text.format.DateUtils
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.size
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.umbra.agent.R
+import app.umbra.agent.capsule.TaskCompanion
 import app.umbra.agent.container
-import app.umbra.agent.ui.CapabilityProbe
+import app.umbra.agent.data.HomeFilter
+import app.umbra.agent.data.UiMode
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.Callout
-import app.umbra.agent.ui.porcelain.CardStyle
-import app.umbra.agent.ui.porcelain.Eyebrow
-import app.umbra.agent.ui.porcelain.FoldedOrb
-import app.umbra.agent.ui.porcelain.Gap
 import app.umbra.agent.ui.porcelain.P
 import app.umbra.agent.ui.porcelain.PButton
-import app.umbra.agent.ui.porcelain.PCard
-import app.umbra.agent.ui.porcelain.PIcons
-import app.umbra.agent.ui.porcelain.PObject
-import app.umbra.agent.ui.porcelain.SerifTitle
-import app.umbra.agent.ui.porcelain.Subtle
-import app.umbra.agent.ui.porcelain.Tag
 import app.umbra.agent.ui.porcelain.Tone
-import app.umbra.agent.ui.sessions.sessionTone
+import app.umbra.agent.ui.porcelain.pc
 import app.umbra.agent.ui.sessions.stateText
-import app.umbra.agent.ui.softly
+import app.umbra.agent.ui.sessionsFlow
+import app.umbra.agent.ui.shell.LocalChromeBottom
+import app.umbra.agent.ui.shell.MenuButton
+import app.umbra.agent.ui.shell.MenuEntries
+import app.umbra.agent.ui.shell.MenuEntry
+import app.umbra.agent.ui.shell.MenuScrim
+import app.umbra.core.safety.ApprovalDecision
+import app.umbra.core.safety.ApprovalRequest
+import app.umbra.core.safety.ApprovalSurface
+import app.umbra.core.safety.ApproveGesture
+import app.umbra.core.safety.approveGesture
+import app.umbra.core.session.Session
 import app.umbra.core.session.SessionState
 import kotlinx.coroutines.launch
 
-private val EXAMPLES = listOf(R.string.home_example1, R.string.home_example2, R.string.home_example3, R.string.home_example4)
-
 /**
- * Home: the Folded Orb, the question "What shall we make possible?", the Smart Composer that starts new work, and
- * the tasks that are under way. Nothing here pretends a task runs: the cards show the session store's states.
+ * Home: the tasks — those that need you first, then those at work, then the recent ones — and, in the thumb's reach,
+ * the message field and the menu button. Nothing decorative: an empty Home is one sentence above the field.
  */
 @Composable
-fun HomeScreen(onOpenSession: (String) -> Unit, onSetup: () -> Unit, onInbox: () -> Unit) {
-    val context = LocalContext.current
-    val resources = androidx.compose.ui.platform.LocalResources.current
-    val container = context.container
+fun HomeScreen(onOpenSession: (String) -> Unit, entries: List<MenuEntry>, onAccounts: () -> Unit) {
+    val container = LocalContext.current.container
     val scope = rememberCoroutineScope()
+    val prefs by container.settings.flow.collectAsStateWithLifecycle()
     val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
     val approvals by container.approvals.pending.collectAsStateWithLifecycle()
     val questions by container.questions.pending.collectAsStateWithLifecycle()
-    val projects by container.projects.all.collectAsStateWithLifecycle()
-    val homeProject by container.ui.homeProject.collectAsStateWithLifecycle()
-    val guestState by container.guest.state.collectAsStateWithLifecycle()
-    val probe = remember { CapabilityProbe(container) }
-    val settings by container.settings.flow.collectAsStateWithLifecycle()
-    var missing by remember { mutableStateOf<List<String>>(emptyList()) }
-    LaunchedEffect(guestState, settings) {
-        softly("the set-up check") { missing = probe.probe().filter { it.essential && it.status != app.umbra.agent.ui.CapabilityStatus.OK }.map { it.title } }
-    }
-
-    val working = sessions.any { it.state == SessionState.RUNNING }
-    val active = sessions.filter { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL || it.state == SessionState.PAUSED }
+    val filter by container.ui.homeFilter.collectAsStateWithLifecycle()
+    var menu by rememberSaveable { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var sending by remember { mutableStateOf(false) }
+    val power = prefs.uiMode != UiMode.SIMPLE
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 18.dp)) {
-        // One left edge for all text; the orb sits to the right of the status, so the page reads as one column.
-        Eyebrow(stringResource(R.string.home_eyebrow), Modifier.padding(top = 6.dp))
-        Row(Modifier.fillMaxWidth().height(150.dp), verticalAlignment = Alignment.Bottom) {
-            Column(Modifier.weight(1f).padding(bottom = 18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(Modifier.size(7.dp).clip(androidx.compose.foundation.shape.CircleShape).background(if (working) P.accent else pc(0xFFA9BAA6)))
-                    Text(stringResource(if (working) R.string.home_working else R.string.home_rest), fontSize = 12.sp, letterSpacing = 0.4.sp, color = pc(0xFF73886F))
+    val waitingOn = approvals.map { it.sessionId }.toSet() + questions.map { it.sessionId }
+    val needs = sessions.filter { !it.state.isTerminal && (it.id in waitingOn || it.state == SessionState.WAITING_APPROVAL) }
+    val running = sessions.filter { it !in needs && (it.state == SessionState.RUNNING || it.state == SessionState.PAUSED || (it.state == SessionState.CREATED && it.queuedAtMs == null)) }
+    val queued = sessions.filter { it !in needs && it.state == SessionState.CREATED && it.queuedAtMs != null }
+    val recent = sessions.filter { it.state.isTerminal }.sortedByDescending { it.updatedAtMs }.take(if (power) 20 else 8)
+    val shown: List<Pair<String?, List<Session>>> = when (if (power) filter else HomeFilter.ALL) {
+        HomeFilter.ALL -> listOf(null to (needs + running + queued), stringResource(R.string.r_home_recent) to recent)
+        HomeFilter.NEEDS -> listOf(null to needs)
+        HomeFilter.RUNNING -> listOf(null to running)
+        HomeFilter.QUEUED -> listOf(null to queued)
+    }
+    val empty = sessions.isEmpty()
+
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            Modifier.fillMaxSize().statusBarsPadding(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 120.dp + LocalChromeBottom.current),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (!empty) item(key = "title") {
+                Text(stringResource(R.string.r_home_title), Modifier.padding(start = 4.dp, bottom = 4.dp), fontFamily = P.serif, fontSize = 30.sp, color = P.ink)
+            }
+            if (power && !empty) item(key = "filters") {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(stringResource(R.string.r_home_all, sessions.size), filter == HomeFilter.ALL) { container.ui.homeFilter.value = HomeFilter.ALL }
+                    FilterChip(stringResource(R.string.r_home_needs, needs.size), filter == HomeFilter.NEEDS) { container.ui.homeFilter.value = HomeFilter.NEEDS }
+                    FilterChip(stringResource(R.string.r_home_running, running.size), filter == HomeFilter.RUNNING) { container.ui.homeFilter.value = HomeFilter.RUNNING }
+                    if (queued.isNotEmpty()) FilterChip(stringResource(R.string.r_home_queued, queued.size), filter == HomeFilter.QUEUED) { container.ui.homeFilter.value = HomeFilter.QUEUED }
                 }
             }
-            FoldedOrb(Modifier.fillMaxHeight().aspectRatio(1.15f), working = working)
-        }
-        Gap(6.dp)
-        SerifTitle(stringResource(R.string.home_title), Modifier.fillMaxWidth(0.82f), size = 31)
-        Subtle(stringResource(R.string.home_body), Modifier.padding(top = 8.dp))
-        Gap(14.dp)
-
-        if (missing.isNotEmpty()) {
-            Callout(stringResource(R.string.home_missing, missing.joinToString()), Tone.Warn)
-            Gap(8.dp)
-            PButton(stringResource(R.string.home_setup), onSetup, style = ButtonStyle.Alt, tiny = true)
-            Gap(14.dp)
-        }
-
-        SmartComposer(
-            projectName = homeProject?.let { projects[it]?.name },
-            projects = projects.values.sortedBy { it.createdAtMs }.map { it.id to it.name },
-            onProject = { container.ui.setHomeProject(it) },
-            sending = sending,
-            onSnapshot = {
-                // Circle something in the app behind Umbra: step aside, select, and come back to the composer there.
-                if (!android.provider.Settings.canDrawOverlays(context) && !app.umbra.platform.android.UmbraAccessibilityService.connected.value) {
-                    error = resources.getString(R.string.home_select_needs)
-                } else {
-                    (context as? Activity)?.moveTaskToBack(true)
-                    container.capsule.startSelection(delayMs = 450)
+            error?.let { item(key = "error") { Callout(it, Tone.Danger) } }
+            shown.forEach { (heading, list) ->
+                if (heading != null && list.isNotEmpty()) item(key = "h-$heading") {
+                    Text(heading, Modifier.padding(start = 4.dp, top = 8.dp), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = P.sub)
                 }
-            },
-            onSend = { text ->
-                sending = true
-                scope.launch {
-                    try {
-                        val id = container.capsule.screen.send(text, sessionId = null, projectId = homeProject?.takeIf { projects.containsKey(it) }, fromCapsule = false)
-                        error = null
-                        onOpenSession(id)
-                    } catch (e: Exception) {
-                        error = e.message ?: e::class.simpleName
-                    } finally {
-                        sending = false
-                    }
-                }
-            },
-        )
-        error?.let { Gap(10.dp); Callout(it, Tone.Danger) }
-        if (sessions.isEmpty()) {
-            Gap(12.dp)
-            EXAMPLES.forEach { id ->
-                val example = stringResource(id)
-                Gap(6.dp)
-                PObject(example, null, PIcons.spark, onClick = { container.ui.saveDraft(example) })
-            }
-        }
-
-        if (approvals.isNotEmpty() || questions.isNotEmpty()) {
-            Gap(14.dp)
-            val n = approvals.size + questions.size
-            PCard(style = CardStyle.Soft, onClick = onInbox) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(pluralStringResource(R.plurals.home_waiting, n, n), Modifier.weight(1f), fontSize = 14.sp, color = P.ink)
-                    Tag(stringResource(R.string.home_inbox), Tone.Warn)
+                items(list, key = { it.id }) { s ->
+                    TaskRow(
+                        s, power,
+                        approval = approvals.firstOrNull { it.sessionId == s.id },
+                        question = questions.any { it.sessionId == s.id },
+                        onOpen = { onOpenSession(s.id) },
+                        onDecide = { request, decision -> container.approvals.resolve(request.id, decision) },
+                    )
                 }
             }
         }
 
-        active.forEach { s ->
-            Gap(14.dp)
-            PCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.home_active), Modifier.weight(1f), fontSize = 12.sp, color = P.sub)
-                    Tag(stateText(s), sessionTone(s))
-                }
-                Text(s.title, Modifier.padding(top = 8.dp), fontSize = 16.sp, color = P.ink)
-                val step = s.plan.firstOrNull { it.status == "active" } ?: s.plan.lastOrNull { it.status == "done" }
-                (step?.text ?: s.lastError ?: s.request.takeIf { it != s.title })?.let { Subtle(it, Modifier.padding(top = 4.dp), maxLines = 2) }
-                Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PButton(stringResource(R.string.home_view), { onOpenSession(s.id) }, style = ButtonStyle.Alt, tiny = true)
-                    if (approvals.any { it.sessionId == s.id } || questions.any { it.sessionId == s.id }) PButton(stringResource(R.string.home_review), onInbox, style = ButtonStyle.Alt, tiny = true)
-                }
-            }
+        if (empty) {
+            Text(
+                stringResource(R.string.r_home_empty),
+                Modifier.align(Alignment.BottomStart).navigationBarsPadding().imePadding().padding(start = 24.dp, end = 24.dp, bottom = if (power) 140.dp else 100.dp),
+                fontFamily = P.serif, fontSize = 26.sp, lineHeight = 36.sp, color = P.ink,
+            )
         }
 
-        val recent = sessions.filter { it.state.isTerminal || it.state == SessionState.CREATED }.take(3)
-        if (recent.isNotEmpty()) {
-            Gap(20.dp)
-            Eyebrow(stringResource(R.string.home_recent))
-            recent.forEach { s ->
-                Gap(8.dp)
-                PObject(s.title, stateText(s), PIcons.bot, onClick = { onOpenSession(s.id) })
+        MenuScrim(menu) { menu = false }
+        Column(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+            horizontalAlignment = if (prefs.leftHanded) Alignment.Start else Alignment.End,
+        ) {
+            MenuEntries(menu, entries.map { e -> MenuEntry(e.icon, e.label) { menu = false; e.onClick() } }, prefs.leftHanded, Modifier.padding(bottom = 16.dp))
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (prefs.leftHanded) MenuButton(menu, { menu = !menu })
+                HomeComposer(
+                    Modifier.weight(1f),
+                    dimmed = menu,
+                    onAccounts = onAccounts,
+                    onSend = { text ->
+                        scope.launch {
+                            try {
+                                val id = container.capsule.screen.send(text, sessionId = null, projectId = container.ui.homeProject.value, fromCapsule = false)
+                                error = null
+                                onOpenSession(id)
+                            } catch (e: Exception) {
+                                error = e.message ?: e::class.simpleName
+                            }
+                        }
+                    },
+                )
+                if (!prefs.leftHanded) MenuButton(menu, { menu = !menu })
             }
         }
-        Gap(28.dp + app.umbra.agent.ui.shell.LocalChromeBottom.current)
     }
 }
 
-/**
- * The Smart Composer (`.smart-composer`): one draft and one set of context chips shared with the Capsule, the project
- * new work goes to, Snapshot selection, the microphone (speech recognition when the phone has it) and Send. The
- * keyboard opens only when the field is tapped.
- */
 @Composable
-fun SmartComposer(
-    projectName: String?,
-    projects: List<Pair<String, String>>,
-    onProject: (String?) -> Unit,
-    sending: Boolean,
-    onSnapshot: () -> Unit,
-    onSend: (String) -> Unit,
-) {
+private fun FilterChip(label: String, on: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(18.dp)
+    Text(
+        label,
+        Modifier.clip(shape).background(if (on) P.accent3 else pc(0xFFF6F8F2)).then(if (on) Modifier else Modifier.border(1.dp, P.line, shape))
+            .clickable(role = Role.Tab, onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
+        fontSize = 13.sp, fontWeight = FontWeight.Medium, color = P.ink,
+    )
+}
+
+/** One task: its companion, title, what it is doing, when; what it waits for, answerable right here. */
+@Composable
+private fun TaskRow(s: Session, power: Boolean, approval: ApprovalRequest?, question: Boolean, onOpen: () -> Unit, onDecide: (ApprovalRequest, ApprovalDecision) -> Unit) {
     val container = LocalContext.current.container
-    val context = LocalContext.current
-    val resources = androidx.compose.ui.platform.LocalResources.current
-    val draft by container.ui.draft.collectAsStateWithLifecycle()
-    val chips by container.ui.draftContext.collectAsStateWithLifecycle()
-    var projectMenu by remember { mutableStateOf(false) }
-    val canListen = remember { SpeechRecognizer.isRecognitionAvailable(context) }
-    val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val heard = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty()
-            if (heard.isNotBlank()) container.ui.saveDraft(listOf(draft, heard).filter { it.isNotBlank() }.joinToString(" "))
-        }
+    val needsYou = approval != null || question
+    val shape = RoundedCornerShape(22.dp)
+    val step = s.plan.indexOfFirst { it.status == "active" }.takeIf { it >= 0 }
+    val status = when {
+        approval != null -> approval.description
+        question -> stringResource(R.string.cap_question)
+        s.state == SessionState.FAILED -> s.lastError ?: stateText(s)
+        s.state == SessionState.RUNNING && step != null -> s.plan[step].text + " · " + stringResource(R.string.r_home_step, step + 1, s.plan.size)
+        else -> stateText(s)
     }
-    val shape = RoundedCornerShape(21.dp)
     Column(
-        Modifier.fillMaxWidth().shadow(8.dp, shape, ambientColor = pcHue(0x22455F49), spotColor = pcHue(0x33455F49)).clip(shape)
-            .background(pc(0xFFF7FAF4)).border(1.dp, pc(0xB5FFFFFF), shape).padding(horizontal = 12.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().clip(shape).background(pc(0xFFF6F8F2))
+            .then(if (needsYou) Modifier.border(1.dp, P.amber.copy(alpha = 0.5f), shape) else Modifier)
+            .clickable(role = Role.Button, onClick = onOpen).padding(16.dp).animateContentSize(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // The same context the Capsule's composers hold (§3.1): a screen selection made over another app shows here too.
-        chips.forEach { chip -> app.umbra.agent.capsule.ChipRow(chip) { container.ui.removeContext(chip.id) } }
-        if (chips.isNotEmpty()) Gap(8.dp)
-        Box(Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
-            if (draft.isEmpty()) Text(stringResource(R.string.composer_hint), fontSize = 15.sp, color = pc(0xFF9AAA98))
-            val messageLabel = stringResource(R.string.cap_message)
-            BasicTextField(
-                draft,
-                { container.ui.saveDraft(it) },
-                Modifier.fillMaxWidth().semantics { contentDescription = messageLabel },
-                textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = P.ink),
-                cursorBrush = SolidColor(P.accent2),
-                maxLines = 8,
-            )
-        }
-        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box {
-                PButton(projectName ?: stringResource(R.string.composer_independent), { projectMenu = true }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.layers)
-                DropdownMenu(projectMenu, { projectMenu = false }) {
-                    DropdownMenuItem(text = { Text(stringResource(R.string.composer_independent_session)) }, onClick = { projectMenu = false; onProject(null) })
-                    projects.forEach { (id, name) -> DropdownMenuItem(text = { Text(name) }, onClick = { projectMenu = false; onProject(id) }) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TaskCompanion(s, needsYou)
+            Column(Modifier.weight(1f)) {
+                Text(s.title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = P.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    status, Modifier.padding(top = 2.dp), fontSize = 12.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    color = when { needsYou -> P.amber; s.state == SessionState.FAILED -> P.danger; else -> P.sub },
+                )
+                if (power) {
+                    val project = s.projectId?.let { container.projects[it]?.name }
+                    val meta = listOfNotNull(project, s.model?.modelId, if (s.plan.isNotEmpty()) "${s.plan.count { it.status == "done" }}/${s.plan.size}" else null).joinToString(" · ")
+                    if (meta.isNotEmpty()) Text(meta, Modifier.padding(top = 2.dp), fontSize = 11.sp, fontFamily = P.mono, color = P.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            Box(Modifier.weight(1f))
-            PButton("", onSnapshot, style = ButtonStyle.Alt, tiny = true, icon = PIcons.target, contentDescription = stringResource(R.string.cap_select_screen))
-            Box(Modifier.padding(start = 6.dp))
-            if (canListen) {
-                PButton("", {
-                    speech.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))
-                }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.mic, contentDescription = stringResource(R.string.cap_speak))
-                Box(Modifier.padding(start = 6.dp))
-            }
-            PButton("", { if (draft.isNotBlank()) onSend(draft.trim()) }, tiny = true, icon = PIcons.send, enabled = draft.isNotBlank() && !sending, contentDescription = stringResource(R.string.cap_send))
+            Text(whenText(s), fontSize = 12.sp, color = P.muted)
         }
+        if (approval != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PButton(stringResource(R.string.r_home_see), onOpen, Modifier.weight(1f), style = ButtonStyle.Ghost)
+                PButton(stringResource(R.string.appr_deny), { onDecide(approval, ApprovalDecision.Denied("denied from Home")) }, Modifier.weight(1f), style = ButtonStyle.Alt)
+                if (approveGesture(approval.assessment.level, ApprovalSurface.CAPSULE) == ApproveGesture.ONE_TAP) {
+                    PButton(stringResource(R.string.r_allow), { onDecide(approval, ApprovalDecision.Approved()) }, Modifier.weight(1f))
+                }
+            }
+        } else if (question) {
+            PButton(stringResource(R.string.r_home_answer), onOpen, Modifier.fillMaxWidth(), style = ButtonStyle.Alt)
+        }
+    }
+}
+
+/** "now", the elapsed time of a running task, the time of day, "yesterday", or the date. */
+@Composable
+private fun whenText(s: Session): String {
+    val now = System.currentTimeMillis()
+    val context = LocalContext.current
+    if (s.state == SessionState.RUNNING) return app.umbra.agent.capsule.elapsedText(now - s.createdAtMs)
+    val at = s.updatedAtMs
+    return when {
+        now - at < 60_000 -> stringResource(R.string.r_now)
+        DateUtils.isToday(at) -> DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_TIME)
+        DateUtils.isToday(at + DateUtils.DAY_IN_MILLIS) -> stringResource(R.string.r_yesterday)
+        else -> DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_NO_YEAR or DateUtils.FORMAT_ABBREV_MONTH)
     }
 }

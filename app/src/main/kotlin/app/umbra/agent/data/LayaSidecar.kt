@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -71,7 +72,9 @@ class LayaSidecar(private val container: AppContainer, private val scope: Corout
     }
 
     /** Installs the package into the agent's home (about 2 GB with its runtime; needs the network). */
-    fun install() = launch {
+    fun install() = launch { installNow() }
+
+    private suspend fun installNow() {
         mutable.value = State.INSTALLING
         message = null
         val out = container.guest.runtime.exec(
@@ -86,26 +89,77 @@ class LayaSidecar(private val container: AppContainer, private val scope: Corout
         }
     }
 
+    /**
+     * First-run setup's "download": install the package, fetch the weights (the first start does), then stop again.
+     * Everything lands in the agent's home, which lives outside the Linux image, so an app update keeps it; tasks start
+     * the server when they begin ([startForTask]).
+     */
+    fun download() {
+        if (!downloading.compareAndSet(false, true)) return
+        scope.launch(Dispatchers.IO) {
+          try {
+            container.guest.state.first { it == GuestManager.State.Ready || it == GuestManager.State.Installed }
+            busy.withLock {
+                try {
+                    if (!container.guest.ensureReady()) { mutable.value = State.NEEDS_LINUX; return@withLock }
+                    if (!container.guest.runtime.exec(listOf("bash", "-c", "test -x $bin")).ok) installNow()
+                    if (mutable.value == State.FAILED) return@withLock
+                    startNow()
+                    if (mutable.value == State.RUNNING && !anyTaskRunning()) stopNow()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    message = e.message
+                    mutable.value = State.FAILED
+                }
+            }
+          } finally {
+            downloading.set(false)
+          }
+        }
+    }
+
+    private val downloading = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** A task began: start the server if it is installed and not running (the user wanted Laya). */
+    fun startForTask() {
+        if (!container.settings.value.layaWanted) return
+        if (mutable.value == State.STOPPED) start()
+    }
+
+    private suspend fun anyTaskRunning() = container.sessionStore.list().any { it.state == app.umbra.core.session.SessionState.RUNNING }
+
     /** Starts `laya-serve` in the background and waits until it answers (the first start also downloads the weights). */
-    fun start() = launch {
+    fun start() = launch { startNow() }
+
+    private suspend fun startNow() {
         mutable.value = State.STARTING
         message = null
         killServer()
-        container.guest.runtime.exec(
-            listOf(
-                "bash", "-c",
-                "mkdir -p \$HOME/.umbra && " +
-                    "LAYA_DEVICE=cpu LAYA_HOST=127.0.0.1 LAYA_PORT=$port LAYA_MODELS=$MODEL LAYA_DEFAULT_MODEL=$MODEL LAYA_PRELOAD=1 " +
-                    "setsid nohup $bin > \$HOME/.umbra/laya.log 2>&1 < /dev/null & echo started",
-            ),
-            cwd = "/home/agent", timeoutMs = 30_000,
-        )
+        // The server runs as this exec, in the foreground for as long as it serves: under proot a process left in the
+        // background ends with the exec that started it.
+        server?.cancel()
+        server = scope.launch(Dispatchers.IO) {
+            runCatching {
+                container.guest.runtime.exec(
+                    listOf(
+                        "bash", "-c",
+                        "mkdir -p \$HOME/.umbra; " +
+                            "LAYA_DEVICE=cpu LAYA_HOST=127.0.0.1 LAYA_PORT=$port LAYA_MODELS=$MODEL LAYA_DEFAULT_MODEL=$MODEL LAYA_PRELOAD=1 " +
+                            "exec $bin > \$HOME/.umbra/laya.log 2>&1 < /dev/null",
+                    ),
+                    cwd = "/home/agent", timeoutMs = SERVE_MS,
+                )
+            }
+            if (mutable.value == State.RUNNING) { engine.target = null; mutable.value = State.STOPPED }
+        }
         val deadline = System.currentTimeMillis() + 20 * 60_000L // the weights download on the first start
         while (System.currentTimeMillis() < deadline) {
+            if (server?.isCompleted == true) break
             if (LayaHttpEngine(url, http).isAvailable()) {
                 engine.target = LayaHttpEngine(url, http, model = MODEL)
                 mutable.value = State.RUNNING
-                return@launch
+                return
             }
             delay(2_000)
         }
@@ -113,9 +167,13 @@ class LayaSidecar(private val container: AppContainer, private val scope: Corout
         mutable.value = State.FAILED
     }
 
-    fun stop() = launch {
+    fun stop() = launch { stopNow() }
+
+    private suspend fun stopNow() {
         engine.target = null
         killServer()
+        server?.cancel()
+        server = null
         mutable.value = State.STOPPED
     }
 
@@ -143,7 +201,11 @@ class LayaSidecar(private val container: AppContainer, private val scope: Corout
         }
     }
 
+    @Volatile private var server: kotlinx.coroutines.Job? = null
+
     private companion object {
+        /** How long one start of the server may serve before its exec is ended (it is started again with the next task). */
+        const val SERVE_MS = 24 * 60 * 60_000L
         /** The typed-decisions checkpoint of `convaiinnovations/laya` (README: "the typed-decisions workflows"). */
         const val MODEL = "laya-typed-decisions"
     }

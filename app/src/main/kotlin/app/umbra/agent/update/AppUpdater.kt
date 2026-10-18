@@ -124,6 +124,33 @@ class AppUpdater(
         scope.launch { check(userAsked = true) }
     }
 
+    /**
+     * What the launch-time question offers: a newer release than this one, read from update.json without downloading
+     * anything; null when there is none or the site cannot be reached.
+     */
+    suspend fun offered(): UpdateManifest? = withContext(Dispatchers.IO) {
+        runCatching { fetch(manifestUrl()) }.getOrNull()?.takeIf { UpdatePolicy.isNewer(it, installedVersionCode) && UpdatePolicy.problem(it) == null }
+    }
+
+    /**
+     * The person said "Update": download now on any network, then install as soon as no task runs — silently through
+     * the helper or root, and Umbra opens again by itself ([onPackageReplaced]); without them the system asks once.
+     */
+    fun updateNow() {
+        prefs.edit().putBoolean(KEY_REOPEN, true).apply()
+        scope.launch {
+            check(userAsked = true)
+            while (true) {
+                when (val s = state.value) {
+                    is State.Ready -> if (!busy()) { install(s.update); return@launch }
+                    is State.Checking, is State.Downloading, is State.Available -> Unit
+                    else -> return@launch
+                }
+                delay(5_000)
+            }
+        }
+    }
+
     /** Installs the downloaded update now, as the user asked: Umbra closes and the new version starts. */
     fun installNow() {
         scope.launch {
@@ -350,6 +377,13 @@ class AppUpdater(
         notifications.cancel(NOTIFICATION_ID)
         if (expected != 0L && expected == installedVersionCode) {
             notify(context.getString(R.string.upd_notif_done_title, installedVersionName), context.getString(R.string.upd_notif_done_body), install = false)
+            // Asked for from the app: it opens again by itself.
+            if (prefs.getBoolean(KEY_REOPEN, false)) {
+                prefs.edit().remove(KEY_REOPEN).apply()
+                runCatching {
+                    context.startActivity(Intent(context, app.umbra.agent.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
+                }.onFailure { Log.w(TAG, "reopen", it) }
+            }
         }
     }
 
@@ -424,7 +458,8 @@ class AppUpdater(
         private const val NOTIFICATION_ID = 7_300
         private const val KEY_READY = "ready"
         private const val KEY_VERIFIED = "verified"
-        private const val KEY_INSTALLING = "installing"
+        private const val KEY_REOPEN = "reopen_after_update"
+        const val KEY_INSTALLING = "installing"
         private const val KEY_NOTIFIED = "notified"
         private const val FIRST_CHECK_DELAY_MS = 30_000L
         private const val CHECK_EVERY_MS = 12 * 60 * 60 * 1000L

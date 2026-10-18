@@ -227,6 +227,12 @@ class AppContainer(val context: Context) {
     private val gate = SafetyGate(RiskClassifier(), { ApprovalPolicy(approvalMode) }, approvals)
     /** Fast typed decisions: the Laya sidecar when the user has installed and started it, built-in rules otherwise. */
     val laya = LayaSidecar(this, scope)
+
+    /** The models Umbra offers, kept current from the site (docs/design/redesign-2026-10.md §8). */
+    val modelDirectory = app.umbra.agent.data.ModelDirectory(context, scope)
+
+    /** Signing in with a provider's account through omp's own login. */
+    val ompLogin by lazy { app.umbra.agent.data.OmpLogin(this) }
     val decisions = DecisionRouter(primary = laya.engine)
     val journal = ActionJournal()
     val leases = DisplayLeaseManager(onBlocked = { session, display, holder ->
@@ -320,7 +326,7 @@ class AppContainer(val context: Context) {
             service = sessionService,
             workspaces = workspaces,
             environment = environment,
-            providers = AppProviderResolver(settings, secrets) { name, provider -> vault.admits(name, provider) },
+            providers = AppProviderResolver(settings, secrets, { name, provider -> vault.admits(name, provider) }, { modelDirectory.auto(it) }),
             toolHosts = ::toolHost,
             gate = gate,
             approvals = approvals,
@@ -416,10 +422,22 @@ class AppContainer(val context: Context) {
             launch { resumeUnderContracts(interrupted) }
             guest.refresh()
             laya.refresh()
+            launch {
+                // Laya, when wanted, follows the tasks: installed once (kept in the agent's home, which updates keep),
+                // started when a task runs.
+                while (true) {
+                    if (settings.value.layaWanted) {
+                        if (laya.state.value == LayaSidecar.State.NOT_INSTALLED) laya.download()
+                        else if (sessionStore.list().any { it.state == SessionState.RUNNING }) laya.startForTask()
+                    }
+                    kotlinx.coroutines.delay(5_000)
+                }
+            }
             launch { startLogMonitor() }
             health.start(scope)
             serviceMonitor.start(scope)
             updater.start()
+            modelDirectory.start()
             // A write the app died in the middle of is settled by reading the remote once Linux is ready (§11).
             launch {
                 guest.state.first { it == GuestManager.State.Ready }

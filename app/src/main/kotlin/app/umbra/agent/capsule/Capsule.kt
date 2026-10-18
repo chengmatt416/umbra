@@ -29,51 +29,62 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 
 /**
- * The Material Capsule (architecture spec §3.1): a capsule fixed at the camera cutout — it never drifts along the
- * screen's edge — showing the orb and the task, or a mini island at rest. Tapping it expands Session and Step as
- * Previous / Current / Next, approvals answered in place, and controls; tapping it at rest opens the Smart Composer
- * without forcing the keyboard. Snapshot selection lassoes part of a screenshot with its accessibility text, returns
- * to the app underneath and attaches the selection to the bottom Quick Composer, which shares the draft and context
- * with Home.
+ * The Material Capsule (architecture spec §3.1, docs/design/redesign-2026-10.md §5): centred on the camera cutout,
+ * left zone | camera slot | right zone, the slot as wide as the camera plus a margin each side (read from the
+ * DisplayCutout), so the camera never covers what the capsule shows. Tapping it expands a card in place, under the
+ * camera — the task's Previous / Current / Next, what it waits for, a field to add instructions, and its controls;
+ * at rest the card is the Smart Composer. Swiping it toward the camera tucks it away (the task goes on); a long
+ * press selects on the screen, and the selection's controls are in a card at the top too.
  *
- * With Umbra's accessibility service on, the capsule is an accessibility overlay: it can sit at the camera above the
- * status bar and still be touched. Without it, it is an ordinary overlay just under the status bar (the status bar
- * would otherwise take its touches). Every window carries the title the accessibility backend skips, so agents never
- * see or press it.
+ * With Umbra's accessibility service on, the capsule is an accessibility overlay and sits at the camera above the
+ * status bar; without it, an ordinary overlay just under the status bar. Every window carries the title the
+ * accessibility backend skips, so agents never see or press it.
  */
 class Capsule(private val context: Context, private val container: AppContainer) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val screen = ScreenContext(context, container)
 
     internal val expanded = MutableStateFlow(false)
+    internal val tucked = MutableStateFlow(false)
+    /** The card's field has the keyboard (the window is focusable only then). */
+    internal val cardFocused = MutableStateFlow(false)
     internal val composerFocused = MutableStateFlow(false)
     internal val notice = MutableStateFlow<String?>(null)
     internal val busy = MutableStateFlow<String?>(null)
     internal val dismissedFailures = MutableStateFlow<Set<String>>(emptySet())
-    /** The camera hole the collapsed capsule wraps, when it sits at the camera; null otherwise. */
+    /** Where the capsule sits relative to the camera; null when there is no camera to wrap. */
     internal val hole = MutableStateFlow<Hole?>(null)
 
     /** What the companions and the activity feed show (docs/design/capsule-companion.md). */
     internal val watch = CapsuleWatch(container, scope, ::feel)
 
     /**
-     * [gapPx] is the room left for the camera (the hole and a margin each side), [heightPx] the capsule's height so it
-     * encloses the hole, [contentLeft] whether the orb and the task go left of the camera (the side with more room, so
-     * the status bar's icons stay visible), [belowPx] how far down an expanded capsule starts its content, and
-     * [labelMaxPx] how wide the task may be so the capsule keeps off the screen's edge and the clock or icons there.
+     * [centered]: the camera is near the top centre and the capsule is centred on it, [zonePx] wide on each side of
+     * the [gapPx] slot. Otherwise the camera is in a corner and the content goes on the side with more room
+     * ([contentLeft]), [labelMaxPx] wide at most. [heightPx] encloses the camera, [belowPx] is where an expanded
+     * card's content starts.
      */
-    internal data class Hole(val gapPx: Int, val heightPx: Int, val contentLeft: Boolean, val belowPx: Int, val labelMaxPx: Int)
+    internal data class Hole(
+        val gapPx: Int,
+        val heightPx: Int,
+        val contentLeft: Boolean,
+        val belowPx: Int,
+        val labelMaxPx: Int,
+        val centered: Boolean = false,
+        val zonePx: Int = 0,
+    )
 
     private var capsuleWindow: OverlayWindow? = null
     private var capsuleType = 0
     private var composerWindow: OverlayWindow? = null
     private var selectionWindow: OverlayWindow? = null
+    internal val selectionFocused = MutableStateFlow(false)
     private var selecting = false
-    private var composerBeforeSelection = false
     private var job: Job? = null
     private var enabled = false
 
@@ -96,18 +107,18 @@ class Capsule(private val context: Context, private val container: AppContainer)
                 combine(container.settings.flow.map { it.overlayEnabled }.distinctUntilChanged(), UmbraAccessibilityService.connected) { on, _ -> on }
                     .collect { on -> enabled = on; sync() }
             }
-            // A decision or a failure peeks in the capsule by itself; nothing switches the workspace (§3.1, Attention Focus).
+            // A decision peeks in the capsule by itself, tucked or not; nothing switches the workspace (§3.1).
             launch {
                 var seen = emptySet<String>()
                 container.approvals.pending.collect { list ->
                     val ids = list.map { it.id }.toSet()
-                    // Inside Umbra the Inbox shows it; the peek is for when the user is in another app.
+                    if ((ids - seen).isNotEmpty()) tucked.value = false
                     if ((ids - seen).isNotEmpty() && capsuleWindow != null && !container.ui.appVisible.value) expanded.value = true
                     seen = ids
                 }
             }
-            launch { expanded.collect { place() } }
-            // Opening Umbra folds the capsule away from its own screen, and (below the status bar) takes it off.
+            launch { expanded.collect { if (!it) focusCard(false); place() } }
+            launch { tucked.collect { place() } }
             launch { container.ui.appVisible.collect { visible -> if (visible) expanded.value = false; sync() } }
         }
     }
@@ -149,18 +160,33 @@ class Capsule(private val context: Context, private val container: AppContainer)
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             fitInsetsTypes = 0
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING or WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED
             title = UmbraOverlay.WINDOW_TITLE
         }
         capsuleType = type
         capsuleWindow = runCatching {
-            OverlayWindow(wm, params, host, onOutside = { if (expanded.value) expanded.value = false }) { CapsuleView(this, container) }
+            OverlayWindow(
+                wm, params, host,
+                onOutside = { if (expanded.value && !cardFocused.value) expanded.value = false },
+                onBack = { if (cardFocused.value) focusCard(false) else expanded.value = false; true },
+            ) { CapsuleView(this, container) }
         }.onFailure { notice.value = context.getString(R.string.cap_notice_capsule, it.message.orEmpty()) }.getOrNull()
         place()
     }
 
+    /** The camera hole, as the screen reports it (the exact path within the top cutout's rectangle), or null. */
+    private fun camera(metrics: android.view.WindowMetrics): AndroidRect? {
+        val cutout = metrics.windowInsets.displayCutout
+        val top = cutout?.boundingRectTop?.takeIf { !it.isEmpty } ?: return null
+        return cutout.cutoutPath?.let { path ->
+            val f = RectF().also { path.computeBounds(it, true) }
+            AndroidRect(floor(f.left).toInt(), floor(f.top).toInt(), ceil(f.right).toInt(), ceil(f.bottom).toInt()).takeIf { it.intersect(top) }
+        } ?: top
+    }
+
     /**
-     * Anchors the capsule on the camera (or the top centre when there is none), expanded or not. Collapsed at the
-     * camera it wraps the hole: the hole sits in a gap at one end, the orb and the task beside it.
+     * Anchors the capsule on the camera (or the top centre when there is none), collapsed, tucked or expanded. A camera
+     * near the middle gets the centred capsule: two equal zones beside a slot the camera's width plus 8 dp each side.
      */
     private fun place() {
         val window = capsuleWindow ?: return
@@ -168,17 +194,9 @@ class Capsule(private val context: Context, private val container: AppContainer)
         val metrics = wm.currentWindowMetrics
         val width = metrics.bounds.width()
         val statusTop = metrics.windowInsets.getInsets(WindowInsets.Type.statusBars()).top
-        val cutout = metrics.windowInsets.displayCutout
-        val top = cutout?.boundingRectTop?.takeIf { !it.isEmpty }
-        // The exact hole (the path), within the top cutout's reserved rectangle; the rectangle when there is no path.
-        val camera = top?.let { reserved ->
-            cutout.cutoutPath?.let { path ->
-                val f = RectF().also { path.computeBounds(it, true) }
-                AndroidRect(floor(f.left).toInt(), floor(f.top).toInt(), ceil(f.right).toInt(), ceil(f.bottom).toInt()).takeIf { it.intersect(reserved) }
-            } ?: reserved
-        }
+        val camera = camera(metrics)
         val overStatusBar = capsuleType == WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
-        val margin = dp(6)
+        val margin = dp(8)
         val pill = if (overStatusBar && camera != null) maxOf(dp(PILL_DP), camera.height() + dp(10)) else dp(PILL_DP)
         val y = when {
             !overStatusBar -> statusTop + dp(4)
@@ -186,31 +204,71 @@ class Capsule(private val context: Context, private val container: AppContainer)
             else -> ((statusTop - pill) / 2).coerceAtLeast(0)
         }
         val wrap = if (overStatusBar && camera != null) {
-            val contentLeft = camera.left > width - camera.right
-            // Room on the content's side, less a fifth of the screen kept clear for the status bar's corner, less the
-            // capsule's own padding, orb and chevron.
-            val room = (if (contentLeft) camera.left else width - camera.right) - margin - width / 5 - dp(68)
-            Hole(camera.width() + 2 * margin, pill, contentLeft, camera.bottom - y + dp(6), room.coerceAtLeast(dp(48)))
+            val centered = abs(camera.centerX() - width / 2) < width * 0.15f
+            val slot = camera.width() + 2 * margin
+            if (centered) {
+                // Each zone stops short of the status bar's clock and icons (a sixth of the screen kept clear at each end).
+                val room = minOf(camera.left, width - camera.right) - margin - width / 6
+                val zone = room.coerceIn(dp(40), dp(ZONE_DP))
+                Hole(slot, pill, contentLeft = true, belowPx = camera.bottom - y + dp(6), labelMaxPx = zone - dp(32), centered = true, zonePx = zone)
+            } else {
+                val contentLeft = camera.left > width - camera.right
+                val room = (if (contentLeft) camera.left else width - camera.right) - margin - width / 5 - dp(68)
+                Hole(slot, pill, contentLeft, camera.bottom - y + dp(6), room.coerceAtLeast(dp(48)))
+            }
         } else null
         hole.value = wrap
         window.update { p ->
-            p.y = y
             when {
-                expanded.value -> { p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; p.width = width - dp(24); p.x = 0 }
+                expanded.value -> {
+                    // The card's first row is the camera's row: the camera sits in the card's top edge, between its controls.
+                    p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                    p.width = width - dp(8)
+                    p.x = 0
+                    p.y = if (overStatusBar && camera != null) (camera.centerY() - dp(CARD_ROW_DP) / 2 - dp(10)).coerceAtLeast(0) else y
+                }
+                wrap != null && camera != null && wrap.centered -> {
+                    p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                    p.width = WindowManager.LayoutParams.WRAP_CONTENT
+                    p.x = camera.centerX() - width / 2
+                    p.y = y
+                }
                 wrap != null && camera != null -> {
                     p.width = WindowManager.LayoutParams.WRAP_CONTENT
+                    p.y = y
                     if (wrap.contentLeft) { p.gravity = Gravity.TOP or Gravity.END; p.x = width - (camera.right + margin) }
                     else { p.gravity = Gravity.TOP or Gravity.START; p.x = camera.left - margin }
                 }
-                else -> { p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; p.width = WindowManager.LayoutParams.WRAP_CONTENT; p.x = (top?.centerX() ?: (width / 2)) - width / 2 }
+                else -> {
+                    p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                    p.width = WindowManager.LayoutParams.WRAP_CONTENT
+                    p.x = (camera?.centerX() ?: (width / 2)) - width / 2
+                    p.y = y
+                }
             }
         }
     }
 
+    /** The card's field takes the keyboard only while the user types in it; otherwise the app keeps focus (§3.1). */
+    fun focusCard(on: Boolean) {
+        val window = capsuleWindow ?: return
+        if (cardFocused.value == on) return
+        cardFocused.value = on
+        window.update { p ->
+            p.flags = if (on) p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv() else p.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        }
+        if (!on) window.windowToken?.let { context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(it, 0) }
+    }
+
+    /** Tapped: expand (a tucked capsule comes back first). */
+    fun tap() {
+        if (tucked.value) { tucked.value = false; return }
+        expanded.value = !expanded.value
+    }
+
     /**
      * A light haptic for a new request or a completed task, felt through the capsule's window (so the system's
-     * touch-feedback setting applies). Only while the capsule is on screen and Umbra itself is not in front: the app
-     * shows the same thing, and a person looking at it needs no nudge.
+     * touch-feedback setting applies). Only while the capsule is on screen and Umbra itself is not in front.
      */
     private fun feel(signal: CapsuleWatch.Signal) {
         val window = capsuleWindow ?: return
@@ -223,21 +281,22 @@ class Capsule(private val context: Context, private val container: AppContainer)
         )
     }
 
+    internal fun haptic(feedback: Int) = capsuleWindow?.haptic(feedback)
+
     private fun closeCapsule() {
         capsuleWindow?.close()
         capsuleWindow = null
         expanded.value = false
+        cardFocused.value = false
     }
 
-    // ---- the bottom Quick Composer ----
+    // ---- the bottom Quick Composer (kept for a capsule below the status bar, where the card cannot type) ----
 
     /** Opens the Smart Composer at the bottom. The keyboard opens only when the user taps the field (§3.1). */
     fun openComposer(target: String? = container.ui.composerTarget.value) {
         container.ui.composerTarget.value = target
         expanded.value = false
         if (composerWindow != null) return
-        // Apps that guard against tapjacking (Settings, installers, permission screens) hide ordinary overlays; an
-        // accessibility overlay is not hidden, so the composer uses one whenever Umbra's service is on.
         val service = UmbraAccessibilityService.instance
         if (service == null && !Settings.canDrawOverlays(context)) {
             open(page = null, session = null)
@@ -265,7 +324,6 @@ class Capsule(private val context: Context, private val container: AppContainer)
         }.onFailure { notice.value = context.getString(R.string.cap_notice_composer, it.message.orEmpty()) }.getOrNull()
     }
 
-    /** The composer takes the keyboard only while the user is typing; otherwise it never steals focus from the app. */
     fun focusComposer(on: Boolean) {
         val window = composerWindow ?: return
         composerFocused.value = on
@@ -283,16 +341,17 @@ class Capsule(private val context: Context, private val container: AppContainer)
         notice.value = null
     }
 
-    /** Sends the shared draft and context to the composer's target. */
-    fun send(text: String, projectId: String?) {
+    /** Sends the shared draft and context: to [target] (a session), or as new work. Closes what it was typed in. */
+    fun send(text: String, projectId: String?, target: String? = container.ui.composerTarget.value) {
         if (busy.value != null) return
-        val target = container.ui.composerTarget.value
         busy.value = context.getString(R.string.cap_sending)
         scope.launch {
             try {
                 screen.send(text, target, projectId)
                 notice.value = null
                 closeComposer()
+                focusCard(false)
+                if (target == null) expanded.value = false
             } catch (e: Exception) {
                 notice.value = e.message ?: e::class.simpleName
             } finally {
@@ -304,15 +363,14 @@ class Capsule(private val context: Context, private val container: AppContainer)
     // ---- Snapshot selection ----
 
     /**
-     * Hides Umbra's windows, takes one screenshot with the accessibility tree, and lets the user lasso part of it.
-     * One snapshot, not live (§3.1). [delayMs] lets the app that asked get out of the way first.
+     * Hides Umbra's windows, takes one screenshot with the accessibility tree, and lets the user circle, tap or swipe
+     * over part of it; the selection's card sits at the top. One snapshot, not live (§3.1). [delayMs] lets the app
+     * that asked get out of the way first.
      */
     fun startSelection(delayMs: Long = 0) {
         if (selecting) return
         selecting = true
         scope.launch {
-            val composerWasOpen = composerWindow != null
-            composerBeforeSelection = composerWasOpen
             closeComposer()
             closeCapsule()
             // Let the windows and the keyboard leave the screen before the picture is taken.
@@ -322,8 +380,8 @@ class Capsule(private val context: Context, private val container: AppContainer)
             } catch (e: Exception) {
                 selecting = false
                 sync()
-                if (composerWasOpen || Settings.canDrawOverlays(context)) openComposer()
                 notice.value = e.message ?: e::class.simpleName
+                expanded.value = true
                 return@launch
             }
             val service = UmbraAccessibilityService.instance
@@ -337,12 +395,16 @@ class Capsule(private val context: Context, private val container: AppContainer)
                 gravity = Gravity.TOP or Gravity.START
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
                 fitInsetsTypes = 0
+                softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING or WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED
                 title = UmbraOverlay.WINDOW_TITLE
             }
-            val insets = host.getSystemService(WindowManager::class.java).currentWindowMetrics.windowInsets.getInsets(WindowInsets.Type.systemBars())
+            val wm = host.getSystemService(WindowManager::class.java)
+            val metrics = wm.currentWindowMetrics
+            val insets = metrics.windowInsets.getInsets(WindowInsets.Type.systemBars())
+            val cam = camera(metrics)
             selectionWindow = runCatching {
-                OverlayWindow(host.getSystemService(WindowManager::class.java), params, host, onBack = { finishSelection(null, null); true }) {
-                    SelectionView(capture, insets.top, insets.bottom, onDone = { stroke -> finishSelection(capture, stroke) }, onCancel = { finishSelection(null, null) })
+                OverlayWindow(wm, params, host, onBack = { if (selectionFocused.value) focusSelection(false) else cancelSelection(); true }) {
+                    SelectionView(this@Capsule, container, capture, insets.top, cam?.centerY(), onCancel = { cancelSelection() })
                 }
             }.onFailure {
                 selecting = false
@@ -352,17 +414,56 @@ class Capsule(private val context: Context, private val container: AppContainer)
         }
     }
 
-    /** Done: the selection becomes a context chip on the shared composer, and the app underneath is back. */
-    private fun finishSelection(capture: ScreenContext.Capture?, stroke: List<Point>?) {
-        scope.launch {
-            val chip = if (capture != null && !stroke.isNullOrEmpty()) runCatching { screen.select(capture, stroke) }.onFailure { notice.value = context.getString(R.string.cap_notice_read, it.message.orEmpty()) }.getOrNull() else null
-            selectionWindow?.close()
-            selectionWindow = null
-            selecting = false
-            chip?.let { container.ui.addContext(it) }
-            sync()
-            if (chip != null || notice.value != null || composerBeforeSelection) openComposer()
+    /** The selection card's field takes the keyboard only while the user types in it. */
+    fun focusSelection(on: Boolean) {
+        val window = selectionWindow ?: return
+        selectionFocused.value = on
+        window.update { p ->
+            p.flags = if (on) p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv() else p.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         }
+        if (!on) window.windowToken?.let { context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(it, 0) }
+    }
+
+    /** Reads what was selected into a context chip (a cropped picture and the accessibility text inside it). */
+    internal suspend fun selected(capture: ScreenContext.Capture, stroke: List<Point>) = screen.select(capture, stroke)
+
+    /**
+     * Sends [text] about the selection as a new task: the selection goes with it as context, the screen comes back,
+     * and the capsule shows the new task at once.
+     */
+    internal fun sendSelection(capture: ScreenContext.Capture, stroke: List<Point>?, text: String) {
+        if (busy.value != null) return
+        busy.value = context.getString(R.string.cap_sending)
+        scope.launch {
+            try {
+                // The selection is read now (from the frozen picture), then the screen comes back at once and the
+                // task starts behind it: the capsule shows it as soon as it exists.
+                val chip = if (!stroke.isNullOrEmpty()) selected(capture, stroke) else null
+                closeSelection()
+                chip?.let { container.ui.addContext(it) }
+                screen.send(text, null, container.ui.homeProject.value)
+                notice.value = null
+            } catch (e: Exception) {
+                notice.value = e.message ?: e::class.simpleName
+                closeSelection()
+                expanded.value = true
+            } finally {
+                busy.value = null
+            }
+        }
+    }
+
+    fun cancelSelection() {
+        scope.launch { closeSelection() }
+    }
+
+    private fun closeSelection() {
+        selectionWindow?.let { w -> w.windowToken?.let { context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(it, 0) } }
+        selectionWindow?.close()
+        selectionWindow = null
+        selectionFocused.value = false
+        selecting = false
+        sync()
     }
 
     // ---- links into the app ----
@@ -381,7 +482,11 @@ class Capsule(private val context: Context, private val container: AppContainer)
         try { block() } catch (e: Exception) { notice.value = e.message ?: e::class.simpleName }
     }
 
-    private companion object {
+    internal companion object {
         const val PILL_DP = 34
+        /** At most this wide on each side of the camera. */
+        const val ZONE_DP = 104
+        /** The card's first row, the one the camera sits in. */
+        const val CARD_ROW_DP = 40
     }
 }

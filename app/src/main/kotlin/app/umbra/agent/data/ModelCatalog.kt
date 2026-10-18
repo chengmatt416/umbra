@@ -24,7 +24,9 @@ class ModelCatalog(private val container: AppContainer) {
         for (p in container.settings.value.providers) p.apiKeyEnv?.takeIf { container.vault[it]?.scope != app.umbra.core.control.CredentialScope.NOT_FOR_AGENTS }
             ?.let { env -> container.secrets.get(env)?.let { secrets[env] = it } }
         if (secrets.isNotEmpty()) container.vault.recordExposure(secrets.keys, "the app's omp (model list)", "listing the models the keys unlock")
-        val out = container.guest.runtime.execWithSecrets(listOf("omp", "models", "--json"), secrets, timeoutMs = 120_000, maxOutputBytes = 8 * 1024 * 1024)
+        // The sessions' agent directory: the accounts signed in through omp's login are there.
+        val env = mapOf("PI_CODING_AGENT_DIR" to container.guestAgentFiles(OmpLogin.PROFILE).ompPath, "NO_COLOR" to "1")
+        val out = container.guest.runtime.execWithSecrets(listOf("omp", "models", "--json"), secrets, env = env, timeoutMs = 120_000, maxOutputBytes = 8 * 1024 * 1024)
         if (!out.ok) error("Could not list models: ${out.combined.take(300)}")
         return parse(out.stdout)
     }
