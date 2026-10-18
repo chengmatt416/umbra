@@ -203,4 +203,10 @@
     <string name="r_voice_busy">The speech recognizer is busy. Try again in a moment.</string>
     <string name="r_voice_stopped">Speech recognition stopped. Try again.</string>
     <string name="r_voice_unavailable">This phone has no speech recognition.</string>
+    <string name="r_rec_start">Record the screen</string>
+    <string name="r_rec_stop">Stop recording</string>
+    <string name="r_rec_chip">Screen recording %1$s</string>
+    <string name="r_rec_channel">Screen recording</string>
+    <string name="r_rec_notification">Umbra is recording the screen. Tap the Capsule to stop.</string>
+    <string name="r_rec_finishing">Getting the recording ready…</string>
 </resources>

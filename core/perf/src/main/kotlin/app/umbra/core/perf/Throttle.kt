@@ -129,7 +129,9 @@ class ThrottlePolicy(private val config: ThrottleConfig = ThrottleConfig()) {
     fun decisionFor(level: PressureLevel, reasons: List<String> = emptyList()): ThrottleDecision = when (level) {
         PressureLevel.NORMAL -> ThrottleDecision(level, config.normalSessions, config.normalExpensive, true, false, false, reasons)
         PressureLevel.ELEVATED -> ThrottleDecision(level, minOf(2, config.normalSessions), 1, true, false, false, reasons)
-        PressureLevel.HIGH -> ThrottleDecision(level, 1, 0, false, true, false, reasons)
+        // A task the person asks for is interactive work: under high pressure it still starts, one at a time (Android
+        // keeps its RAM nearly full by design, so "high" is a normal state on many phones); only critical holds it.
+        PressureLevel.HIGH -> ThrottleDecision(level, 1, 0, true, true, false, reasons)
         PressureLevel.CRITICAL -> ThrottleDecision(level, 1, 0, false, true, true, reasons)
     }
 }

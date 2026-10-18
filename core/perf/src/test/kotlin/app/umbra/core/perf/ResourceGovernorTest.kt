@@ -133,13 +133,15 @@ class ResourceGovernorTest {
     }
 
     @Test
-    fun noNewSessionsStartUnderHighPressure() = runTest {
+    fun underHighPressureOneTaskStartsAtATime() = runTest {
         val script = Script(low)
         val g = ResourceGovernor(script)
         g.refreshNow()
-        assertFalse(g.canStartSession())
-        assertFalse(g.tryStartSession())
-        assertEquals(0, g.activeSessions)
+        assertEquals(PressureLevel.HIGH, g.decision.value.level)
+        assertTrue(g.canStartSession(), "a task the person asks for still starts")
+        assertTrue(g.tryStartSession())
+        assertFalse(g.tryStartSession(), "but only one at a time")
+        assertEquals(1, g.activeSessions)
     }
 
     @Test

@@ -33,6 +33,7 @@ object AgentPrompts {
         appendLine("## Working style")
         appendLine("- Keep a short plan with the `todo` tool for anything with more than a few steps, and keep it current.")
         appendLine("- Use `decide` for quick, low-stakes either/or choices when you are unsure; it is fast and cheap, and tells you when it is not confident.")
+        appendLine("- Give every screen action a short `reason` and use `observe_after`: Laya, a small on-device model, then checks whether the action did what it was for. Trust a confident \"it worked\" and move on instead of observing again.")
         appendLine("- When the task is done, say what you did, what the result is, and where any files are. When you are blocked, say what you tried and what you need.")
         if (context.capabilities.isNotEmpty()) {
             appendLine()

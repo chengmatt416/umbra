@@ -127,6 +127,18 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             container.settings.update { it.copy(overlayEnabled = on) }
             buildJsonObject { put("on", on) }
         }
+        // The redesign's own switches, for recordings and tests: the mode, first-run setup, the theme.
+        "ui.set" -> {
+            container.settings.update { p ->
+                var q = p
+                (args["mode"] as? JsonPrimitive)?.content?.let { q = q.copy(uiMode = app.umbra.agent.data.UiMode.valueOf(it.uppercase())) }
+                (args["onboarded"] as? JsonPrimitive)?.content?.let { q = q.copy(onboarded = it == "true") }
+                (args["providers"] as? JsonPrimitive)?.content?.takeIf { it == "none" }?.let { q = q.copy(providers = emptyList(), defaultModel = null) }
+                q
+            }
+            val p = container.settings.value
+            buildJsonObject { put("mode", p.uiMode.name); put("onboarded", p.onboarded); put("providers", p.providers.size) }
+        }
         "approval_mode" -> {
             container.settings.update { it.copy(approvalMode = app.umbra.core.safety.ApprovalMode.valueOf(str(args, "mode").uppercase())) }
             buildJsonObject { put("mode", container.settings.value.approvalMode.name) }

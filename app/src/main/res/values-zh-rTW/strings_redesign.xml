@@ -190,4 +190,10 @@
     <string name="r_voice_busy">語音辨識忙碌中，請稍後再試。</string>
     <string name="r_voice_stopped">語音辨識停止了，請再試一次。</string>
     <string name="r_voice_unavailable">這支手機沒有語音辨識功能。</string>
+    <string name="r_rec_start">錄製螢幕</string>
+    <string name="r_rec_stop">停止錄製</string>
+    <string name="r_rec_chip">螢幕錄影 %1$s</string>
+    <string name="r_rec_channel">螢幕錄影</string>
+    <string name="r_rec_notification">Umbra 正在錄製螢幕。點一下膠囊就停止。</string>
+    <string name="r_rec_finishing">正在整理錄影…</string>
 </resources>

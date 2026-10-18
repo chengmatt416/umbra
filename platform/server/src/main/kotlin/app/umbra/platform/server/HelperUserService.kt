@@ -12,6 +12,12 @@ import java.security.SecureRandom
  * authenticated loopback socket.
  */
 class HelperUserService : Binder() {
+    init {
+        // Shizuku running as root starts this process as root; displays are created in the shell package's name,
+        // which only uid 2000 holds (a root process claiming it is refused on some phones), so become the shell user.
+        if (android.os.Process.myUid() == 0) ServerMain.dropPrivileges(SHELL_UID)
+    }
+
     private val token = ByteArray(16).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
     private val server = PrivilegedServer(0, token).also { it.start() }
 
@@ -26,5 +32,6 @@ class HelperUserService : Binder() {
 
     companion object {
         const val TRANSACTION_ENDPOINT = FIRST_CALL_TRANSACTION
+        private const val SHELL_UID = 2000
     }
 }

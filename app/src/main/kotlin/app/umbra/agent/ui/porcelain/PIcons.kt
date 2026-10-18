@@ -54,6 +54,8 @@ object PIcons {
     val mute = IconSpec(listOf("M2 9c6-6 14-6 20 0M5 12c4-4 10-4 14 0m-11 4c3-3 5-3 8 0M12 20h.01M2 2l20 20" to false))
     val target = IconSpec(listOf("M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0z" to false, "M7 12a5 5 0 1 0 10 0a5 5 0 1 0 -10 0z" to false, "M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0z" to false))
     val send = IconSpec(listOf("m22 2-7 20-4-9-9-4 20-7ZM11 13l11-11" to false))
+    /** A recording dot in its ring: the Capsule's screen recording. */
+    val record = IconSpec(listOf("M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0z" to false, "M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0z" to true))
     val mic = IconSpec(listOf("M12 2h0a3 3 0 0 1 3 3v6a3 3 0 0 1 -3 3h-0a3 3 0 0 1 -3 -3v-6a3 3 0 0 1 3 -3z" to false, "M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8" to false))
     val info = IconSpec(listOf("M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0z" to false, "M12 11v6m0-10h.01" to false))
     val menu2 = IconSpec(listOf("M3 5h18M3 12h18M3 19h18" to false))

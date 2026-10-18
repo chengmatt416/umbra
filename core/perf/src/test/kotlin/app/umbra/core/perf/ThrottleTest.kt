@@ -51,11 +51,12 @@ class ThrottleTest {
 
         val high = policy.decisionFor(PressureLevel.HIGH)
         assertEquals(1, high.maxConcurrentSessions)
-        assertFalse(high.allowNewSessions)
+        assertTrue(high.allowNewSessions, "a task the person asks for still starts, one at a time")
         assertFalse(high.allows(WorkClass.EXPENSIVE))
         assertTrue(high.allows(WorkClass.LIGHT))
 
         val critical = policy.decisionFor(PressureLevel.CRITICAL)
+        assertFalse(critical.allowNewSessions)
         assertFalse(critical.allows(WorkClass.LIGHT))
         assertTrue(critical.allows(WorkClass.INTERACTIVE), "the user can always act")
     }

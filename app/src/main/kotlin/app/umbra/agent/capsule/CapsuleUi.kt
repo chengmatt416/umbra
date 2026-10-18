@@ -195,6 +195,16 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
         CapsuleCard(capsule, container, current, headMood, steps, activity, trail, crew, sessions, clockNow, tick, moving, locked, failed, approvals, questions)
         return
     }
+    // Recording the screen: the capsule is its stop button, showing how long it has run (in the attention colour).
+    val recording by container.recorder.state.collectAsState()
+    val rec = recording
+    if (rec is ScreenRecorder.State.Recording || rec == ScreenRecorder.State.Finishing) {
+        val recNow by produceState(System.currentTimeMillis(), rec) { while (true) { value = System.currentTimeMillis(); delay(500) } }
+        val recLabel = stringResource(if (rec is ScreenRecorder.State.Recording) R.string.r_rec_stop else R.string.r_rec_finishing)
+        val recTime = (rec as? ScreenRecorder.State.Recording)?.let { ScreenRecorder.clock(recNow - it.startedAtMs) }
+        CollapsedPill(capsule, hole, false, false, recLabel, recTime, true, crew, Mood.WAITING, tick, moving, recLabel)
+        return
+    }
     CollapsedPill(capsule, hole, tucked, atRest, label, trailing, needsYou, crew, headMood, tick, moving, capsuleDescription)
 }
 
@@ -471,6 +481,7 @@ private fun CardField(capsule: Capsule, container: AppContainer, target: String?
         }
         if (draft.isBlank()) {
             RoundButton(PIcons.target, stringResource(R.string.cap_select_screen), size = 40.dp) { capsule.startSelection() }
+            RoundButton(PIcons.record, stringResource(R.string.r_rec_start), size = 40.dp) { capsule.startRecording() }
             if (canListen) RoundButton(PIcons.mic, stringResource(R.string.cap_speak), size = 40.dp) {
                 context.startActivity(Intent(context, VoiceInputActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }

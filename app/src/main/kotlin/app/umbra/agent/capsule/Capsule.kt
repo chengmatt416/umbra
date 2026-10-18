@@ -117,9 +117,65 @@ class Capsule(private val context: Context, private val container: AppContainer)
                     seen = ids
                 }
             }
+            // News peeks too: a question waits open; a task that finished or failed shows for a moment.
+            launch {
+                var seen = emptySet<String>()
+                container.questions.pending.collect { list ->
+                    val ids = list.map { "${it.sessionId}:${it.askedAtMs}" }.toSet()
+                    list.lastOrNull { "${it.sessionId}:${it.askedAtMs}" !in seen }?.let { container.ui.focus(it.sessionId); peek(hold = true) }
+                    seen = ids
+                }
+            }
+            launch {
+                val last = HashMap<String, app.umbra.core.session.SessionState>()
+                container.sessionStore.list().forEach { last[it.id] = it.state }
+                container.sessionStore.changes.collect { change ->
+                    val session = (change as? app.umbra.core.session.StoreChange.SessionChanged)?.session ?: return@collect
+                    val before = last.put(session.id, session.state)
+                    val ended = session.state == app.umbra.core.session.SessionState.COMPLETED || session.state == app.umbra.core.session.SessionState.FAILED
+                    if (before != null && before != session.state && ended) {
+                        container.ui.focus(session.id)
+                        peek(hold = false)
+                    }
+                }
+            }
             launch { expanded.collect { if (!it) focusCard(false); place() } }
             launch { tucked.collect { place() } }
             launch { container.ui.appVisible.collect { visible -> if (visible) expanded.value = false; sync() } }
+        }
+    }
+
+    /** Starts a screen recording: the card folds away so it is not in the picture, the capsule becomes its stop button. */
+    fun startRecording() {
+        expanded.value = false
+        container.recorder.request()
+    }
+
+    /** A recording became context: the card opens with it and its field, for what to do with it. */
+    fun showRecording() {
+        tucked.value = false
+        if (capsuleWindow == null || container.ui.appVisible.value) return
+        peekJob?.cancel()
+        expanded.value = true
+    }
+
+    private var peekJob: Job? = null
+
+    /**
+     * Opens the card by itself for news, tucked or not, unless Umbra itself is in front (it shows the news there).
+     * [hold]: it waits open (a question); otherwise it folds back after a moment unless the person has touched it.
+     */
+    private fun peek(hold: Boolean) {
+        tucked.value = false
+        if (capsuleWindow == null || container.ui.appVisible.value) return
+        val wasOpen = expanded.value
+        expanded.value = true
+        peekJob?.cancel()
+        if (hold || wasOpen) return
+        peekJob = scope.launch {
+            delay(PEEK_MS)
+            val waiting = container.approvals.pending.value.isNotEmpty() || container.questions.pending.value.isNotEmpty()
+            if (!cardFocused.value && !waiting) expanded.value = false
         }
     }
 
@@ -262,6 +318,8 @@ class Capsule(private val context: Context, private val container: AppContainer)
 
     /** Tapped: expand (a tucked capsule comes back first). */
     fun tap() {
+        // While the screen is being recorded, the capsule is its stop button.
+        if (container.recorder.state.value is ScreenRecorder.State.Recording) { container.recorder.stop(); return }
         if (tucked.value) { tucked.value = false; return }
         expanded.value = !expanded.value
     }
@@ -484,6 +542,8 @@ class Capsule(private val context: Context, private val container: AppContainer)
 
     internal companion object {
         const val PILL_DP = 34
+        /** How long news about a finished task stays open in the card when nobody touches it. */
+        const val PEEK_MS = 6_000L
         /** At most this wide on each side of the camera. */
         const val ZONE_DP = 104
         /** The card's first row, the one the camera sits in. */

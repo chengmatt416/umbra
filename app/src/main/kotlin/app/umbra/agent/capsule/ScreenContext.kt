@@ -108,6 +108,16 @@ class ScreenContext(private val context: Context, private val container: AppCont
             (if (nodes.isEmpty()) "\n(no text the accessibility tree could read)" else Lasso.elements(nodes, 3_000))
     }
 
+    /** One line about the screen now (the app in front, its window, its first words), or null when it cannot be read. */
+    suspend fun glance(): String? = withContext(Dispatchers.IO) {
+        if (!UmbraAccessibilityService.connected.value) return@withContext null
+        val snapshot = runCatching { container.accessibility.snapshot(SnapshotOptions(displayId = 0)) }.getOrNull() ?: return@withContext null
+        val front = frontApp(snapshot) ?: return@withContext null
+        val name = front.packageName?.let(::appName) ?: "an app"
+        val words = Lasso.elements(Lasso.readable(front), 220).lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" · ")
+        name + (front.title?.let { " (“$it”)" } ?: "") + if (words.isEmpty()) "" else ": $words"
+    }
+
     /** The app window under Umbra's own: not the status bar, not the keyboard, not Umbra. */
     private fun frontApp(snapshot: UiSnapshot): UiTree? {
         val ime = Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)?.substringBefore('/')
@@ -140,16 +150,23 @@ class ScreenContext(private val context: Context, private val container: AppCont
         val images = withContext(Dispatchers.IO) {
             chips.mapNotNull { chip -> chip.imagePath?.let { File(it) }?.takeIf { it.isFile }?.let { ContentBlock.Image(Base64.encodeToString(it.readBytes(), Base64.NO_WRAP), "image/jpeg") } }
         }
-        val id = if (sessionId != null) {
-            container.supervisor.send(sessionId, message, images)
-            sessionId
-        } else {
-            AgentService.start(context)
-            // Auto: Laya reads the task and picks the model it keeps (null: the default answers).
-            val model = container.autoModel.choose(text, pictures = images.isNotEmpty())
-            container.supervisor.submit(message, title = AgentSupervisor.titleOf(text), model = model, projectId = projectId, images = images).id
-        }
+        // The field empties as the message leaves (starting an agent can take a while); it comes back if sending fails.
+        val draft = container.ui.draft.value
         container.ui.saveDraft("")
+        val id = try {
+            if (sessionId != null) {
+                container.supervisor.send(sessionId, message, images)
+                sessionId
+            } else {
+                AgentService.start(context)
+                // Auto: Laya reads the task and picks the model it keeps (null: the default answers).
+                val model = container.autoModel.choose(text, pictures = images.isNotEmpty())
+                container.supervisor.submit(message, title = AgentSupervisor.titleOf(text), model = model, projectId = projectId, images = images).id
+            }
+        } catch (e: Exception) {
+            if (container.ui.draft.value.isEmpty()) container.ui.saveDraft(draft)
+            throw e
+        }
         container.ui.clearSent(chips)
         return id
     }

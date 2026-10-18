@@ -35,7 +35,7 @@ object ServerMain {
      * with: those of the adb shell on a development image, whatever the root manager hands out on a phone.
      * They are reported in the hello reply, so a missing `log` or `input` group is visible, not a surprise.
      */
-    private fun dropPrivileges(uid: Int): Boolean {
+    internal fun dropPrivileges(uid: Int): Boolean {
         if (android.os.Process.myUid() == uid) return true
         if (android.os.Process.myUid() != 0) {
             System.err.println("cannot switch to uid $uid: not running as root")

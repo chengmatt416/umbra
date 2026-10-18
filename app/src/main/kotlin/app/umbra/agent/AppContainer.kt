@@ -152,6 +152,9 @@ class AppContainer(val context: Context) {
 
     /** The Material Capsule and Snapshot selection (§3.1); shown by the foreground service while the user has it on. */
     val capsule by lazy { app.umbra.agent.capsule.Capsule(context, this) }
+
+    /** Screen recordings as context, started from the Capsule (capsule/ScreenRecorder). */
+    val recorder by lazy { app.umbra.agent.capsule.ScreenRecorder(context, this) }
     val secrets = SecretStore(context)
 
     /** Git tokens, in a store of their own: nothing that hands provider keys to sessions ever lists them. */
@@ -411,6 +414,26 @@ class AppContainer(val context: Context) {
         appVisible = ui.appVisible,
     )
 
+    /**
+     * The privileged helper (background displays, screen capture, silent updates) starts with the app wherever the
+     * phone lets it start without the person: Shizuku that may host it, or root. Looked at again every minute, since
+     * Shizuku can come up after the app and the helper ends with every reboot. (Without either, the one adb command
+     * in Settings stays the way.)
+     */
+    private suspend fun keepHelperUp() {
+        while (true) {
+            val up = runCatching { helper.client.isUp() }.getOrDefault(false)
+            if (!up) {
+                val viaShizuku = runCatching {
+                    shizuku.state() == ShizukuLauncher.State.READY &&
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { shizuku.startHelper() }
+                }.getOrDefault(false)
+                if (!viaShizuku && runCatching { rootShell.isAvailable() }.getOrDefault(false)) runCatching { helper.startWithRoot(rootShell) }
+            }
+            kotlinx.coroutines.delay(60_000)
+        }
+    }
+
     fun start() {
         scope.launch {
             // Terminals outlive the app: once Linux is ready, find the tmux servers and panes again (AC-001).
@@ -436,6 +459,7 @@ class AppContainer(val context: Context) {
                     kotlinx.coroutines.delay(5_000)
                 }
             }
+            launch { keepHelperUp() }
             launch { startLogMonitor() }
             health.start(scope)
             serviceMonitor.start(scope)

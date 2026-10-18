@@ -108,9 +108,32 @@ internal class ElementTargeting(private val decisions: DecisionRouter?) {
         }
         return when (val r = ElementResolver.resolve(snapshot, query, prefer, displayId)) {
             is Resolution.Unique -> Resolved.Node(r.node, treeOf(snapshot, r.node.id))
-            Resolution.NotFound -> Resolved.Failed(notFoundError(query, snapshot, displayId))
+            Resolution.NotFound -> nearest(query, op, snapshot, displayId, rationale) ?: Resolved.Failed(notFoundError(query, snapshot, displayId))
             is Resolution.Ambiguous -> disambiguate(query, op, r.candidates, snapshot, displayId, rationale)
         }
+    }
+
+    /**
+     * Nothing matched exactly (a label worded differently, a button whose text changed): Laya looks at the
+     * interactive elements that share a word with the query and picks the one meant, saving the model a round of
+     * reading the screen and trying again. Only Laya's own confident answer is used; otherwise "not found" stands.
+     */
+    private suspend fun nearest(query: ElementQuery, op: Operation, snapshot: UiSnapshot, displayId: Int?, rationale: String?): Resolved? {
+        val router = decisions ?: return null
+        val words = listOfNotNull(query.text, query.textContains, query.contentDescription)
+            .flatMap { it.lowercase().split(Regex("\\W+")) }.filter { it.length >= 3 }.toSet()
+        if (words.isEmpty()) return null
+        val nodes = snapshot.windows.filter { displayId == null || it.displayId == displayId }
+            .flatMap { it.nodes }.filter { it.isVisible && it.isInteractive }
+        val near = nodes.filter { n -> n.label?.lowercase()?.let { l -> words.any { it in l } } == true }.take(MAX_CANDIDATES)
+        if (near.isEmpty()) return null
+        val tree = treeOf(snapshot, near.first().id)
+        val screen = UiTreeRenderer.render(tree, UiTreeRenderer.Options(maxNodes = 30, onlyInteractive = true, includeBounds = false))
+        val intent = rationale ?: "${op.name.replace('_', ' ')} the element matching ${describeQuery(query)}"
+        val routed = router.chooseTarget(intent, screen, near.map { Candidate(it.id, describeWithPlace(it, tree)) })
+        if (!routed.trusted || routed.usedFallback) return null
+        val picked = near.first { it.id == routed.value!!.id }
+        return Resolved.Node(picked, tree, "nothing matched ${describeQuery(query)} exactly; Laya picked ${picked.id} (${describe(picked)}, confidence ${"%.2f".format(routed.confidence)})")
     }
 
     private suspend fun disambiguate(

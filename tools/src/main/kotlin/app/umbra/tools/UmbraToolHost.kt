@@ -65,7 +65,27 @@ class UmbraToolHost(
             timeoutMs = 10_000,
         )
         val after = pipeline.execute(observe, state)
-        return payload.copy(content = payload.content + ContentBlock.Text("\nScreen now:\n" + after.result.summary))
+        val check = checkWithLaya(call.request.rationale, exec.result.summary, after.result.summary)
+        return payload.copy(content = payload.content + ContentBlock.Text("\nScreen now:\n" + after.result.summary + check))
+    }
+
+    /**
+     * Laya's quick look at whether the action did what it was for (its `reason`), so the model can move on without
+     * reading the screen again itself. Only Laya's own answer is passed on: the built-in rules cannot judge a screen.
+     */
+    private suspend fun checkWithLaya(reason: String?, result: String, screen: String): String {
+        val router = decisions ?: return ""
+        if (reason.isNullOrBlank()) return ""
+        val routed = runCatching {
+            router.judge("The action achieved what it was for: $reason", "What was done: $result\nThe screen now:\n${screen.take(2_000)}")
+        }.getOrNull() ?: return ""
+        if (routed.usedFallback || routed.value == null) return ""
+        val confidence = "%.2f".format(routed.confidence)
+        return when {
+            !routed.trusted -> "\nLaya could not tell whether it worked (confidence $confidence); check the screen above."
+            routed.value == true -> "\nLaya's check: it worked (confidence $confidence)."
+            else -> "\nLaya's check: it did not do what it was for (confidence $confidence); look at the screen above."
+        }
     }
 
     private suspend fun decide(call: DecodedCall.Decide): HostToolPayload {
