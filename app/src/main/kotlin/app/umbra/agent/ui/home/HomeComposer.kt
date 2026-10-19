@@ -53,6 +53,7 @@ import app.umbra.agent.ui.porcelain.PIcon
 import app.umbra.agent.ui.porcelain.PIcons
 import app.umbra.agent.ui.porcelain.pc
 import app.umbra.agent.ui.porcelain.pcHue
+import kotlinx.coroutines.launch
 
 /**
  * The message field beside the menu button: the shared draft (the Capsule's composers show the same), the model the
@@ -60,7 +61,7 @@ import app.umbra.agent.ui.porcelain.pcHue
  * works (a project, or on its own).
  */
 @Composable
-fun HomeComposer(modifier: Modifier = Modifier, dimmed: Boolean = false, hint: String? = null, onAccounts: () -> Unit, onSend: (String) -> Unit) {
+fun HomeComposer(modifier: Modifier = Modifier, dimmed: Boolean = false, hint: String? = null, agent: app.umbra.agent.agents.AgentProfile? = null, onAccounts: () -> Unit, onSend: (String) -> Unit) {
     val container = LocalContext.current.container
     val context = LocalContext.current
     val draft by container.ui.draft.collectAsStateWithLifecycle()
@@ -112,7 +113,13 @@ fun HomeComposer(modifier: Modifier = Modifier, dimmed: Boolean = false, hint: S
             }, onSend = send)
         }
         // The words on top, what the next task takes underneath: the model, its effort, and in Power where it works.
+        // Talking to an agent, the chips are that agent's own model and effort.
         Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (agent != null) {
+                ModelChip(app.umbra.agent.ui.agents.modelName(agent.model), mono = power && agent.model != null) { picker = true }
+                EffortChip(app.umbra.agent.ui.agents.effortText(agent.effort)) { effortPicker = true }
+                return@Row
+            }
             ModelChip(modelLabel(prefs, container.modelDirectory), mono = power) { picker = true }
             EffortChip(effortLabel(prefs)) { effortPicker = true }
             // The project's name gives way first (it shortens), never the model or the effort.
@@ -124,6 +131,23 @@ fun HomeComposer(modifier: Modifier = Modifier, dimmed: Boolean = false, hint: S
                 }
             }
         }
+    }
+    if (agent != null) {
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        if (picker) ModelPicker(onDismiss = { picker = false }, onConnect = { picker = false; onAccounts() }, picked = agent.model, onPick = { ref ->
+            container.agents.store.update(agent.id) { it.copy(model = ref) }
+            agent.sessionId?.let { sid -> scope.launch { runCatching { container.supervisor.setModel(sid, ref) } } }
+        })
+        if (effortPicker) EffortPicker(
+            current = agent.effort, supported = container.modelDirectory.model(agent.model)?.efforts.orEmpty(), modelName = agent.model?.modelId, modelIsAuto = agent.model == null,
+            onChoose = { e ->
+                val effort = if (e.auto) null else e
+                container.agents.store.update(agent.id) { it.copy(effort = effort) }
+                agent.sessionId?.let { sid -> scope.launch { runCatching { container.supervisor.setEffort(sid, effort) } } }
+            },
+            onDismiss = { effortPicker = false },
+        )
+        return
     }
     if (picker) ModelPicker(onDismiss = { picker = false }, onConnect = { picker = false; onAccounts() })
     if (effortPicker) {

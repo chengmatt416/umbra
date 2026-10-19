@@ -134,6 +134,8 @@ data class Session(
     val handle: String? = null,
     /** The session that started this one as its subagent. */
     val spawnedBy: String? = null,
+    /** How a coding session uses a web browser: "auto", "dom" (headless, page structure) or "visual" (the desktop's screen). Null: auto. */
+    val browser: String? = null,
 )
 
 @Serializable

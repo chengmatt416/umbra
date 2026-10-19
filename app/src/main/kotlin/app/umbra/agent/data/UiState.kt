@@ -48,6 +48,9 @@ class UiState(context: Context) {
     /** A composer on Home is listening (its field became the voice panel); Home steps back around it. */
     val listening = MutableStateFlow(false)
 
+    /** A sheet Home should open ("agent", "coding"), asked for from elsewhere (the Capsule, a link). */
+    val homeSheet = MutableStateFlow<String?>(null)
+
     fun saveDraft(text: String) {
         draft.value = text
         prefs.edit().putString(KEY_DRAFT, text).apply()

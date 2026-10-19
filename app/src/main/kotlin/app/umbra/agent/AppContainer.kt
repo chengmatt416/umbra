@@ -266,20 +266,32 @@ class AppContainer(val context: Context) {
     fun toolHost(sessionId: String): UmbraToolHost = hosts.getOrPut(sessionId) {
         // The Linux desktop tools are offered only once the desktop pack is installed.
         val desktop = guest.desktopInstalled
-        UmbraToolHost(pipeline, sessionId, decisions, exclude = { it.startsWith("gui_") && !desktop }, extra = sessionTools.forSession(sessionId))
+        UmbraToolHost(
+            pipeline, sessionId, decisions, exclude = { it.startsWith("gui_") && !desktop },
+            // Every session can talk to the others; an agent's conversation also gets its memory, timers and the rest.
+            extra = sessionTools.forSession(sessionId) + (agents.store.bySession(sessionId)?.let { agentTools.forAgent(it.id) } ?: emptyList()),
+        )
     }
 
     /** Messages between sessions and agents (docs/design/agents-2026-10.md §3). */
-    val sessionBus by lazy { app.umbra.core.orchestrator.SessionBus(supervisor, sessionStore, scope) }
+    val sessionBus by lazy { app.umbra.core.orchestrator.SessionBus(supervisor, sessionStore, scope, agentSession = { id -> agents.store.get(id)?.sessionId }) }
+
+    /** The agents: profiles, their wake loop, their conversations (docs/design/agents-2026-10.md §6–§9). */
+    val agents by lazy { app.umbra.agent.agents.AgentRuntime(this) }
+    val agentTools by lazy { app.umbra.agent.agents.AgentTools(this) }
+    /** The message apps and how each is reached (docs/design/agents-2026-10.md §6). */
+    val connectors by lazy { app.umbra.agent.connectors.Connectors(this) }
+    /** The Telegram bot that reaches the agents from outside (§11). */
+    val telegram by lazy { app.umbra.agent.telegram.TelegramBot(this) }
 
     /** sessions_*, session_* and subagent_* tools, given to every session. */
-    val sessionTools by lazy { app.umbra.core.orchestrator.SessionTools(sessionBus, supervisor, sessionStore, resolveModel = ::resolveModelName) }
+    val sessionTools by lazy { app.umbra.core.orchestrator.SessionTools(sessionBus, supervisor, sessionStore, resolveModel = ::resolveModel) }
 
     /**
      * A model the agent named for a subagent: `provider/id`, or a bare id or name looked up among the connected
      * accounts' models and the user's own providers. Null when no connected account has it.
      */
-    private fun resolveModelName(name: String): app.umbra.core.session.ModelRef? {
+    fun resolveModel(name: String): app.umbra.core.session.ModelRef? {
         val prefs = settings.value
         val connected = prefs.providers.map { it.id }.toSet()
         if ('/' in name) {
@@ -386,6 +398,13 @@ class AppContainer(val context: Context) {
             },
             // A deleted task's terminals (its shells and the omp TUI) end with it instead of running on unseen.
             onDeleted = { id -> terminals.closeSession(id) },
+            // An agent's conversation is told its soul and memory each time its agent starts.
+            sessionPrompt = { s ->
+                if (s.kind != app.umbra.core.session.SessionKind.AGENT) null
+                else s.agentId?.let { id -> agents.store.get(id) }?.let { p ->
+                    app.umbra.agent.agents.AgentPrompt.of(p, agents.store.soul(p.id), agents.store.memory(p.id).entries(), agents.intervalMs(p)?.let { (it / 60_000).toInt() })
+                }
+            },
         ),
         scope = scope,
         governor = governor,
@@ -469,6 +488,8 @@ class AppContainer(val context: Context) {
             governor.start(scope)
             supervisor.start()
             sessionBus.start()
+            agents.start()
+            telegram.start()
             val interrupted = sessionStore.list().filter { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL }.map { it.id }
             supervisor.recover()
             launch { resumeUnderContracts(interrupted) }

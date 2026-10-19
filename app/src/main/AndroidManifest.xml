@@ -70,6 +70,7 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <receiver android:name=".agents.AgentWakeReceiver" android:exported="false" />
         <receiver
             android:name=".ApprovalActionReceiver"
             android:exported="false" />

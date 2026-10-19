@@ -186,6 +186,11 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
             onOpened()
         } else if (openPage != null) {
             if (openPage == app.umbra.agent.AgentService.PAGE_STOP_ALL) stopAll = true
+            else if (openPage.startsWith("agent/")) nav.navigate(openPage) { launchSingleTop = true }
+            else if (openPage == "new-coding" || openPage == "new-agent") {
+                container.ui.homeSheet.value = openPage.removePrefix("new-")
+                nav.navigate(Dest.Home.route) { popUpTo(Dest.Home.route) { inclusive = false }; launchSingleTop = true }
+            }
             else Dest.entries.firstOrNull { it.route == openPage }?.let { go(it) }
             onOpened()
         }
@@ -286,7 +291,24 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 },
             ) {
                 val back: () -> Unit = { if (!nav.popBackStack()) go(Dest.Home) }
-                composable(Dest.Home.route) { HomeScreen(onOpenSession = ::openSessionNow, entries = entries, onAccounts = { go(Dest.Accounts) }) }
+                composable(Dest.Home.route) { HomeScreen(onOpenSession = ::openSessionNow, onOpenAgent = { nav.navigate("agent/$it") { launchSingleTop = true } }, entries = entries, onAccounts = { go(Dest.Accounts) }) }
+                // Agents (docs/design/agents-2026-10.md, Figma 11): the chat, the agent's page and what hangs off it.
+                composable("agent/{id}") { e ->
+                    val id = e.arguments?.getString("id").orEmpty()
+                    app.umbra.agent.ui.agents.AgentChatScreen(id, onBack = back, onProfile = { nav.navigate("agent/$id/profile") }, onOpenSession = ::openSessionNow)
+                }
+                composable("agent/{id}/profile") { e ->
+                    app.umbra.agent.ui.agents.AgentProfileScreen(
+                        e.arguments?.getString("id").orEmpty(), onBack = back, onGo = { route -> nav.navigate(route) }, onAccounts = { go(Dest.Accounts) },
+                        onDeleted = { nav.popBackStack(Dest.Home.route, inclusive = false) },
+                    )
+                }
+                composable("agent/{id}/soul") { e -> app.umbra.agent.ui.agents.SoulScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
+                composable("agent/{id}/memory") { e -> app.umbra.agent.ui.agents.MemoryScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
+                composable("agent/{id}/timers") { e -> app.umbra.agent.ui.agents.TimersScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
+                composable("agent/{id}/wake") { e -> app.umbra.agent.ui.agents.WakeScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
+                composable("agent/{id}/channels") { e -> app.umbra.agent.ui.agents.ChannelsScreen(e.arguments?.getString("id").orEmpty(), onBack = back, onGo = { route -> nav.navigate(route) }) }
+                composable("agent/{id}/telegram") { e -> app.umbra.agent.ui.agents.TelegramScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
                 composable(Dest.Current.route) { CurrentScreen(onBack = back, onOpenSession = ::openSessionNow, onAccounts = { go(Dest.Accounts) }, onCommit = { go(Dest.Commit) }) }
                 composable(Dest.Accounts.route) { app.umbra.agent.ui.accounts.AccountsScreen(onBack = back, onGo = ::go) }
                 composable(Dest.Screens.route) { app.umbra.agent.ui.displays.ScreensScreen(onBack = back) }

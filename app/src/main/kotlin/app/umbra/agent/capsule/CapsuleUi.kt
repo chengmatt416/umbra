@@ -124,14 +124,14 @@ import kotlin.math.abs
 private val Ink get() = Color.Black
 /** The expanded card: the capsule's dark glaze. */
 private val Card get() = Brush.linearGradient(listOf(pcHue(0xFF18211C), pcHue(0xFF101612)))
-private val Line get() = pcHue(0xFF2A342E)
+internal val Line get() = pcHue(0xFF2A342E)
 internal val Label get() = pcHue(0xFFE9F3E6)
 internal val Small get() = pcHue(0xFFA4B9A4)
 internal val RowText get() = pcHue(0xFFD1E0D2)
 internal val Section get() = pcHue(0xFFA5C4A7)
 internal val Attention get() = pcHue(0xFFF9E5C3)
-private val Sage get() = pcHue(0xFF9DBBA1)
-private val Clay get() = pcHue(0xFFE7A493)
+internal val Sage get() = pcHue(0xFF9DBBA1)
+internal val Clay get() = pcHue(0xFFE7A493)
 private val LIVE = setOf(SessionState.RUNNING, SessionState.WAITING_APPROVAL, SessionState.PAUSED)
 
 /**
@@ -141,7 +141,9 @@ private val LIVE = setOf(SessionState.RUNNING, SessionState.WAITING_APPROVAL, Se
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
-    val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsState(emptyList())
+    val everySession by remember { container.sessionStore.sessionsFlow() }.collectAsState(emptyList())
+    // The Capsule follows coding tasks; an agent's conversation shows in its own block of the card.
+    val sessions = everySession.filter { it.kind == app.umbra.core.session.SessionKind.CODING }
     val approvals by container.approvals.pending.collectAsState()
     val questions by container.questions.pending.collectAsState()
     val focused by container.ui.focusedSession.collectAsState()
@@ -313,7 +315,7 @@ private fun CapsuleCard(
     moving: Boolean,
     locked: Boolean,
     failed: app.umbra.core.session.Session?,
-    approvals: List<app.umbra.core.safety.ApprovalRequest>,
+    allApprovals: List<app.umbra.core.safety.ApprovalRequest>,
     questions: List<app.umbra.core.orchestrator.QuestionBroker.Pending>,
 ) {
     val density = LocalDensity.current
@@ -325,6 +327,11 @@ private fun CapsuleCard(
     val power = prefs.uiMode != UiMode.SIMPLE
     val shape = RoundedCornerShape(32.dp)
     val maxBody = with(density) { (LocalResources.current.displayMetrics.heightPixels * 0.72f).toDp() }
+    // At rest the card is the default agent's (Figma 11.6): its last words, its approvals, a field that talks to it.
+    val agentMode = prefs.capsuleToAgent
+    val profiles by container.agents.store.profiles.collectAsState()
+    val agent = remember(profiles, prefs.defaultAgentId) { container.agents.defaultAgent() }
+    val approvals = if (current == null && agentMode && agent?.sessionId != null) allApprovals.filter { it.sessionId != agent.sessionId } else allApprovals
     Column(
         Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 18.dp)
             .shadow(16.dp, shape, ambientColor = Color.Black.copy(alpha = 0.3f), spotColor = Color.Black.copy(alpha = 0.4f))
@@ -396,10 +403,12 @@ private fun CapsuleCard(
                     DarkButton(stringResource(R.string.cap_dismiss), null) { capsule.dismissedFailures.value = dismissed + f.id }
                 }
             }
-            if (current == null) RecentTasks(capsule, sessions)
+            if (current == null && agentMode) AgentBlock(capsule, container, agent, allApprovals)
+            else if (current == null) RecentTasks(capsule, sessions)
         }
         Box(Modifier.height(12.dp))
-        CardField(capsule, container, current?.id)
+        CardField(capsule, container, current?.id, agent = if (current == null && agentMode) agent else null, agentMode = current == null && agentMode)
+        if (current == null && agentMode) AgentChips(capsule, container)
         if (current != null) {
             val screenLease = leases.values.firstOrNull { it.resourceId == "display:0" }
             val userHolds = screenLease?.owner == Principal.User && screenLease.state == LeaseState.ACTIVE
@@ -448,7 +457,7 @@ private fun RecentTasks(capsule: Capsule, sessions: List<app.umbra.core.session.
  * button beside it selects on the screen, then becomes Send once there is something to send.
  */
 @Composable
-private fun CardField(capsule: Capsule, container: AppContainer, target: String?) {
+private fun CardField(capsule: Capsule, container: AppContainer, target: String?, agent: app.umbra.agent.agents.AgentProfile? = null, agentMode: Boolean = false) {
     val context = LocalContext.current
     val draft by container.ui.draft.collectAsState()
     val chips by container.ui.draftContext.collectAsState()
@@ -470,7 +479,11 @@ private fun CardField(capsule: Capsule, container: AppContainer, target: String?
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.weight(1f).padding(vertical = 12.dp)) {
-            if (draft.isEmpty()) Text(stringResource(if (target != null) R.string.r_cap_more else R.string.r_composer_hint), fontSize = 14.5.sp, color = Small, maxLines = 1)
+            if (draft.isEmpty()) Text(
+                if (agentMode) stringResource(R.string.ag_tell, agent?.name ?: stringResource(R.string.ag_default_name))
+                else stringResource(if (target != null) R.string.r_cap_more else R.string.r_composer_hint),
+                fontSize = 14.5.sp, color = Small, maxLines = 1,
+            )
             val messageLabel = stringResource(R.string.cap_message)
             BasicTextField(
                 draft, { container.ui.saveDraft(it) },
@@ -488,7 +501,8 @@ private fun CardField(capsule: Capsule, container: AppContainer, target: String?
         } else {
             Box(
                 Modifier.size(44.dp).clip(CircleShape).background(Sage).clickable(enabled = busy == null, role = Role.Button, onClickLabel = stringResource(R.string.cap_send)) {
-                    capsule.send(draft.trim(), container.ui.homeProject.value, target = target)
+                    if (agentMode) capsule.sendToDefaultAgent(draft.trim())
+                    else capsule.send(draft.trim(), container.ui.homeProject.value, target = target)
                 },
                 contentAlignment = Alignment.Center,
             ) { PIcon(PIcons.send, size = 20.dp, tint = pcHue(0xFF1C2A22)) }
@@ -498,7 +512,7 @@ private fun CardField(capsule: Capsule, container: AppContainer, target: String?
 
 /** A button of the card: dark, 48 dp tall, sharing the row with the others. [primary] is the sage one. */
 @Composable
-private fun RowScope.DarkButton(text: String, icon: IconSpec?, tone: Color = Label, primary: Boolean = false, onClick: () -> Unit) {
+internal fun RowScope.DarkButton(text: String, icon: IconSpec?, tone: Color = Label, primary: Boolean = false, onClick: () -> Unit) {
     Row(
         Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(24.dp)).background(if (primary) Sage else Line).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
@@ -510,7 +524,7 @@ private fun RowScope.DarkButton(text: String, icon: IconSpec?, tone: Color = Lab
 }
 
 @Composable
-private fun RoundButton(icon: IconSpec, description: String, size: Dp = 32.dp, rotate: Boolean = false, onClick: () -> Unit) {
+internal fun RoundButton(icon: IconSpec, description: String, size: Dp = 32.dp, rotate: Boolean = false, onClick: () -> Unit) {
     Box(
         Modifier.size(size).clip(CircleShape).background(if (size <= 32.dp) Line else Color.Transparent).clickable(role = Role.Button, onClickLabel = description, onClick = onClick)
             .semantics { contentDescription = description },

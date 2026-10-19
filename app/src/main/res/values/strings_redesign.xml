@@ -245,4 +245,9 @@
     <string name="ses_kind_coding">coding</string>
     <string name="ses_menu_directory">Sessions on this phone…</string>
     <string name="ses_home_subagents">%1$d subagents</string>
+    <!-- Agents (docs/design/agents-2026-10.md) -->
+    <string name="ag_default_name">Umbra</string>
+    <string name="ag_stopped_cant_talk">%1$s is stopped. Start it again from its page to talk to it.</string>
+    <string name="ag_channel">Agents</string>
+    <string name="ag_channel_urgent">Agents: urgent</string>
 </resources>

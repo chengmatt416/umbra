@@ -92,6 +92,16 @@ data class AppPrefs(
      * its default; only older files get the "keep the model (or level) chosen before Auto" reading.
      */
     val prefsVersion: Int = 0,
+    /** The agent the Capsule and the Agents tab talk to by default. */
+    val defaultAgentId: String? = null,
+    /** Home's last tab: true for Agents, false for Coding. */
+    val homeAgents: Boolean = true,
+    /** Agents wake half as often in battery saver or when the phone is hot (42 °C or more). */
+    val agentSlowWhenHot: Boolean = true,
+    /** Below 15% battery (not charging) agents skip heartbeats: only messages, timers and rules wake them. */
+    val agentPauseLowBattery: Boolean = true,
+    /** The Capsule at rest talks to the default agent (its card, its field, circle-select); off: it starts coding sessions as before. */
+    val capsuleToAgent: Boolean = true,
 )
 
 /** Simple shows the essentials, Power adds the working views, Dev every control the app has, resources by hand. */

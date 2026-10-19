@@ -182,6 +182,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    implementation(libs.zxing.core)
     implementation(libs.kyant.backdrop)
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)

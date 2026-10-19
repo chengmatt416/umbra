@@ -26,7 +26,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
         )
         requestedSession = intent?.getStringExtra(EXTRA_SESSION)
-        requestedPage = intent?.getStringExtra(EXTRA_PAGE)
+        requestedPage = intent?.getStringExtra(EXTRA_AGENT)?.let { "agent/$it" } ?: intent?.getStringExtra(EXTRA_PAGE)
         installUpdateIfAsked(intent)
         setContent {
             PorcelainTheme {
@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         requestedSession = intent.getStringExtra(EXTRA_SESSION)
-        requestedPage = intent.getStringExtra(EXTRA_PAGE)
+        requestedPage = intent.getStringExtra(EXTRA_AGENT)?.let { "agent/$it" } ?: intent.getStringExtra(EXTRA_PAGE)
         installUpdateIfAsked(intent)
     }
 
@@ -70,6 +70,9 @@ class MainActivity : ComponentActivity() {
 
         /** A page to open by its route ("inbox", "emergency"), for the Capsule's links. */
         const val EXTRA_PAGE = "page"
+
+        /** An agent's id: opens its chat. */
+        const val EXTRA_AGENT = "agent"
 
         /** Set by the updater's notification: install the downloaded update. */
         const val EXTRA_INSTALL_UPDATE = "install_update"

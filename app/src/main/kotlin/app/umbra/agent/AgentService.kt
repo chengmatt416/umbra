@@ -102,6 +102,8 @@ class AgentService : Service() {
                 delay(15_000)
                 val busy = container.sessionStore.list().any { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL || it.state == SessionState.PAUSED } ||
                     container.approvals.pending.value.isNotEmpty() || container.questions.pending.value.isNotEmpty() ||
+                    // An agent runs all the time: its wake loop lives in this process.
+                    (container.agents.profiles().any { it.running } || container.telegram.active) ||
                     // The capsule is on screen: the process must stay for it to stay.
                     (container.settings.value.overlayEnabled && (android.provider.Settings.canDrawOverlays(this@AgentService) || app.umbra.platform.android.UmbraAccessibilityService.connected.value))
                 if (busy) idleSince = System.currentTimeMillis()

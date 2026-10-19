@@ -232,4 +232,9 @@
     <string name="ses_kind_coding">編碼</string>
     <string name="ses_menu_directory">這支手機上的工作階段…</string>
     <string name="ses_home_subagents">%1$d 個子代理</string>
+    <!-- 代理（docs/design/agents-2026-10.md） -->
+    <string name="ag_default_name">Umbra</string>
+    <string name="ag_stopped_cant_talk">%1$s 已停止。到它的頁面重新啟動後才能對話。</string>
+    <string name="ag_channel">代理</string>
+    <string name="ag_channel_urgent">代理：緊急</string>
 </resources>

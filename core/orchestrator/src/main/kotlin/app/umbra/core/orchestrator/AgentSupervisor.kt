@@ -25,6 +25,8 @@ data class SessionSpec(
     val handle: String? = null,
     val spawnedBy: String? = null,
     val agentId: String? = null,
+    /** The browser mode of a coding session (see [app.umbra.core.session.Session.browser]). */
+    val browser: String? = null,
 )
 
 /** Raised when the device cannot take another running session right now (spec §30). */
@@ -116,6 +118,7 @@ class AgentSupervisor(
         handle: String? = null,
         spawnedBy: String? = null,
         agentId: String? = null,
+        browser: String? = null,
     ): Session {
         val now = deps.clock.nowMs()
         val id = SessionIds.generate(now)
@@ -136,6 +139,7 @@ class AgentSupervisor(
             handle = handle,
             spawnedBy = spawnedBy,
             agentId = agentId,
+            browser = browser,
         )
         return deps.store.create(session)
     }
@@ -148,7 +152,7 @@ class AgentSupervisor(
         deps.admission(projectId, runningByProject())?.let { throw CapacityException(it) }
         deps.serviceAdmission(null)?.let { throw CapacityException(it) }
         governor?.decision?.value?.let { if (!it.allowNewSessions) throw CapacityException(capacityReason()) }
-        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId)
+        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser)
         try {
             send(session.id, request, images)
         } catch (e: Exception) {
@@ -176,7 +180,7 @@ class AgentSupervisor(
         if (problem == null && (images.isNotEmpty() || queued().isEmpty())) return launch(request, title, workspaceId, model, projectId, images, effort, spec)
         if (images.isNotEmpty()) throw CapacityException("$problem A request with a picture is not queued; send it again when a slot is free.")
         if (queued().size >= QUEUE_LIMIT) throw CapacityException("${problem ?: "Requests are waiting."} The queue is full ($QUEUE_LIMIT waiting); stop or wait for some.")
-        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId)
+        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser)
         val waiting = deps.store.update(session.id) { it.copy(queuedAtMs = deps.clock.nowMs()) } ?: session
         wake.trySend(Unit)
         return waiting
@@ -265,10 +269,28 @@ class AgentSupervisor(
      * Changes how hard a session thinks, from now on: kept on the session (a restarted process starts with it) and
      * given to its omp process when one is running. A session without a process takes it at its next start.
      */
-    suspend fun setEffort(sessionId: String, effort: app.umbra.core.session.Effort) {
+    suspend fun setEffort(sessionId: String, effort: app.umbra.core.session.Effort?) {
         deps.store.update(sessionId) { it.copy(effort = effort) } ?: throw app.umbra.core.session.SessionNotFoundException(sessionId)
-        live[sessionId]?.takeIf { it.isProcessAlive }?.withOmp { it.setThinkingLevel(effort.level) }
+        if (effort != null) live[sessionId]?.takeIf { it.isProcessAlive }?.withOmp { it.setThinkingLevel(effort.level) }
     }
+
+    /**
+     * Changes the model a session runs on, from now on (null: the default model at its next start). A running process
+     * switches at once.
+     */
+    suspend fun setModel(sessionId: String, model: ModelRef?) {
+        deps.store.update(sessionId) { it.copy(model = model) } ?: throw app.umbra.core.session.SessionNotFoundException(sessionId)
+        if (model != null) live[sessionId]?.takeIf { it.isProcessAlive }?.withOmp { it.setModel(model.provider, model.modelId) }
+    }
+
+    /**
+     * Lets the session's agent process go if nothing has used it for [minIdleMs] and no turn is running: an agent
+     * between wakes holds no memory (docs/design/agents-2026-10.md §8). Returns whether it did.
+     */
+    suspend fun releaseIfIdle(sessionId: String, minIdleMs: Long): Boolean = live[sessionId]?.releaseIfIdle(minIdleMs) ?: false
+
+    /** Whether an omp process runs for the session now. */
+    fun isProcessAlive(sessionId: String): Boolean = live[sessionId]?.isProcessAlive == true
 
     /** The session's last answer: the text of its latest assistant message (empty when it has none). */
     suspend fun finalText(sessionId: String): String {

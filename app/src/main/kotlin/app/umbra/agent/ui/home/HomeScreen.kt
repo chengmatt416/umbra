@@ -57,6 +57,9 @@ import app.umbra.agent.ui.shell.LocalChromeBottom
 import app.umbra.agent.ui.shell.MenuButton
 import app.umbra.agent.ui.shell.MenuEntries
 import app.umbra.agent.ui.shell.MenuEntry
+import app.umbra.agent.ui.shell.MenuPills
+import app.umbra.agent.ui.agents.agentRows
+import app.umbra.agent.ui.porcelain.PIcons
 import app.umbra.agent.ui.shell.MenuScrim
 import app.umbra.core.safety.ApprovalDecision
 import app.umbra.core.safety.ApprovalRequest
@@ -72,13 +75,18 @@ import kotlinx.coroutines.launch
  * the message field and the menu button. Nothing decorative: an empty Home is one sentence above the field.
  */
 @Composable
-fun HomeScreen(onOpenSession: (String) -> Unit, entries: List<MenuEntry>, onAccounts: () -> Unit) {
+fun HomeScreen(onOpenSession: (String) -> Unit, onOpenAgent: (String) -> Unit, entries: List<MenuEntry>, onAccounts: () -> Unit) {
     val container = LocalContext.current.container
     val scope = rememberCoroutineScope()
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
     val all by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
-    // Subagents are shown under the session that started them (its page), not as tasks of their own.
-    val sessions = all.filter { it.kind != app.umbra.core.session.SessionKind.SUBAGENT }
+    val profiles by container.agents.store.profiles.collectAsStateWithLifecycle()
+    val pairs by container.agents.store.pairsFlow.collectAsStateWithLifecycle()
+    val sheet by container.ui.homeSheet.collectAsStateWithLifecycle()
+    val agentsTab = prefs.homeAgents
+    val defaultAgent = remember(profiles, prefs.defaultAgentId) { container.agents.defaultAgent() }
+    // Coding tasks only: subagents are shown under the session that started them, an agent's conversation is its chat.
+    val sessions = all.filter { it.kind == app.umbra.core.session.SessionKind.CODING }
     val subagents = all.filter { it.kind == app.umbra.core.session.SessionKind.SUBAGENT && !it.state.isTerminal }.groupingBy { it.spawnedBy }.eachCount()
     val approvals by container.approvals.pending.collectAsStateWithLifecycle()
     val questions by container.questions.pending.collectAsStateWithLifecycle()
@@ -103,11 +111,20 @@ fun HomeScreen(onOpenSession: (String) -> Unit, entries: List<MenuEntry>, onAcco
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.fillMaxSize().statusBarsPadding(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 120.dp + LocalChromeBottom.current),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 120.dp + LocalChromeBottom.current),
+            verticalArrangement = Arrangement.spacedBy(if (agentsTab) 2.dp else 10.dp),
         ) {
-            if (!empty) item(key = "title") {
-                Text(stringResource(R.string.r_home_title), Modifier.padding(start = 4.dp, bottom = 4.dp), fontFamily = P.serif, fontSize = 30.sp, color = P.ink)
+            // Agents | Coding (Figma 10.1/10.2); the tab remembers the last choice.
+            item(key = "tabs") {
+                app.umbra.agent.ui.porcelain.Segmented(
+                    listOf(true to stringResource(R.string.ag_tab_agents), false to stringResource(R.string.ag_tab_coding)),
+                    agentsTab, { on -> container.settings.update { it.copy(homeAgents = on) } }, Modifier.fillMaxWidth().padding(bottom = 6.dp), fill = true,
+                )
+            }
+            if (agentsTab) {
+                error?.let { item(key = "error") { Callout(it, Tone.Danger) } }
+                agentRows(profiles, pairs, onOpenAgent) { container.ui.homeSheet.value = "agent" }
+                return@LazyColumn
             }
             if (power && !empty) item(key = "filters") {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -135,7 +152,7 @@ fun HomeScreen(onOpenSession: (String) -> Unit, entries: List<MenuEntry>, onAcco
         }
 
         val listening by container.ui.listening.collectAsStateWithLifecycle()
-        if (empty && !listening) {
+        if (empty && !listening && !agentsTab) {
             Text(
                 stringResource(R.string.r_home_empty),
                 Modifier.align(Alignment.BottomStart).navigationBarsPadding().imePadding().padding(start = 24.dp, end = 24.dp, bottom = if (power) 140.dp else 100.dp),
@@ -148,19 +165,36 @@ fun HomeScreen(onOpenSession: (String) -> Unit, entries: List<MenuEntry>, onAcco
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
             horizontalAlignment = if (prefs.leftHanded) Alignment.Start else Alignment.End,
         ) {
-            MenuEntries(menu, entries.map { e -> MenuEntry(e.icon, e.label) { menu = false; e.onClick() } }, prefs.leftHanded, Modifier.padding(bottom = 16.dp))
+            MenuEntries(menu, entries.map { e -> MenuEntry(e.icon, e.label) { menu = false; e.onClick() } }, prefs.leftHanded, Modifier.padding(bottom = 10.dp))
+            MenuPills(
+                menu,
+                coding = MenuEntry(PIcons.terminal, stringResource(R.string.ag_pill_coding)) { menu = false; container.ui.homeSheet.value = "coding" },
+                agent = MenuEntry(PIcons.bot, stringResource(R.string.ag_pill_agent)) { menu = false; container.ui.homeSheet.value = "agent" },
+                leftHanded = prefs.leftHanded, modifier = Modifier.padding(bottom = 16.dp),
+            )
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (prefs.leftHanded) MenuButton(menu, { menu = !menu })
+                val toAgent = if (agentsTab) defaultAgent else null
                 HomeComposer(
                     Modifier.weight(1f),
                     dimmed = menu,
+                    hint = if (agentsTab) stringResource(R.string.ag_send_to, defaultAgent?.name ?: stringResource(R.string.ag_default_name)) else null,
+                    agent = toAgent,
                     onAccounts = onAccounts,
                     onSend = { text ->
                         scope.launch {
                             try {
-                                val id = container.capsule.screen.send(text, sessionId = null, projectId = container.ui.homeProject.value, fromCapsule = false)
-                                error = null
-                                onOpenSession(id)
+                                if (agentsTab) {
+                                    // The Agents tab talks to the default agent (made on first need) and opens its chat.
+                                    val agent = defaultAgent ?: container.agents.ensureDefault()
+                                    container.capsule.screen.send(text, sessionId = null, projectId = null, fromCapsule = false, toAgent = agent.id)
+                                    error = null
+                                    onOpenAgent(agent.id)
+                                } else {
+                                    val id = container.capsule.screen.send(text, sessionId = null, projectId = container.ui.homeProject.value, fromCapsule = false)
+                                    error = null
+                                    onOpenSession(id)
+                                }
                             } catch (e: Exception) {
                                 error = e.message ?: e::class.simpleName
                             }
@@ -170,6 +204,18 @@ fun HomeScreen(onOpenSession: (String) -> Unit, entries: List<MenuEntry>, onAcco
                 if (!prefs.leftHanded) MenuButton(menu, { menu = !menu })
             }
         }
+    }
+    when (sheet) {
+        "agent" -> app.umbra.agent.ui.agents.NewAgentSheet(
+            onDismiss = { container.ui.homeSheet.value = null },
+            onCreated = { id -> container.ui.homeSheet.value = null; container.settings.update { it.copy(homeAgents = true) }; onOpenAgent(id) },
+            onAccounts = { container.ui.homeSheet.value = null; onAccounts() },
+        )
+        "coding" -> app.umbra.agent.ui.agents.NewCodingSheet(
+            onDismiss = { container.ui.homeSheet.value = null },
+            onStarted = { id -> container.ui.homeSheet.value = null; onOpenSession(id) },
+            onAccounts = { container.ui.homeSheet.value = null; onAccounts() },
+        )
     }
 }
 

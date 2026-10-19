@@ -65,18 +65,20 @@ fun modelLabel(prefs: AppPrefs, directory: ModelDirectory): String {
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun ModelPicker(onDismiss: () -> Unit, onConnect: () -> Unit) {
+fun ModelPicker(onDismiss: () -> Unit, onConnect: () -> Unit, picked: ModelRef? = null, onPick: ((ModelRef?) -> Unit)? = null) {
     val container = LocalContext.current.container
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
     val directory by container.modelDirectory.directory.collectAsStateWithLifecycle()
     val updatedAt by container.modelDirectory.updatedAtMs.collectAsStateWithLifecycle()
     var other by remember { mutableStateOf(false) }
     val connected = prefs.providers.map { it.id }.toSet()
+    // [onPick]: the choice is for one agent or session, not the default of new tasks.
     val choose = { ref: ModelRef? ->
-        container.settings.update { if (ref == null) it.copy(autoModel = true) else it.copy(autoModel = false, defaultModel = ref) }
+        if (onPick != null) onPick(ref)
+        else container.settings.update { if (ref == null) it.copy(autoModel = true) else it.copy(autoModel = false, defaultModel = ref) }
         onDismiss()
     }
-    val chosen = if (prefs.autoModel) null else prefs.defaultModel
+    val chosen = if (onPick != null) picked else if (prefs.autoModel) null else prefs.defaultModel
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = pc(0xFFFBFDF7)) {
         Column(Modifier.fillMaxWidth().heightIn(max = 620.dp).verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 28.dp)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {

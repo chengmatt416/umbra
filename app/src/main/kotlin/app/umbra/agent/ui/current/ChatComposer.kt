@@ -236,7 +236,7 @@ private fun isCommand(text: String, commands: List<OmpSlashCommand>): Boolean {
 }
 
 /** A picked picture, scaled to at most 1600 px and JPEG-encoded, as a prompt image. */
-private suspend fun encodePicture(context: Context, uri: Uri): ContentBlock.Image? = withContext(Dispatchers.IO) {
+internal suspend fun encodePicture(context: Context, uri: Uri): ContentBlock.Image? = withContext(Dispatchers.IO) {
     try {
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@withContext null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

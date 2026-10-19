@@ -29,6 +29,8 @@ class SessionBus(
     private val store: SessionStore,
     private val scope: CoroutineScope,
     private val clock: Clock = Clock.System,
+    /** The conversation (session id) of an agent, for reports from coding sessions it started or was given. */
+    private val agentSession: suspend (agentId: String) -> String? = { null },
 ) {
     /** One message on the bus. [replyTo] is the id of the message this one answers. */
     data class Envelope(
@@ -64,7 +66,11 @@ class SessionBus(
         scope.launch {
             store.changes.collect { change ->
                 val s = (change as? StoreChange.SessionChanged)?.session ?: return@collect
-                val parent = s.spawnedBy ?: return@collect
+                // Who hears about this session's turns: the session that started it as a subagent, or the agent a coding
+                // session works for (docs/design/agents-2026-10.md §9).
+                val parent = s.spawnedBy
+                    ?: s.agentId?.takeIf { s.kind == SessionKind.CODING }?.let { runCatching { agentSession(it) }.getOrNull() }
+                    ?: return@collect
                 if (s.state != SessionState.COMPLETED && s.state != SessionState.FAILED) return@collect
                 // One report per finished turn: the state can be written more than once as a turn settles.
                 val turnEnd = s.updatedAtMs
@@ -139,8 +145,15 @@ class SessionBus(
         if (parent.state == SessionState.STOPPED) return
         val answer = supervisor.finalText(child.id).ifBlank { child.lastError ?: "(no answer)" }
         val state = if (child.state == SessionState.FAILED) "failed" else "finished"
-        val text = "[Subagent ${address(child)} $state]\n" + answer.take(REPORT_LIMIT) +
-            "\n\n(Read more with subagent_status, write to it with subagent_send.)"
+        val text = if (child.kind == SessionKind.SUBAGENT) {
+            "[Subagent ${address(child)} $state]\n" + answer.take(REPORT_LIMIT) +
+                "\n\n(Read more with subagent_status, write to it with subagent_send.)"
+        } else {
+            // A coding session reporting to its agent: what it was, how it ended, what it said.
+            val minutes = ((clock.nowMs() - child.createdAtMs) / 60_000).coerceAtLeast(0)
+            "[Report from ${address(child)} · $state · ${child.title.take(80)} · ${minutes} min]\n" + answer.take(REPORT_LIMIT) +
+                "\n\n(This is a coding session's report. Tell the user what matters, and keep what you learned about them in memory.)"
+        }
         supervisor.send(parent.id, text, whileRunning = StreamingBehavior.FOLLOW_UP)
         mutableTraffic.tryEmit(Envelope("m" + counter.incrementAndGet(), child.id, parent.id, answer, 1, clock.nowMs(), kind = Kind.REPORT))
     }

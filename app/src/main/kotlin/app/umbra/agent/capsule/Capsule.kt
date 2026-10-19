@@ -45,7 +45,7 @@ import kotlin.math.floor
  * status bar; without it, an ordinary overlay just under the status bar. Every window carries the title the
  * accessibility backend skips, so agents never see or press it.
  */
-class Capsule(private val context: Context, private val container: AppContainer) {
+class Capsule(internal val context: Context, private val container: AppContainer) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val screen = ScreenContext(context, container)
 
@@ -400,16 +400,34 @@ class Capsule(private val context: Context, private val container: AppContainer)
     }
 
     /** Sends the shared draft and context: to [target] (a session), or as new work. Closes what it was typed in. */
-    fun send(text: String, projectId: String?, target: String? = container.ui.composerTarget.value) {
+    fun send(text: String, projectId: String?, target: String? = container.ui.composerTarget.value, agent: String? = null) {
         if (busy.value != null) return
         busy.value = context.getString(R.string.cap_sending)
         scope.launch {
             try {
-                screen.send(text, target, projectId)
+                screen.send(text, target, projectId, toAgent = agent)
                 notice.value = null
                 closeComposer()
                 focusCard(false)
                 if (target == null) expanded.value = false
+            } catch (e: Exception) {
+                notice.value = e.message ?: e::class.simpleName
+            } finally {
+                busy.value = null
+            }
+        }
+    }
+
+    /** The card's field at rest: the words go to the default agent (made on first need); the card stays open for its answer. */
+    fun sendToDefaultAgent(text: String) {
+        if (busy.value != null) return
+        busy.value = context.getString(R.string.cap_sending)
+        scope.launch {
+            try {
+                val agent = container.agents.ensureDefault()
+                screen.send(text, null, null, toAgent = agent.id)
+                notice.value = null
+                focusCard(false)
             } catch (e: Exception) {
                 notice.value = e.message ?: e::class.simpleName
             } finally {
@@ -499,7 +517,10 @@ class Capsule(private val context: Context, private val container: AppContainer)
                 val chip = if (!stroke.isNullOrEmpty()) selected(capture, stroke) else null
                 closeSelection()
                 chip?.let { container.ui.addContext(it) }
-                screen.send(text, null, container.ui.homeProject.value)
+                // With no task in focus, what was selected goes to the default agent (made on first need).
+                val focusedTask = container.ui.focusedSession.value?.let { container.sessionStore.get(it) }?.takeIf { !it.state.isTerminal && it.kind == app.umbra.core.session.SessionKind.CODING }
+                if (focusedTask != null || !container.settings.value.capsuleToAgent) screen.send(text, null, container.ui.homeProject.value)
+                else screen.send(text, null, null, toAgent = container.agents.ensureDefault().id)
                 notice.value = null
             } catch (e: Exception) {
                 android.util.Log.w("Capsule", "sending a selection failed", e)

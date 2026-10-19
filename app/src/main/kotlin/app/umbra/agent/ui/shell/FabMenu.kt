@@ -113,6 +113,43 @@ fun MenuEntries(open: Boolean, entries: List<MenuEntry>, leftHanded: Boolean, mo
     }
 }
 
+/**
+ * The menu's last row (Figma 10.3): two equal pills side by side, a new coding session and a new agent, nearest the
+ * thumb; swapped for the left hand. They grow in with the entries above them.
+ */
+@Composable
+fun MenuPills(open: Boolean, coding: MenuEntry, agent: MenuEntry, leftHanded: Boolean, modifier: Modifier = Modifier) {
+    val state = remember { MutableTransitionState(false) }
+    LaunchedEffect(open) { state.targetState = open }
+    AnimatedVisibility(
+        state, modifier,
+        enter = fadeIn(tween(140)) + slideInVertically(spring(dampingRatio = 0.72f, stiffness = 520f)) { it / 2 } + scaleIn(spring(dampingRatio = 0.7f, stiffness = 520f), initialScale = 0.9f),
+        exit = fadeOut(tween(90)) + slideOutVertically(tween(120)) { it / 3 } + scaleOut(tween(120), targetScale = 0.92f),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            val pills = if (leftHanded) listOf(agent, coding) else listOf(coding, agent)
+            pills.forEach { entry ->
+                val shape = RoundedCornerShape(28.dp)
+                Row(
+                    Modifier
+                        .height(56.dp)
+                        .shadow(6.dp, shape, ambientColor = pcHue(0x2222352D), spotColor = pcHue(0x3322352D))
+                        .clip(shape)
+                        .background(P.accent3)
+                        .clickable(role = Role.Button, onClick = entry.onClick)
+                        .padding(start = 16.dp, end = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PIcon(PIcons.plus, size = 18.dp, tint = P.ink)
+                    PIcon(entry.icon, size = 20.dp, tint = P.ink)
+                    Text(entry.label, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = P.ink, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
 /** What covers the page while the menu is open: the page stays faintly visible, a tap anywhere closes the menu. */
 @Composable
 fun MenuScrim(open: Boolean, onClose: () -> Unit) {

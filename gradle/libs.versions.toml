@@ -23,6 +23,7 @@ serialization = "1.11.0"
 
 # Networking
 okhttp = "5.5.0"
+zxing = "3.5.3"
 # Liquid glass (refraction, blur, rim light) for the Liquid theme; Apache-2.0, github.com/Kyant0/AndroidLiquidGlass
 backdrop = "2.0.1"
 
@@ -71,6 +72,7 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 
 # Networking
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 kyant-backdrop = { module = "io.github.kyant0:backdrop", version.ref = "backdrop" }
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
 

@@ -142,7 +142,18 @@ class ScreenContext(private val context: Context, private val container: AppCont
      * [sessionId] when given, otherwise as new work in [projectId]. Returns the session's id. The draft and the sent
      * chips are cleared only once the message went.
      */
-    suspend fun send(text: String, sessionId: String?, projectId: String?, fromCapsule: Boolean = true): String {
+    suspend fun send(
+        text: String,
+        sessionId: String?,
+        projectId: String?,
+        fromCapsule: Boolean = true,
+        /** For a new coding session chosen in its sheet: the model and effort (null: Auto decides), its browser mode, the agent it reports to. */
+        model: app.umbra.core.session.ModelRef? = null,
+        effort: app.umbra.core.session.Effort? = null,
+        browser: String? = null,
+        reportTo: String? = null,
+        toAgent: String? = null,
+    ): String {
         val chips = container.ui.draftContext.value
         val blocks = ArrayList<String>()
         chips.forEach { chip ->
@@ -159,14 +170,22 @@ class ScreenContext(private val context: Context, private val container: AppCont
         val draft = container.ui.draft.value
         container.ui.saveDraft("")
         val id = try {
-            if (sessionId != null) {
+            if (toAgent != null) {
+                // To an agent: its conversation takes the words (with what was selected), the agent decides the rest.
+                container.agents.talk(toAgent, message, images)
+                container.agents.store.get(toAgent)?.sessionId ?: toAgent
+            } else if (sessionId != null) {
                 container.supervisor.send(sessionId, message, images)
                 sessionId
             } else {
                 AgentService.start(context)
                 // Auto: Laya reads the task and picks the model and effort it keeps (null: the defaults answer).
-                val choice = container.autoModel.choose(text, pictures = images.isNotEmpty())
-                container.supervisor.submit(message, title = AgentSupervisor.titleOf(text), model = choice.model, projectId = projectId, images = images, effort = choice.effort).id
+                val choice = if (model != null && effort != null) null else container.autoModel.choose(text, pictures = images.isNotEmpty())
+                container.supervisor.submit(
+                    message, title = AgentSupervisor.titleOf(text), model = model ?: choice?.model, projectId = projectId, images = images,
+                    effort = effort ?: choice?.effort,
+                    spec = app.umbra.core.orchestrator.SessionSpec(agentId = reportTo, browser = browser),
+                ).id
             }
         } catch (e: Exception) {
             if (container.ui.draft.value.isEmpty()) container.ui.saveDraft(draft)
