@@ -144,7 +144,7 @@ desktop installers or the unfinished connector methods. Account-level message de
 
 Verification for this change:
 
-* 58 core session tests, 23 workspace tests, 48 orchestrator tests and 53 app tests passed. The orchestrator drives
+* 58 core session tests, 23 workspace tests, 48 orchestrator tests and 54 app tests passed. The orchestrator drives
   the real pinned omp against a scripted model; no provider credentials or real account sends are used.
 * Rooted-device mount test passed: selected file/dir binds, external atomic replacement, and disconnect preserving
   originals. Native root mounts reject changed/symlinked paths.
@@ -153,5 +153,8 @@ Verification for this change:
   after folder mount, disconnect preserving originals, and recovery after restart with source access revoked.
 * scripts/ondevice-agent-session.py passed: assistant prompt/tools, broad activity/native orb, separate coding
   session, tapping its event, returning report, and clearing finished status. Local provider settings were restored.
+* The Downloads document picker also passed with an opaque MediaStore document ID: the app resolved the native
+  original, requested Android file access, created its shortcut and saved the first Git checkpoint. Original file
+  access settings were restored after the test.
 * The orb geometry test compares the Kotlin renderer with upstream reference coordinates; link parsing and Laya
   individual/broadcast/failure/uncertainty/cancellation paths have regression tests.

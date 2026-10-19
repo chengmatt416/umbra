@@ -16,6 +16,14 @@ class LocalDocumentPathsTest {
         assertEquals(Path.of("/storage/emulated/0/Download/a.txt"), LocalDocumentPaths.resolve("com.android.providers.downloads.documents", "raw:/storage/emulated/0/Download/a.txt", volumes))
     }
 
+    @Test fun `opaque local document descriptors resolve only shared storage files`() {
+        assertEquals(Path.of("/storage/emulated/0/Download/notes.txt"), LocalDocumentPaths.fromDescriptor("/storage/emulated/0/Download/notes.txt", volumes))
+        assertNull(LocalDocumentPaths.fromDescriptor("/data/user/0/private/cache", volumes))
+        assertNull(LocalDocumentPaths.fromDescriptor("pipe:[123]", volumes))
+        assertNull(LocalDocumentPaths.fromDescriptor("/storage/emulated/0/Download/notes.txt (deleted)", volumes))
+        assertNull(LocalDocumentPaths.fromDescriptor("/storage/emulated/0/../../../data/private", volumes))
+    }
+
     @Test fun `cloud and unknown storage identifiers never pretend to be native mounts`() {
         assertNull(LocalDocumentPaths.resolve("example.cloud", "primary:Documents", volumes))
         assertNull(LocalDocumentPaths.resolve("com.android.externalstorage.documents", "UNKNOWN:Documents", volumes))

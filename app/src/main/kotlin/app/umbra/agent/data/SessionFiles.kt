@@ -43,6 +43,12 @@ data class SessionFile(
 
 /** Resolve only known on-device document providers. Cloud documents have no native directory to mount. */
 object LocalDocumentPaths {
+    fun fromDescriptor(raw: String, volumes: Map<String, Path>): Path? {
+        if (!raw.startsWith("/storage/") || raw.endsWith(" (deleted)")) return null
+        val path = runCatching { Path.of(raw).normalize() }.getOrNull() ?: return null
+        return path.takeIf { ':' !in raw && volumes.values.any { root -> path.startsWith(root.toAbsolutePath().normalize()) } }
+    }
+
     fun resolve(authority: String?, documentId: String, volumes: Map<String, Path>): Path? {
         val path = when (authority) {
             "com.android.externalstorage.documents" -> {
@@ -80,7 +86,16 @@ class SessionFiles(private val c: AppContainer) {
         val storage = c.context.getSystemService(StorageManager::class.java)
         val volumes = storage.storageVolumes.mapNotNull { v -> v.directory?.toPath()?.let { (if (v.isPrimary) "primary" else v.uuid ?: return@mapNotNull null) to it } }.toMap()
         val id = if (tree) DocumentsContract.getTreeDocumentId(uri) else DocumentsContract.getDocumentId(uri)
-        return LocalDocumentPaths.resolve(uri.authority, id, volumes)
+        val known = LocalDocumentPaths.resolve(uri.authority, id, volumes)
+        if (known != null || tree) return known
+        // Recent/Downloads/Media picker entries use opaque IDs (e.g. msf:123). Their selected FD identifies
+        // the native file without depending on the deprecated _data column or copying an on-device original.
+        if (uri.authority !in setOf("com.android.providers.downloads.documents", "com.android.providers.media.documents")) return null
+        return runCatching {
+            c.context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                LocalDocumentPaths.fromDescriptor(android.system.Os.readlink("/proc/self/fd/${descriptor.fd}"), volumes)
+            }
+        }.getOrNull()
     }
 
     private fun retain(uri: Uri) {
