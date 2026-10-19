@@ -106,6 +106,11 @@ class ActionPipeline(
 
                 // ---- safety ----
                 val context = buildContext(request, snapshot, resolved, displayId)
+                if (OperationTraits.mutatesUi(op) && context.foregroundPackage != request.target.app) {
+                    inputGate(request.copy(target = request.target.copy(app = context.foregroundPackage)), displayId, true)?.let { why ->
+                        return fail(request, started, attempts, OpOutcome.fail(ErrorCode.LEASE_UNAVAILABLE, why, status = ActionStatus.NEEDS_USER))
+                    }
+                }
                 val signature = approvalSignature(request, resolved)
                 if (signature != approvedSignature) {
                     when (val gate = safety.check(request, context)) {
@@ -127,6 +132,12 @@ class ActionPipeline(
                 }
 
                 // ---- baseline, execute, verify ----
+                // Approval and display admission can wait: the user may have taken the app back meanwhile.
+                if (OperationTraits.mutatesUi(op)) {
+                    inputGate(request.copy(target = request.target.copy(app = context.foregroundPackage)), displayId, true)?.let { why ->
+                        return fail(request, started, attempts, OpOutcome.fail(ErrorCode.LEASE_UNAVAILABLE, why, status = ActionStatus.NEEDS_USER))
+                    }
+                }
                 val spec = request.verify
                 val baseline = if (spec.expect is Expectation.None || op is Operation.WaitFor || op is Operation.Verify) null else baselineFor(spec.expect, request.target.environment, displayId, snapshot)
                 val c = OpContext(request, state, displayId, snapshot, primary, look.error, resolved, started, attempts)

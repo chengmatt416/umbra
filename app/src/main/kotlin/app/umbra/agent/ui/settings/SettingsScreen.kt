@@ -69,6 +69,8 @@ fun SettingsScreen(onBack: () -> Unit, onGo: (Dest) -> Unit) {
                 }
             }
             RowGroup {
+                NavRow(PIcons.message, stringResource(R.string.ag_message_apps), stringResource(R.string.ag_message_apps_sub)) { onGo(Dest.Messages) }
+                NavRow(PIcons.bell, stringResource(R.string.ag_notification_reader), stringResource(R.string.ag_notification_reader_sub)) { onGo(Dest.Notifications) }
                 val layaOn = prefs.layaWanted && laya != LayaSidecar.State.NOT_INSTALLED && laya != LayaSidecar.State.NEEDS_LINUX
                 NavRow(PIcons.grid, stringResource(R.string.r_set_laya), stringResource(if (layaOn) R.string.r_set_laya_on else R.string.r_set_laya_off)) {
                     if (!prefs.layaWanted) { container.settings.update { it.copy(layaWanted = true, layaOffered = true) }; container.laya.download() } else onGo(Dest.MoreSettings)

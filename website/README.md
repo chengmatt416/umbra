@@ -16,14 +16,20 @@ wrangler.toml     Pages project umbra-agent, R2 binding RELEASES -> bucket umbra
 
 ```bash
 source ../scripts/env.sh
-export UMBRA_KEYSTORE=~/.umbra-signing/umbra-release.jks UMBRA_KEYSTORE_PASSWORD=$(cat ~/.umbra-signing/password.txt) UMBRA_KEY_PASSWORD=$UMBRA_KEYSTORE_PASSWORD
+export UMBRA_KEYSTORE=~/.umbra-signing/umbra-release.jks
+export UMBRA_KEYSTORE_PASSWORD="$(cat ~/.umbra-signing/password.txt)"
+export UMBRA_KEY_PASSWORD="$UMBRA_KEYSTORE_PASSWORD"
 # the Linux image to carry: build/rootfs/umbra-rootfs-<v>-arm64.tar.xz + packs + manifest.json (runtime-build/rootfs/build.sh <v>);
-# 0.2.0 carries `main` (it has tmux; the older `dev` image does not). A different image makes installed apps offer a Linux update.
-(cd .. && ./gradlew -Pumbra.linuxVersion=main :app:assembleRelease)
-node tools/upload-release.mjs ../app/build/outputs/apk/release/app-release.apk umbra-0.2.0.apk   # writes src/apk.json (size, sha256, version, versionCode)
+# 0.4.0 includes the offline Chromium pack. A different image makes installed apps offer a Linux update.
+(cd .. && ./gradlew -Pumbra.linuxVersion=0.4.0 :app:assembleRelease)
+node tools/upload-release.mjs ../app/build/outputs/apk/release/app-release.apk umbra-0.4.0.apk   # writes src/apk.json (size, sha256, version, versionCode)
 # bump version/file in src/content.mjs (APK.version/versionCode/file) and LATEST_APK in wrangler.toml, then:
 node build.mjs && npx wrangler pages deploy dist --project-name umbra-agent --branch main
+node tools/verify-release.mjs  # checks feed, ranges, redirect and full published APK SHA-256
 ```
+
+The uploader passes its temporary credential to Wrangler over stdin, uploads in parts and removes its Worker
+afterwards. Before announcing a release, verify the published APK's SHA-256, signing identity and `update.json`.
 
 Releases must be signed with the same key forever (Android refuses updates signed with another one): back up `~/.umbra-signing/`.
 Bump `versionCode` in `app/build.gradle.kts` for every release: installed apps update themselves from `dist/update.json`

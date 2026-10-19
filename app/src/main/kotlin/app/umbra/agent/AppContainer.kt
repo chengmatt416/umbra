@@ -132,6 +132,16 @@ class AppContainer(val context: Context) {
 
     /** Input authority over terminals, the screen and desktops (architecture spec §7); fenced by a lockdown. */
     val inputLeases = app.umbra.core.control.InputLeases(control) { emergency.lockdownReason() }
+    private val backgroundApps = ConcurrentHashMap<String, String>()
+
+    private suspend fun claimBackgroundApp(pkg: String, session: String): String? {
+        while (true) {
+            val holder = backgroundApps.putIfAbsent(pkg, session) ?: return null
+            if (holder == session) return null
+            if (sessionStore.get(holder)?.state?.isActive == true) return holder
+            backgroundApps.remove(pkg, holder)
+        }
+    }
 
     /**
      * The writer-side fence of every side-effecting Android or desktop action (INV-006): an input lockdown stops all of
@@ -140,6 +150,21 @@ class AppContainer(val context: Context) {
     private suspend fun inputGate(request: app.umbra.core.model.action.ActionRequest, displayId: Int?, touchesDisplay: Boolean): String? {
         emergency.lockdownReason()?.let { return "Emergency input lockdown is in force ($it): no side effects until the user lifts it." }
         if (!touchesDisplay) return null
+        if (displayId != null && displayId != 0 && request.target.environment != app.umbra.core.model.action.Environment.LINUX_GUI) {
+            val pkg = request.target.app
+            if (pkg != null && app.umbra.agent.agents.Channels.ofPackage(pkg) != null && !app.umbra.platform.android.UmbraAccessibilityService.connected.value) {
+                return "Grant Umbra accessibility access before using message apps in the background, so it can yield when you open the same app."
+            }
+            if (pkg != null && app.umbra.agent.agents.Channels.ofPackage(pkg) != null && app.umbra.platform.android.UmbraAccessibilityService.userUsing(pkg)) {
+                backgroundApps.remove(pkg)
+                return "Paused $pkg because the user is using it. Do not type or tap there. Wait until they leave, then wait five seconds and reopen it on your background display before continuing."
+            }
+            if (pkg != null && app.umbra.agent.agents.Channels.ofPackage(pkg) != null) {
+                request.sessionId?.let { sid -> claimBackgroundApp(pkg, sid)?.let { holder ->
+                    return "$pkg is in use by session $holder. Wait for that session to finish or pause before using the app."
+                } }
+            }
+        }
         val resource = if (request.target.environment == app.umbra.core.model.action.Environment.LINUX_GUI) "gui:0" else "display:${displayId ?: 0}"
         val lease = inputLeases.current(resource) ?: return null
         return if (lease.owner == app.umbra.core.control.Principal.User && lease.state == app.umbra.core.control.LeaseState.ACTIVE) {
@@ -269,7 +294,7 @@ class AppContainer(val context: Context) {
         UmbraToolHost(
             pipeline, sessionId, decisions, exclude = { it.startsWith("gui_") && !desktop },
             // Every session can talk to the others; an agent's conversation also gets its memory, timers and the rest.
-            extra = sessionTools.forSession(sessionId) + (agents.store.bySession(sessionId)?.let { agentTools.forAgent(it.id) } ?: emptyList()),
+            extra = sessionTools.forSession(sessionId) + connectors.messages.tools(sessionId) + (agents.store.bySession(sessionId)?.let { agentTools.forAgent(it.id) } ?: emptyList()),
         )
     }
 
@@ -281,6 +306,7 @@ class AppContainer(val context: Context) {
     val agentTools by lazy { app.umbra.agent.agents.AgentTools(this) }
     /** The message apps and how each is reached (docs/design/agents-2026-10.md §6). */
     val connectors by lazy { app.umbra.agent.connectors.Connectors(this) }
+    val notificationReader by lazy { app.umbra.agent.notifications.NotificationReader(this) }
     /** The Telegram bot that reaches the agents from outside (§11). */
     val telegram by lazy { app.umbra.agent.telegram.TelegramBot(this) }
 
@@ -488,6 +514,9 @@ class AppContainer(val context: Context) {
             governor.start(scope)
             supervisor.start()
             sessionBus.start()
+            notificationReader.start()
+            agents.addSource(connectors.messages)
+            connectors.messages.start()
             agents.start()
             telegram.start()
             val interrupted = sessionStore.list().filter { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL }.map { it.id }

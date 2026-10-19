@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="msg_methods">方式</string>
+    <string name="msg_notification_method">讀取新訊息，從通知直接回覆。</string>
+    <string name="msg_sms_method">讀取簡訊記錄，透過 SIM 卡傳送；可能產生電信費用。</string>
+    <string name="msg_sms_permission">允許簡訊存取</string>
+    <string name="msg_notification_access">通知存取</string>
+    <string name="msg_other_methods_pending">透過通知讀取新訊息、SIM 卡存取簡訊，或使用自己的 API 帳號連接 OpenBubbles 與 X。群組每次傳送都會先問。</string>
+    <string name="msg_auto_replies">代理可以自己回</string>
+    <string name="msg_no_chats">收到訊息後會顯示聊天。在這裡允許前，每次傳送都會先問。</string>
+    <string name="msg_group_asks">群組一律先問</string>
+    <string name="msg_ask_first">關閉：每次先問。開啟：代理可以自己回。</string>
+    <string name="msg_apps">App</string>
+    <string name="msg_view_log">看紀錄</string>
+    <string name="msg_forget_all">全部忘掉</string>
+    <string name="msg_privacy">加密存在手機・保留 %1$d 天。存入前遮蔽驗證碼，銀行與認證 App 預設忽略。</string>
+    <string name="msg_retention">保留通知</string>
+    <string name="msg_days">%1$d 天</string>
+    <string name="msg_empty_log">沒有保留的通知。</string>
+    <string name="msg_forget_body">刪除手機上所有已保留的通知。之後的通知仍依照 App 政策處理。</string>
+    <string name="msg_use">使用</string>
+    <string name="msg_context">只當背景</string>
+    <string name="msg_ignore">忽略</string>
+
+    <string name="msg_server_url">伺服器網址</string>
+    <string name="msg_blue_setup">透過 HTTPS 連接 Mac 上的 BlueBubbles 伺服器。密碼保存在加密憑證庫。</string>
+    <string name="msg_x_setup">使用自己的 OAuth 使用者存取權杖，需有 dm.read 和 dm.write 範圍。App 專用權杖無法讀取私訊，帳號也需要 API 存取權。</string>
+    <string name="msg_password">密碼</string>
+    <string name="msg_user_token">OAuth 使用者存取權杖</string>
+    <string name="msg_connecting">檢查中…</string>
+    <string name="msg_check_save">檢查並儲存</string>
+    <string name="msg_connected">已連接。憑證已加密存在手機。</string>
+    <string name="msg_disconnect_api">中斷 API 連接</string>
+    <string name="pack_browser">網頁瀏覽器</string>
+    <string name="pack_browser_d">使用 Chromium 無頭自動化，或在 Linux 桌面上視覺瀏覽</string>
+</resources>

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // node upload-release.mjs <apk path> <object name>
-// Uploads a big file to the umbra-releases R2 bucket in 50 MiB parts through a temporary Worker, verifies the size and
-// the SHA-256 (stored next to it as <name>.sha256), writes src/apk.json for the site build, then deletes the Worker.
+// Uploads a big file to the umbra-releases R2 bucket in 50 MiB parts through a temporary Worker, verifies the size,
+// stores the local SHA-256 next to it as <name>.sha256, writes src/apk.json, then deletes the Worker.
 // The version and versionCode come from Gradle's output-metadata.json next to the APK; the site's update.json (which
 // the app checks for updates) needs the versionCode.
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -27,10 +27,7 @@ const sha = createHash('sha256');
 const digest = sha.digest('hex');
 console.log('sha256', digest);
 
-const out = execFileSync('npx', ['wrangler', 'deploy', '--var', `TOKEN:${token}`], { cwd: dir, encoding: 'utf8' });
-const base = out.match(/https:\/\/[^\s]+workers\.dev/)?.[0];
-if (!base) throw new Error('no workers.dev url in: ' + out);
-console.log('uploader at', base);
+let base;
 const call = async (path, init = {}) => {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -41,6 +38,12 @@ const call = async (path, init = {}) => {
   }
 };
 try {
+  const out = execFileSync('npx', ['wrangler', 'deploy'], { cwd: dir, encoding: 'utf8' });
+  base = out.match(/https:\/\/[^\s]+workers\.dev/)?.[0];
+  if (!base) throw new Error('no workers.dev url in: ' + out);
+  // Keep the upload credential out of process arguments and Wrangler's deployment output.
+  execFileSync('npx', ['wrangler', 'secret', 'bulk'], { cwd: dir, input: JSON.stringify({ TOKEN: token }), stdio: ['pipe', 'inherit', 'inherit'] });
+  console.log('uploader at', base);
   // Worker may take a few seconds to be reachable.
   for (let i = 0; i < 20; i++) { try { await fetch(base, { headers: { 'x-token': token } }); break; } catch { await new Promise((s) => setTimeout(s, 1500)); } }
   const key = encodeURIComponent(name);

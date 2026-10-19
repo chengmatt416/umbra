@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -79,7 +80,6 @@ import app.umbra.agent.ui.shell.RowGroup
 import app.umbra.agent.ui.shell.SwitchRow
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -293,7 +293,8 @@ fun MemoryScreen(agentId: String, onBack: () -> Unit) {
 @Composable
 private fun MemoryRow(e: Memory.Entry, onEdit: () -> Unit, onDelete: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
-    val date = runCatching { LocalDate.parse(e.date).format(DateTimeFormatter.ofPattern("M/d", Locale.getDefault())) }.getOrDefault(e.date)
+    val locale = LocalConfiguration.current.locales[0]
+    val date = runCatching { LocalDate.parse(e.date).format(DateTimeFormatter.ofPattern("M/d", locale)) }.getOrDefault(e.date)
     Row(Modifier.fillMaxWidth().clickable(onClick = onEdit).padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(e.text, fontSize = 15.sp, color = P.ink, maxLines = 3, overflow = TextOverflow.Ellipsis)
@@ -523,6 +524,7 @@ private fun TimerDialog(onDismiss: () -> Unit, onAdd: (note: String, at: Long, c
  */
 @Composable
 fun WakeScreen(agentId: String, onBack: () -> Unit) {
+    val locale = LocalConfiguration.current.locales[0]
     val container = LocalContext.current.container
     val context = LocalContext.current
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
@@ -538,7 +540,7 @@ fun WakeScreen(agentId: String, onBack: () -> Unit) {
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(pc(0xFFF6F8F2)).padding(vertical = 16.dp)) {
                 Stat("${if (today) state.wakesToday else 0}", stringResource(R.string.ag_stat_wakes), Modifier.weight(1f))
                 Stat("${if (today) state.runsToday else 0}", stringResource(R.string.ag_stat_runs), Modifier.weight(1f))
-                Stat(String.format(Locale.getDefault(), "%.1f%%", percent), stringResource(R.string.ag_stat_battery), Modifier.weight(1f))
+                Stat(String.format(locale, "%.1f%%", percent), stringResource(R.string.ag_stat_battery), Modifier.weight(1f))
             }
             Label(stringResource(R.string.ag_wake))
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(pc(0xFFF6F8F2)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

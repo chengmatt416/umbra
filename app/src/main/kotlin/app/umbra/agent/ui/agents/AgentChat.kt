@@ -196,6 +196,7 @@ internal fun rememberToolNote(): (String, Map<String, String>) -> String? {
  */
 @Composable
 fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, onOpenSession: (String) -> Unit) {
+    val editPrefix = stringResource(R.string.ag_edit_prefix)
     val container = LocalContext.current.container
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -307,7 +308,7 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                         InlineButton(stringResource(R.string.ag_send), primary = true, Modifier.weight(1f)) { container.approvals.resolve(request.id, ApprovalDecision.Approved()) }
                         InlineButton(stringResource(R.string.ag_edit), primary = false, Modifier.weight(1f)) {
                             container.approvals.resolve(request.id, ApprovalDecision.Denied("the user wants to change it"))
-                            draft = context.getString(R.string.ag_edit_prefix) + " "
+                            draft = editPrefix + " "
                         }
                         InlineButton(stringResource(R.string.ag_dont), primary = false, Modifier.weight(1f)) { container.approvals.resolve(request.id, ApprovalDecision.Denied("not now, from the agent's chat")) }
                     }

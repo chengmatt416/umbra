@@ -85,14 +85,14 @@ class SecretStore(context: Context, file: String = "secrets") {
         return generator.generateKey()
     }
 
-    private fun encrypt(plain: String): String {
+    internal fun encrypt(plain: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val body = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
         return Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(body, Base64.NO_WRAP)
     }
 
-    private fun decrypt(stored: String): String {
+    internal fun decrypt(stored: String): String {
         val (iv, body) = stored.split(':', limit = 2)
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))

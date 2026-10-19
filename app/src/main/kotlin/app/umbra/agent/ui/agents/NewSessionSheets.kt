@@ -265,6 +265,7 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
     var error by remember { mutableStateOf<String?>(null) }
     val independent = stringResource(R.string.composer_independent)
     val nobody = stringResource(R.string.ag_report_nobody)
+    val agentSuffix = stringResource(R.string.ag_report_agent_suffix)
 
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = pc(0xFFFBFDF7)) {
         Column(
@@ -291,7 +292,7 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
             )
             Label(stringResource(R.string.ag_report_to))
             Box {
-                Dropdown(reportTo?.let { id -> profiles.firstOrNull { it.id == id }?.let { it.name + " " + context.getString(R.string.ag_report_agent_suffix) } } ?: nobody) { reportMenu = true }
+                Dropdown(reportTo?.let { id -> profiles.firstOrNull { it.id == id }?.let { it.name + " " + agentSuffix } } ?: nobody) { reportMenu = true }
                 DropdownMenu(reportMenu, { reportMenu = false }) {
                     DropdownMenuItem(text = { Text(nobody) }, onClick = { reportMenu = false; reportTo = null })
                     profiles.filter { it.running }.forEach { p -> DropdownMenuItem(text = { Text(p.name) }, onClick = { reportMenu = false; reportTo = p.id }) }

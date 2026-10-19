@@ -16,6 +16,8 @@ import app.umbra.runtime.omp.thinkingLevels
 import app.umbra.runtime.omp.tree
 import java.io.File
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -271,32 +273,45 @@ class AdmissionTest {
             { app.umbra.core.perf.ResourceSample(timestampMs = System.currentTimeMillis(), memAvailMb = 8_000, memTotalMb = 8_000) },
             app.umbra.core.perf.ThrottlePolicy(app.umbra.core.perf.ThrottleConfig(normalSessions = 2)),
         )
-        // Slow enough that the first two are still working while the others are submitted (each start waits for omp).
-        val model = ScriptedModel { ScriptedModel.text("done", delayMs = 8_000) }
+        // Hold each reply until its running state has been observed, independent of omp startup speed.
+        val replies = ((1..4).map { "p1 task $it" } + (1..2).map { "independent task $it" }).associateWith { CountDownLatch(1) }
+        val model = ScriptedModel { request ->
+            val task = replies.keys.single { it in request.lastUserText.orEmpty() }
+            check(replies.getValue(task).await(180, TimeUnit.SECONDS)) { "The test did not release the model reply" }
+            ScriptedModel.text("done")
+        }
         model.use {
-            OrchestratorRig(dir, ompBinary!!, it.url, governor = governor).use { rig ->
-                runBlocking {
-                    val p1 = (1..4).map { n -> rig.supervisor.submit("p1 task $n", projectId = "p1") }
-                    val independent = (1..2).map { n -> rig.supervisor.submit("independent task $n") }
-                    assertEquals(4, rig.supervisor.queued().size, "two start, four wait as logical agents")
-                    assertTrue(rig.supervisor.waitingReason(null).orEmpty().contains("as many agent sessions"))
-                    val firstRun = HashMap<String, Long>()
-                    var peak = 0
-                    withTimeout(180_000) {
-                        while (true) {
-                            val all = rig.store.list()
-                            val running = all.filter { s -> s.state == SessionState.RUNNING || s.state == SessionState.WAITING_APPROVAL }
-                            peak = maxOf(peak, running.size)
-                            running.forEach { s -> firstRun.putIfAbsent(s.id, System.nanoTime()) }
-                            if (all.all { s -> s.state == SessionState.COMPLETED }) break
-                            kotlinx.coroutines.delay(50)
+            try {
+                OrchestratorRig(dir, ompBinary!!, it.url, governor = governor).use { rig ->
+                    runBlocking {
+                        val p1 = (1..4).map { n -> rig.supervisor.submit("p1 task $n", projectId = "p1") }
+                        val independent = (1..2).map { n -> rig.supervisor.submit("independent task $n") }
+                        assertEquals(4, rig.supervisor.queued().size, "two start, four wait as logical agents")
+                        assertTrue(rig.supervisor.waitingReason(null).orEmpty().contains("as many agent sessions"))
+                        val firstRun = HashMap<String, Long>()
+                        var peak = 0
+                        withTimeout(180_000) {
+                            while (true) {
+                                val all = rig.store.list()
+                                assertTrue(all.none { it.state == SessionState.FAILED }, all.joinToString { "${it.request}: ${it.state} ${it.lastError}" })
+                                val running = all.filter { s -> s.state == SessionState.RUNNING || s.state == SessionState.WAITING_APPROVAL }
+                                peak = maxOf(peak, running.size)
+                                running.forEach { s ->
+                                    firstRun.putIfAbsent(s.id, System.nanoTime())
+                                    replies.getValue(s.request).countDown()
+                                }
+                                if (all.all { s -> s.state == SessionState.COMPLETED }) break
+                                kotlinx.coroutines.delay(50)
+                            }
                         }
+                        assertTrue(peak <= 2, "never more than two agent processes at once (saw $peak)")
+                        assertTrue(rig.store.list().all { s -> s.queuedAtMs == null })
+                        // Fair: the first independent request starts before the third of the busy project, which queued earlier.
+                        assertTrue(firstRun.getValue(independent[0].id) < firstRun.getValue(p1[2].id), "the independent request was not starved")
                     }
-                    assertTrue(peak <= 2, "never more than two agent processes at once (saw $peak)")
-                    assertTrue(rig.store.list().all { s -> s.queuedAtMs == null })
-                    // Fair: the first independent request starts before the third of the busy project, which queued earlier.
-                    assertTrue(firstRun.getValue(independent[0].id) < firstRun.getValue(p1[2].id), "the independent request was not starved")
                 }
+            } finally {
+                replies.values.forEach { it.countDown() }
             }
         }
     }

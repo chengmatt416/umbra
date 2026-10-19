@@ -10,6 +10,8 @@ import java.io.File
  */
 class Connectors(private val container: AppContainer) {
     val settings = ConnectorSettings(File(container.context.filesDir, "connectors/connectors.json"))
+    val messages = Messages(container)
+    val apis = MessageApis(container)
 
     /** "Notifications · Visual": the methods on for [appId], in the user's order. */
     fun summary(appId: String): String {

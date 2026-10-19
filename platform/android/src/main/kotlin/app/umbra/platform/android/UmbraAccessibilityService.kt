@@ -3,6 +3,7 @@ package app.umbra.platform.android
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityWindowInfo
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,7 +23,16 @@ class UmbraAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // The tree is read on demand; events only tell the backend how recently the UI changed.
-        if (event != null) lastEventAtMs.set(System.currentTimeMillis())
+        if (event != null) {
+            lastEventAtMs.set(System.currentTimeMillis())
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+                val pkg = windows.firstOrNull { it.displayId == 0 && it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive }?.root?.packageName?.toString()
+                if (pkg != null && pkg != mainPackage.value) {
+                    mainPackage.value?.let { leftPackages[it] = System.currentTimeMillis() }
+                    mainPackage.value = pkg
+                }
+            }
+        }
     }
 
     override fun onInterrupt() = Unit
@@ -45,6 +55,13 @@ class UmbraAccessibilityService : AccessibilityService() {
             private set
 
         private val _connected = MutableStateFlow(false)
+        private val mainPackage = MutableStateFlow<String?>(null)
+        val foregroundPackage: StateFlow<String?> = mainPackage.asStateFlow()
+        private val leftPackages = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+        /** Background actions wait until the user has left this app for five seconds. */
+        fun userUsing(packageName: String, now: Long = System.currentTimeMillis()): Boolean =
+            mainPackage.value == packageName || now - (leftPackages[packageName] ?: 0L) < 5_000
 
         /** True while the system has the service bound and running. */
         val connected: StateFlow<Boolean> = _connected.asStateFlow()

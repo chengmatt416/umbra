@@ -119,6 +119,8 @@ enum class Dest(val route: String, @param:StringRes val title: Int, val icon: Ic
     Home("home", R.string.dest_home, PIcons.home),
     Current("current", R.string.dest_current, PIcons.activity),
     Accounts("accounts", R.string.r_acc_title, PIcons.key),
+    Messages("messages", R.string.ag_message_apps, PIcons.message),
+    Notifications("notifications", R.string.ag_ch_notifications, PIcons.bell),
     Screens("screens", R.string.r_screens_title, PIcons.monitor),
     Safety("safety", R.string.r_safety_title, PIcons.shield),
     Developer("developer", R.string.r_dev_title, PIcons.code),
@@ -187,6 +189,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
         } else if (openPage != null) {
             if (openPage == app.umbra.agent.AgentService.PAGE_STOP_ALL) stopAll = true
             else if (openPage.startsWith("agent/")) nav.navigate(openPage) { launchSingleTop = true }
+            else if (openPage.startsWith("messages/") && app.umbra.agent.agents.Channels.app(openPage.removePrefix("messages/")) != null) nav.navigate(openPage) { launchSingleTop = true }
             else if (openPage == "new-coding" || openPage == "new-agent") {
                 container.ui.homeSheet.value = openPage.removePrefix("new-")
                 nav.navigate(Dest.Home.route) { popUpTo(Dest.Home.route) { inclusive = false }; launchSingleTop = true }
@@ -309,6 +312,9 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 composable("agent/{id}/wake") { e -> app.umbra.agent.ui.agents.WakeScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
                 composable("agent/{id}/channels") { e -> app.umbra.agent.ui.agents.ChannelsScreen(e.arguments?.getString("id").orEmpty(), onBack = back, onGo = { route -> nav.navigate(route) }) }
                 composable("agent/{id}/telegram") { e -> app.umbra.agent.ui.agents.TelegramScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
+                composable("messages") { app.umbra.agent.ui.agents.MessageAppsScreen(onBack = back, onGo = { nav.navigate(it) }) }
+                composable("messages/{app}") { e -> app.umbra.agent.ui.agents.MessageAppScreen(e.arguments?.getString("app").orEmpty(), onBack = back, onGo = { nav.navigate(it) }) }
+                composable("notifications") { app.umbra.agent.ui.agents.NotificationReaderScreen(onBack = back) }
                 composable(Dest.Current.route) { CurrentScreen(onBack = back, onOpenSession = ::openSessionNow, onAccounts = { go(Dest.Accounts) }, onCommit = { go(Dest.Commit) }) }
                 composable(Dest.Accounts.route) { app.umbra.agent.ui.accounts.AccountsScreen(onBack = back, onGo = ::go) }
                 composable(Dest.Screens.route) { app.umbra.agent.ui.displays.ScreensScreen(onBack = back) }

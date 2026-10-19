@@ -15,18 +15,25 @@ import app.umbra.platform.api.NotificationBackend
 import app.umbra.platform.api.NotificationInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 /** Bound by the system once the user grants notification access to the app. */
 class UmbraNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         instance = this
+        activeNotifications.orEmpty().forEach { posted.tryEmit(it) }
     }
+
+    override fun onNotificationPosted(sbn: StatusBarNotification) { posted.tryEmit(sbn) }
 
     override fun onListenerDisconnected() {
         if (instance === this) instance = null
     }
 
     companion object {
+        private val posted = MutableSharedFlow<StatusBarNotification>(extraBufferCapacity = 256)
+        val events = posted.asSharedFlow()
         @Volatile
         var instance: UmbraNotificationListener? = null
             private set

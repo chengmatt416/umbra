@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 // src/apk.json is written by publish.sh from the real file; the defaults only keep a fresh checkout building.
 const fromDisk = existsSync(new URL('./apk.json', import.meta.url)) ? JSON.parse(readFileSync(new URL('./apk.json', import.meta.url), 'utf8')) : {};
-export const APK = { version: '0.3.2', versionCode: 6, file: 'umbra-0.3.2.apk', size: '? MiB', sha256: '(see /download/umbra-0.3.2.apk.sha256)', bytes: 0, ...fromDisk };
+export const APK = { version: '0.4.0', versionCode: 7, file: 'umbra-0.4.0.apk', size: '? MiB', sha256: '(see /download/umbra-0.4.0.apk.sha256)', bytes: 0, ...fromDisk };
 export const GITHUB = 'https://github.com/chengmatt416/umbra';
 
 export const L = {
@@ -56,7 +56,7 @@ export const L = {
         bullets: ['One-time pairing code, pinned certificates', 'Trust you raise by hand · revoke any time', 'Leases bound every job'] },
 
       { id: 'approve', part: 2, clip: 'approve', kicker: '10 · Approve', title: 'It asks before anything risky.',
-        body: 'Payments, messages, deleting data, security settings, installing apps and passwords always need your approval. The question waits on the task’s own row on Home, in a notification and in the Capsule: see it, allow it or deny it. The agent can never operate its own app or answer its own approvals.',
+        body: 'Payments, deleting data, security settings, installing apps and passwords need your approval. Message sends also ask, unless you explicitly permitted automatic replies to a known one-to-one chat; groups always ask. The question waits on the task’s own row on Home, in a notification and in the Capsule. The agent can never operate its own app or answer its own approvals.',
         bullets: ['Cautious · Balanced · Autonomous modes', 'Allow or deny right on Home', 'Approval history keeps what was asked and answered'] },
       { id: 'safety', part: 2, clip: 'safety', kicker: '11 · Safety', title: 'Authority without exposing secrets.',
         body: 'The Safety page starts with one control: hold to stop everything. Below it, the credential vault (keys and Git tokens held by a broker, never handed to an agent), the history of every approval, security events with hash-chained journals, and Emergency Control, whose input lockdown stays in force across restarts until you lift it.',
@@ -79,7 +79,7 @@ export const L = {
     req: { title: 'What you need', rows: [['Android', '16 (API 36), arm64'], ['Root', 'Optional. With root: chroot. Without: proot'], ['Storage', 'About 2 GB for the Linux environment'], ['A model', 'A ChatGPT, Claude or Google account, or an API key']] },
     trust: {
       eyebrow: 'Trust', title: 'Honest about what is verified.',
-      body: 'Every part is tested against the real thing: the real omp agent, a real Android 16 emulator and a real Debian environment on it. The one stand-in is the language model in automated runs, because a real model needs your key. 19 of the architecture spec’s 22 acceptance criteria are met; one is partly met and two are not built (they need an Execution Halt controller this build does not have). What only a real phone can show is still to be tested there.',
+      body: 'Release checks cover the app build, lint, unit tests and the real omp orchestrator with a scripted model. Notification capture and privacy checks run on an Android 16 emulator; Chromium runs in its Debian guest. The omp browser launcher also passes headless and headed interaction checks in an isolated Linux container. Live message delivery through linked accounts, full visual browser workflows and physical-phone behavior still need testing. The traceability matrix records the architecture’s acceptance coverage.',
       link: 'Read the traceability matrix',
     },
     download: {
@@ -92,6 +92,9 @@ export const L = {
     faq: {
       eyebrow: 'FAQ', title: 'Questions',
       items: [
+        ['What is new in 0.4.0?', 'Home has Agents and Coding views. Create a companion with its own profile, memory and timers, or start a coding session with helper sessions. Message apps and Notifications settings add per-app access, retention and reply controls. The Linux add-ons now include Chromium, with DOM, Visual and Auto browser choices per session. The clips above show the earlier coding workflow.'],
+        ['Which message connections are available?', 'SMS uses Android permissions; supported message notifications can be read and replied to through Android notification access. Telegram bot linking is available. iMessage uses a BlueBubbles/OpenBubbles HTTPS server, and X uses your OAuth user token; these APIs are read on demand, and X sends always ask for approval. Replies ask for approval unless you explicitly enable automatic replies for a known one-to-one chat. Groups always ask. Telegram user login, Instagram/Messenger APIs, unofficial clients and resumable visual connectors are still in development.'],
+        ['How are notifications stored?', 'Retained notification content is encrypted on the phone with an Android Keystore key. Choose Use, Context or Ignore per app, and keep records for 1, 7 or 30 days. Verification-code notifications and financial/authentication apps are excluded by default. Ignoring an app also removes its retained records.'],
         ['Is it safe to give an agent my phone?', 'Risky actions always need your approval, and the agent can never operate Umbra itself or answer its own approvals. The Linux side runs without privileges and cannot change its own system files or read the app’s private data. Settings → Stop and take back takes everything back.'],
         ['Do I need root?', 'No. Root is optional: with it the Linux environment runs in a chroot apart from the app; without it, under proot. The privileged helper can start with root, Shizuku, or once per boot over adb.'],
         ['Which models can I use?', 'Sign in with a ChatGPT, Claude or Google (Antigravity) account, or use your own key for Anthropic, OpenAI, Google, OpenRouter or any OpenAI-compatible server. The list of models updates itself from this site. Account sign-in for third-party apps can conflict with a provider’s terms; the sign-in page says so. Umbra is built on omp, a coding agent with a mature tool and planning loop.'],
@@ -158,7 +161,7 @@ export const L = {
         bullets: ['一次性配對碼、憑證固定', '信任由你手動調高 · 隨時撤銷', '租約限制每個工作的時間'] },
 
       { id: 'approve', part: 2, clip: 'approve', kicker: '10 · 核准', title: '有風險的事，它一定先問你。',
-        body: '付款、傳訊息、刪除資料、安全性設定、安裝 App 與密碼，一律需要你的核准。問題會出現在首頁那個任務的列上、通知裡，以及膠囊裡：看內容、允許或拒絕。代理永遠無法操作自己的 App，也無法替自己核准。',
+        body: '付款、刪除資料、安全性設定、安裝 App 與密碼，需要你的核准。傳訊息也會先詢問，除非你明確允許已確認的一對一聊天室自動回覆；群組一律詢問。問題會出現在首頁那個任務的列上、通知裡，以及膠囊裡。代理永遠無法操作自己的 App，也無法替自己核准。',
         bullets: ['謹慎 · 平衡 · 自主 三種模式', '直接在首頁允許或拒絕', '核准紀錄保存了問過什麼、你怎麼答'] },
       { id: 'safety', part: 2, clip: 'safety', kicker: '11 · 安全', title: '有權限，但不暴露祕密。',
         body: '「安全」頁的第一個控制是：長按停止一切。下面是憑證保險庫（金鑰與 Git 權杖由代理程式保管，絕不交給代理）、每次核准的紀錄、帶雜湊鏈日誌的安全事件，以及「緊急控制」——輸入封鎖在重啟後仍然有效，直到你解除。',
@@ -181,7 +184,7 @@ export const L = {
     req: { title: '需求', rows: [['Android', '16（API 36），arm64'], ['Root', '選配。有 root：chroot；沒有：proot'], ['儲存空間', 'Linux 環境約需 2 GB'], ['模型', 'ChatGPT、Claude 或 Google 帳號，或 API 金鑰']] },
     trust: {
       eyebrow: '信任', title: '老實說，哪些已經驗證。',
-      body: '每個部分都針對真實對象測試：真實的 omp 代理、真實的 Android 16 模擬器，以及其上真實的 Debian 環境。自動化測試中唯一的替身是語言模型，因為真實模型需要你的金鑰。架構規格的 22 項驗收條件中，19 項已達成、1 項部分達成、2 項尚未實作（它們需要這個版本還沒有的「執行中止」控制器）。只有真機才看得出來的部分，仍待在真機上測試。',
+      body: '發行檢查涵蓋 App 建置、lint、單元測試，以及使用腳本模型的真實 omp 編排器。通知擷取與隱私檢查在 Android 16 模擬器執行，Chromium 也在其中的 Debian 環境運作。omp 瀏覽器啟動器另通過隔離 Linux 容器中的無頭與有畫面互動檢查。已連結帳號的實際訊息傳送、完整視覺瀏覽流程及實體手機行為仍待測試。追溯矩陣記錄架構的驗收涵蓋情況。',
       link: '閱讀追溯矩陣',
     },
     download: {
@@ -194,6 +197,9 @@ export const L = {
     faq: {
       eyebrow: '常見問題', title: '你可能想問',
       items: [
+        ['0.4.0 有哪些新功能？', '首頁分成「代理」與「程式碼」檢視。建立有獨立個人設定、記憶與計時器的夥伴，或開啟可使用子工作階段的程式碼任務。「訊息 App」與「通知」設定新增各 App 的存取、保留期限與回覆控制。Linux 加裝套件新增 Chromium，每個工作階段可選 DOM、視覺或自動瀏覽模式。上方影片示範的是先前的程式碼工作流程。'],
+        ['目前支援哪些訊息連線？', '簡訊使用 Android 權限；支援的訊息通知可透過 Android 通知存取權讀取與回覆，也可連結 Telegram 機器人。iMessage 使用 BlueBubbles/OpenBubbles HTTPS 伺服器，X 使用你的 OAuth 使用者權杖；這兩種 API 目前依要求讀取，X 傳送一律要求核准。除非你明確允許已確認的一對一聊天室自動回覆，否則傳送前會要求核准，群組一律詢問。Telegram 使用者登入、Instagram/Messenger API、非官方用戶端與可續跑的視覺連線仍在開發中。'],
+        ['通知如何儲存？', '保留的通知內容會以 Android Keystore 金鑰在手機上加密。每個 App 可選「使用」、「僅供參考」或「忽略」，並設定保留 1、7 或 30 天。預設排除驗證碼通知及金融、驗證類 App。忽略某個 App 也會刪除已保留的紀錄。'],
         ['把手機交給代理安全嗎？', '有風險的動作一律需要你的核准，代理無法操作 Umbra 本身，也無法替自己核准。Linux 端以無特權身分執行，無法修改自己的系統檔案，也讀不到 App 的私有資料。「設定 → 停止與收回」可以收回一切。'],
         ['一定要 root 嗎？', '不用。root 是選配：有 root 時 Linux 環境在與 App 隔離的 chroot 中執行，沒有則使用 proot。特權輔助程式可以用 root、Shizuku，或每次開機後透過 adb 啟動一次。'],
         ['可以用哪些模型？', '用 ChatGPT、Claude 或 Google（Antigravity）帳號登入，或用你自己的金鑰連 Anthropic、OpenAI、Google、OpenRouter 或任何相容 OpenAI 的伺服器。模型清單會從本網站自動更新。在第三方 App 用帳號登入可能牴觸供應商的條款，登入頁會說明。Umbra 建立在 omp 之上，這是一個工具與規劃迴圈都相當成熟的程式碼代理。'],

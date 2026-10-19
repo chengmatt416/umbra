@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="msg_methods">Methods</string>
+    <string name="msg_notification_method">Read new messages and reply through their notifications.</string>
+    <string name="msg_sms_method">Read SMS history and send through your SIM. Carrier charges may apply.</string>
+    <string name="msg_sms_permission">Allow SMS access</string>
+    <string name="msg_notification_access">Notification access</string>
+    <string name="msg_other_methods_pending">Read new messages through notifications, SMS through your SIM, and OpenBubbles or X through your own API account. Groups always ask before sending.</string>
+    <string name="msg_auto_replies">May reply on its own</string>
+    <string name="msg_no_chats">Chats appear when messages arrive. Every chat asks before sending until you allow it here.</string>
+    <string name="msg_group_asks">Groups always ask first</string>
+    <string name="msg_ask_first">Off: ask every time. On: agents may reply.</string>
+    <string name="msg_apps">Apps</string>
+    <string name="msg_view_log">View log</string>
+    <string name="msg_forget_all">Forget all</string>
+    <string name="msg_privacy">Encrypted on this phone · kept for %1$d days. Verification codes are hidden before storage. Banking and authentication apps are ignored by default.</string>
+    <string name="msg_retention">Keep notifications</string>
+    <string name="msg_days">%1$d days</string>
+    <string name="msg_empty_log">No retained notifications.</string>
+    <string name="msg_forget_body">Delete all retained notification content from this phone. Future notifications follow your app policies.</string>
+    <string name="msg_use">Read &amp; use</string>
+    <string name="msg_context">Context only</string>
+    <string name="msg_ignore">Ignore</string>
+
+    <string name="msg_server_url">Server URL</string>
+    <string name="msg_blue_setup">Connect your Mac’s BlueBubbles server over HTTPS. The password stays in the encrypted credential store.</string>
+    <string name="msg_x_setup">Use your own OAuth user access token with dm.read and dm.write scopes. An app-only bearer token cannot read DMs. Your account needs API access.</string>
+    <string name="msg_password">Password</string>
+    <string name="msg_user_token">OAuth user access token</string>
+    <string name="msg_connecting">Checking…</string>
+    <string name="msg_check_save">Check &amp; save</string>
+    <string name="msg_connected">Connected. The credential is encrypted on this phone.</string>
+    <string name="msg_disconnect_api">Disconnect API</string>
+    <string name="pack_browser">Web browser</string>
+    <string name="pack_browser_d">Chromium for headless automation and visual browsing on the Linux desktop</string>
+</resources>

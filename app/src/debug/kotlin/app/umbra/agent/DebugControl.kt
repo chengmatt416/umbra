@@ -32,6 +32,16 @@ import kotlinx.serialization.json.put
 class DebugControl(private val container: AppContainer) : ControlHandler {
     override suspend fun handle(command: String, args: JsonObject): JsonElement = when (command) {
         "status" -> status()
+        "notifications.list" -> buildJsonArray {
+            container.notificationReader.records().forEach { record -> add(app.umbra.core.model.UmbraJson.encodeToJsonElement(app.umbra.agent.notifications.NotificationRecord.serializer(), record)) }
+        }
+        "notifications.policy" -> {
+            val pkg = str(args, "package")
+            (args["policy"] as? JsonPrimitive)?.content?.let { policy ->
+                container.notificationReader.setPolicy(pkg, app.umbra.agent.notifications.NotificationPrivacy.Policy.valueOf(policy))
+            }
+            buildJsonObject { put("policy", container.notificationReader.policy(pkg).name) }
+        }
         "capabilities" -> JsonArray(CapabilityProbe(container).probe().map { r ->
             buildJsonObject { put("id", r.id); put("title", r.title); put("status", r.status.name); put("detail", r.detail); put("essential", r.essential) }
         })

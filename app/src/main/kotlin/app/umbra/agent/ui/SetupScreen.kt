@@ -365,6 +365,7 @@ private val PACK_NAMES = mapOf(
     "android" to (R.string.pack_android to R.string.pack_android_d),
     "node" to (R.string.pack_node to R.string.pack_node_d),
     "gui" to (R.string.pack_gui to R.string.pack_gui_d),
+    "browser" to (R.string.pack_browser to R.string.pack_browser_d),
 )
 
 /** The choices the agent runs with on this phone, and why (spec §29 strategy selection). */

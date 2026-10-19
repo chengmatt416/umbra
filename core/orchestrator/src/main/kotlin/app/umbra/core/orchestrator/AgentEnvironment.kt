@@ -41,6 +41,9 @@ interface AgentEnvironment {
     /** Why omp cannot start here, or null when it can. */
     suspend fun problem(): String?
 
+    /** A system Chromium that omp may use without downloading a browser for the wrong architecture. */
+    suspend fun browserAvailable(): Boolean = false
+
     /**
      * Ends the agent processes a previous run of the app left behind (their sessions are paused and resume from the
      * saved conversation). Terminals and other programs the user started keep running: the UI is not the process
@@ -84,6 +87,8 @@ class GuestEnvironment(
         "SSL_CERT_FILE" to "/etc/ssl/certs/ca-certificates.crt",
     )
     override val workspaces = WorkspaceLayout(hostRoot = hostWorkspaces, guestRoot = RuntimeLayout.GUEST_WORKSPACE)
+
+    override suspend fun browserAvailable(): Boolean = runtime.exec(listOf("test", "-x", "/usr/bin/chromium"), timeoutMs = 10_000).ok
 
     override fun agentFiles(profile: String): AgentFiles {
         val guestDir = "${RuntimeLayout.GUEST_HOME}/.umbra/agents/$profile"
