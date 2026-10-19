@@ -161,18 +161,10 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onOpenAgent: (String) -> Unit, e
         }
 
         MenuScrim(menu) { menu = false }
-        Column(
+        Box(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
-            horizontalAlignment = if (prefs.leftHanded) Alignment.Start else Alignment.End,
         ) {
-            MenuEntries(menu, entries.map { e -> MenuEntry(e.icon, e.label) { menu = false; e.onClick() } }, prefs.leftHanded, Modifier.padding(bottom = 10.dp))
-            MenuPills(
-                menu,
-                coding = MenuEntry(PIcons.terminal, stringResource(R.string.ag_pill_coding)) { menu = false; container.ui.homeSheet.value = "coding" },
-                agent = MenuEntry(PIcons.bot, stringResource(R.string.ag_pill_agent)) { menu = false; container.ui.homeSheet.value = "agent" },
-                leftHanded = prefs.leftHanded, modifier = Modifier.padding(bottom = 16.dp),
-            )
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth(), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (prefs.leftHanded) MenuButton(menu, { menu = !menu })
                 val toAgent = if (agentsTab) defaultAgent else null
                 HomeComposer(
@@ -202,6 +194,18 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onOpenAgent: (String) -> Unit, e
                     },
                 )
                 if (!prefs.leftHanded) MenuButton(menu, { menu = !menu })
+            }
+            Column(
+                Modifier.align(if (prefs.leftHanded) Alignment.BottomStart else Alignment.BottomEnd).padding(bottom = 68.dp),
+                horizontalAlignment = if (prefs.leftHanded) Alignment.Start else Alignment.End,
+            ) {
+                MenuEntries(menu, entries.map { e -> MenuEntry(e.icon, e.label) { menu = false; e.onClick() } }, prefs.leftHanded, Modifier.padding(bottom = 10.dp))
+                MenuPills(
+                    menu,
+                    coding = MenuEntry(PIcons.terminal, stringResource(R.string.ag_pill_coding)) { menu = false; container.ui.homeSheet.value = "coding" },
+                    agent = MenuEntry(PIcons.bot, stringResource(R.string.ag_pill_agent)) { menu = false; container.ui.homeSheet.value = "agent" },
+                    leftHanded = prefs.leftHanded,
+                )
             }
         }
     }

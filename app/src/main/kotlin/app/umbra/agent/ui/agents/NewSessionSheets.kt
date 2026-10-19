@@ -266,6 +266,8 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
     val independent = stringResource(R.string.composer_independent)
     val nobody = stringResource(R.string.ag_report_nobody)
     val agentSuffix = stringResource(R.string.ag_report_agent_suffix)
+    val draftTitle = stringResource(R.string.ag_new_coding_title)
+    var preparedSession by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = pc(0xFFFBFDF7)) {
         Column(
@@ -285,6 +287,13 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
                 ModelChip(modelName(model), mono = model != null) { picker = true }
                 EffortChip(effortText(effort)) { effortPicker = true }
             }
+            app.umbra.agent.ui.current.SessionFileButton(
+                preparedSession, compact = false,
+                onReference = { text = listOf(text, it).filter(String::isNotBlank).joinToString("\n") }, onError = { error = it },
+                ensureSession = {
+                    preparedSession ?: container.supervisor.create(draftTitle, title = draftTitle, projectId = project).id.also { preparedSession = it }
+                },
+            )
             Label(stringResource(R.string.ag_browser))
             Segmented(
                 listOf("auto" to stringResource(R.string.ag_browser_auto), "dom" to stringResource(R.string.ag_browser_dom), "visual" to stringResource(R.string.ag_browser_visual)),
@@ -317,11 +326,19 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
                                     AgentService.start(context)
                                     val words = text.trim()
                                     val choice = if (model != null && effort != null) null else container.autoModel.choose(words, pictures = false)
-                                    val s = container.supervisor.submit(
+                                    val prepared = preparedSession
+                                    val id = if (prepared == null) container.supervisor.submit(
                                         words, title = AgentSupervisor.titleOf(words), model = model ?: choice?.model, projectId = project,
                                         effort = effort ?: choice?.effort, spec = SessionSpec(agentId = reportTo, browser = browser),
-                                    )
-                                    onStarted(s.id)
+                                    ).id else {
+                                        check(container.sessionStore.update(prepared) {
+                                            it.copy(request = words, title = AgentSupervisor.titleOf(words), model = model ?: choice?.model,
+                                                projectId = project, effort = effort ?: choice?.effort, agentId = reportTo, browser = browser)
+                                        } != null)
+                                        container.supervisor.send(prepared, words)
+                                        prepared
+                                    }
+                                    onStarted(id)
                                 } catch (e: Exception) {
                                     error = e.message ?: e::class.simpleName
                                 } finally {

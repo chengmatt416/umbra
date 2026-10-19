@@ -49,6 +49,7 @@ class RootChrootRuntime(
     /** A root shell (`su -c` on a phone, `adb shell su 0` for the development emulator). */
     private val root: ShellBackend,
     override val layout: RuntimeLayout,
+    private val additionalBinds: () -> List<RuntimeLayout.Bind> = { emptyList() },
 ) : LinuxRuntime {
     override val mode = LinuxMode.CHROOT
 
@@ -68,7 +69,9 @@ class RootChrootRuntime(
     override suspend fun isInstalled(): Boolean = sh("test -x $r/bin/bash -a -x $r/usr/bin/setpriv").ok
 
     private suspend fun mountedPoints(): Set<String> =
-        sh("cat /proc/mounts").stdout.lineSequence().mapNotNull { it.split(' ').getOrNull(1) }.toSet()
+        sh("cat /proc/mounts").stdout.lineSequence().mapNotNull { line ->
+            line.split(' ').getOrNull(1)?.replace(Regex("""\\([0-7]{3})""")) { it.groupValues[1].toInt(8).toChar().toString() }
+        }.toSet()
 
     override suspend fun isMounted(): Boolean = layout.rootfs.trimEnd('/') + "/proc" in mountedPoints()
 
@@ -199,6 +202,7 @@ class RootChrootRuntime(
         if (!secured) secure()
         if (isMounted()) {
             hideOtherUsersProcesses()
+            mountAdditionalFiles()
             return
         }
         val have = mountedPoints()
@@ -228,6 +232,36 @@ class RootChrootRuntime(
         } catch (e: BackendException) {
             unmount() // do not leave a half-mounted guest behind
             throw e
+        }
+        mountAdditionalFiles()
+    }
+
+    private val bindLock = Mutex()
+
+    private suspend fun mountAdditionalFiles() = bindLock.withLock {
+        val have = mountedPoints()
+        val binds = additionalBinds()
+        val desired = (binds + layout.binds).map { layout.rootfs.trimEnd('/') + it.guest }.toSet()
+        // Remove only kernel mounts inside our private rootfs; never remove the user's files or mountpoint contents.
+        have.filter { it.startsWith(layout.rootfs.trimEnd('/') + "/storage/") && it !in desired }.sortedByDescending { it.length }.forEach {
+            shOrThrow("umount ${quote(it)}", "disconnecting selected file")
+        }
+        for (bind in binds) {
+            require(bind.guest.startsWith("/storage/")) { "File mounts must stay in shared storage" }
+            require(bind.host == bind.guest && java.nio.file.Path.of(bind.guest).normalize().toString() == bind.guest) { "Invalid file mount" }
+            val target = layout.rootfs.trimEnd('/') + bind.guest
+            val parent = target.substringBeforeLast('/')
+            val source = quote(bind.host)
+            val destination = quote(target)
+            val components = bind.guest.trimStart('/').split('/').runningFold(layout.rootfs.trimEnd('/')) { path, name -> "$path/$name" }.drop(1)
+            val noLinks = components.joinToString(" && ") { "test ! -L ${quote(it)}" }
+            shOrThrow("$noLinks && test \"\$(readlink -f $source)\" = $source", "validating selected file mount")
+            if (target in have) {
+                // External editors can replace a file by rename. Rebind its new inode before the next command.
+                if (sh("test \"\$(stat -c '%d:%i' $source)\" = \"\$(stat -c '%d:%i' $destination)\"").ok) continue
+                shOrThrow("umount $destination", "refreshing selected file")
+            }
+            shOrThrow("if [ -d $source ]; then mkdir -p $destination; else mkdir -p ${quote(parent)} && touch $destination; fi && mount -o bind $source $destination", "mounting selected file")
         }
     }
 

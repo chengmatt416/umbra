@@ -89,9 +89,9 @@ internal sealed interface Line {
 
     data class Mine(override val key: String, override val at: Long, val text: String, val via: String?) : Line
     data class Theirs(override val key: String, override val at: Long, val text: String) : Line
-    data class Note(override val key: String, override val at: Long, val text: String) : Line
-    data class Report(override val key: String, override val at: Long, val who: String, val state: String, val title: String, val minutes: String, val body: String) : Line
-    data class Peer(override val key: String, override val at: Long, val title: String, val body: String) : Line
+    data class Note(override val key: String, override val at: Long, val text: String, val sessionRef: String? = null) : Line
+    data class Report(override val key: String, override val at: Long, val who: String, val state: String, val title: String, val minutes: String, val body: String, val sessionRef: String? = null) : Line
+    data class Peer(override val key: String, override val at: Long, val title: String, val body: String, val sessionRef: String? = null) : Line
     data class Day(override val key: String, override val at: Long, val day: LocalDate) : Line
 }
 
@@ -118,9 +118,10 @@ internal fun chatLines(state: ConversationState, wakeNote: (String) -> String, t
                     bus != null && bus.groupValues[1].startsWith("Report") -> {
                         val head = t.substringBefore('\n').removePrefix("[").removeSuffix("]").split(" · ")
                         out += Line.Report(item.key, item.timestamp, bus.groupValues[4], head.getOrNull(1).orEmpty(), head.getOrNull(2).orEmpty(), head.getOrNull(3).orEmpty(),
-                            t.substringAfter('\n').lines().filterNot { it.startsWith("(This is a coding session") }.joinToString("\n").trim())
+                            t.substringAfter('\n').lines().filterNot { it.startsWith("(This is a coding session") || it.startsWith("[Session: ") }.joinToString("\n").trim(),
+                            sessionReference(t))
                     }
-                    bus != null -> out += Line.Peer(item.key, item.timestamp, bus.groupValues[0].trim().removePrefix("[").removeSuffix("]"), t.removeRange(bus.range).lines().filterNot { it.startsWith("(If an answer") }.joinToString("\n").trim())
+                    bus != null -> out += Line.Peer(item.key, item.timestamp, bus.groupValues[0].trim().removePrefix("[").removeSuffix("]"), t.removeRange(bus.range).lines().filterNot { it.startsWith("(If an answer") }.joinToString("\n").trim(), bus.groupValues[4])
                     t.startsWith("[Telegram] ") -> out += Line.Mine(item.key, item.timestamp, t.removePrefix("[Telegram] "), "Telegram")
                     t.startsWith("The conversation of the agent") -> Unit
                     else -> out += Line.Mine(item.key, item.timestamp, t, null)
@@ -137,7 +138,17 @@ internal fun chatLines(state: ConversationState, wakeNote: (String) -> String, t
                         }
                         is Block.ToolCall -> {
                             val args = b.arguments.mapValues { (it.value as? JsonPrimitive)?.contentOrNull.orEmpty() }
-                            toolNote(b.name, args)?.let { day(item.timestamp); out += Line.Note(item.key + "/" + b.id, item.timestamp, it) }
+                            val result = state.tools[b.id]
+                            val ref = when (b.name) {
+                                "coding_start" -> result?.takeIf { !it.isError }?.result?.let(::sessionReference)
+                                    ?: result?.takeIf { !it.isError }?.result?.let { Regex("coding session (#[a-z0-9-]+)").find(it)?.groupValues?.get(1) }
+                                "session_send" -> args["to"]
+                                "subagent_start" -> result?.takeIf { !it.isError }?.result?.let { Regex("session ([a-zA-Z0-9-]+)").find(it)?.groupValues?.get(1) }
+                                else -> null
+                            }
+                            if (b.name != "coding_start" || ref != null) toolNote(b.name, args)?.let {
+                                day(item.timestamp); out += Line.Note(item.key + "/" + b.id, item.timestamp, it, ref)
+                            }
                         }
                         else -> Unit
                     }
@@ -148,6 +159,8 @@ internal fun chatLines(state: ConversationState, wakeNote: (String) -> String, t
     }
     return out
 }
+
+internal fun sessionReference(text: String): String? = Regex("""\[Session: ([a-zA-Z0-9-]+)]""").find(text)?.groupValues?.get(1)
 
 /** "Woke up · heartbeat · 2 messages, 1 timer" from a wake digest. */
 @Composable
@@ -211,6 +224,7 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
     val conversation = flow?.collectAsStateWithLifecycle()?.value ?: ConversationState()
     val sessions by remember { container.sessionStore.changes }.collectAsStateWithLifecycle(null)
     val session by produceState<app.umbra.core.session.Session?>(null, sid, sessions) { value = sid?.let { container.sessionStore.get(it) } }
+    val delegated by produceState<app.umbra.core.session.Session?>(null, agentId, sessions) { value = activeDelegatedWork(agentId, container.sessionStore.list()) }
     val approvals by container.approvals.pending.collectAsStateWithLifecycle()
     val mine = approvals.filter { it.sessionId == sid }
     val activity by container.agents.activity.collectAsStateWithLifecycle()
@@ -218,7 +232,7 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
     val state by produceState(app.umbra.agent.agents.AgentState(), agentId) { while (true) { value = container.agents.store.state(agentId); delay(5_000) } }
     val wakeNote = rememberWakeNote()
     val toolNote = rememberToolNote()
-    val lines = remember(conversation.items) { chatLines(conversation, wakeNote, toolNote) }
+    val lines = remember(conversation.items, conversation.tools, wakeNote, toolNote) { chatLines(conversation, wakeNote, toolNote) }
     var draft by remember(agentId) { mutableStateOf("") }
     val pictures = remember(agentId) { mutableStateListOf<ContentBlock.Image>() }
     var error by remember { mutableStateOf<String?>(null) }
@@ -236,10 +250,14 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->
         scope.launch { uris.forEach { u -> app.umbra.agent.ui.current.encodePicture(context, u)?.let { pictures += it } } }
     }
-    val working = session?.state == SessionState.RUNNING || activity[agentId] != null
+    val ownWork = session?.state == SessionState.RUNNING || activity[agentId] != null
+    val working = ownWork || delegated != null
     val status = when {
         !p.running -> stringResource(R.string.ag_status_stopped)
-        working -> stringResource(R.string.ag_status_working)
+        session?.state == SessionState.WAITING_APPROVAL -> stringResource(R.string.ag_work_approval)
+        session?.state == SessionState.PAUSED -> stringResource(R.string.ag_work_paused)
+        ownWork -> currentAgentWork(session, conversation, activity[agentId])
+        delegated != null -> stringResource(R.string.ag_work_delegated, delegated!!.title)
         state.nextWakeMs > 0 -> stringResource(R.string.ag_status_asleep, DateUtils.formatDateTime(context, state.nextWakeMs, DateUtils.FORMAT_SHOW_TIME))
         else -> stringResource(R.string.ag_status_on)
     }
@@ -289,13 +307,15 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
             items(lines, key = { it.key }) { line ->
                 when (line) {
                     is Line.Day -> SysNote(DateUtils.formatDateTime(context, line.at, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_WEEKDAY or DateUtils.FORMAT_ABBREV_ALL))
-                    is Line.Note -> SysNote(line.text)
+                    is Line.Note -> if (line.sessionRef == null) SysNote(line.text) else SessionEventLink(line.text) {
+                        scope.launch { container.sessionBus.resolve(line.sessionRef)?.let { onOpenSession(it.id) } }
+                    }
                     is Line.Mine -> Bubble(line.text, line.at, mine = true, via = line.via)
                     is Line.Theirs -> Bubble(line.text, line.at, mine = false, via = null)
-                    is Line.Peer -> PeerCard(line)
+                    is Line.Peer -> PeerCard(line) { scope.launch { line.sessionRef?.let { container.sessionBus.resolve(it) }?.let { onOpenSession(it.id) } } }
                     is Line.Report -> ReportCard(line, onOpen = {
                         scope.launch {
-                            val target = container.sessionBus.resolve(line.who)
+                            val target = container.sessionBus.resolve(line.sessionRef ?: line.who)
                             target?.let { onOpenSession(it.id) }
                         }
                     })
@@ -314,7 +334,12 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                     }
                 }
             }
-            if (working) item(key = "typing") { Text(stringResource(R.string.ag_typing, p.name), Modifier.padding(start = 8.dp), fontSize = 12.sp, color = P.muted) }
+            if (working) item(key = "typing") {
+                Row(Modifier.padding(start = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    app.umbra.agent.ui.porcelain.ThinkingOrb(status)
+                    Text(status, fontSize = 12.sp, color = P.sub)
+                }
+            }
         }
         error?.let { Box(Modifier.padding(horizontal = 16.dp)) { Callout(it, Tone.Danger) } }
         // The field: pictures, words, send.
@@ -331,7 +356,9 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                 Modifier.weight(1f).heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp)).background(pc(0xFFF6F8F2)).padding(start = 6.dp, end = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                PIconButton(PIcons.clip, stringResource(R.string.comp_attach), { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, size = 40.dp, tint = P.sub)
+                app.umbra.agent.ui.current.SessionFileButton(sid,
+                    onReference = { draft = listOf(draft, it).filter(String::isNotBlank).joinToString("\n") }, onError = { error = it },
+                    onPicture = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
                 Box(Modifier.weight(1f).padding(vertical = 14.dp)) {
                     if (draft.isEmpty()) Text(stringResource(R.string.ag_message_hint), fontSize = 15.sp, color = P.muted)
                     val label = stringResource(R.string.cap_message)
@@ -349,6 +376,15 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                 contentAlignment = Alignment.Center,
             ) { PIcon(PIcons.send, size = 22.dp, tint = P.base) }
         }
+    }
+}
+
+@Composable
+private fun SessionEventLink(text: String, onOpen: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(P.base2).clickable(role = Role.Button, onClick = onOpen).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        PIcon(PIcons.terminal, size = 16.dp, tint = P.accent2)
+        Text(text, Modifier.weight(1f), color = P.accent2, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        PIcon(PIcons.chevronRight, size = 16.dp, tint = P.accent2)
     }
 }
 
@@ -383,9 +419,9 @@ private fun Bubble(text: String, at: Long, mine: Boolean, via: String?, accent: 
 }
 
 @Composable
-private fun PeerCard(line: Line.Peer) {
+private fun PeerCard(line: Line.Peer, onOpen: () -> Unit) {
     Column(
-        Modifier.fillMaxWidth().padding(end = 48.dp).clip(RoundedCornerShape(16.dp)).background(pc(0xFFF6F8F2)).padding(12.dp),
+        Modifier.fillMaxWidth().padding(end = 48.dp).clip(RoundedCornerShape(16.dp)).background(pc(0xFFF6F8F2)).clickable(role = Role.Button, onClick = onOpen).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -399,7 +435,7 @@ private fun PeerCard(line: Line.Peer) {
 @Composable
 private fun ReportCard(line: Line.Report, onOpen: () -> Unit) {
     Column(
-        Modifier.fillMaxWidth().padding(end = 48.dp).clip(RoundedCornerShape(16.dp)).background(pc(0xFFF6F8F2)).border(1.dp, P.line, RoundedCornerShape(16.dp)).padding(14.dp),
+        Modifier.fillMaxWidth().padding(end = 48.dp).clip(RoundedCornerShape(16.dp)).background(pc(0xFFF6F8F2)).border(1.dp, P.line, RoundedCornerShape(16.dp)).clickable(role = Role.Button, onClick = onOpen).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -451,9 +487,36 @@ internal fun agentStatus(p: AgentProfile): String {
     val container = LocalContext.current.container
     val context = LocalContext.current
     val state by produceState(app.umbra.agent.agents.AgentState(), p.id) { while (true) { value = container.agents.store.state(p.id); delay(10_000) } }
+    val changes by container.sessionStore.changes.collectAsStateWithLifecycle(null)
+    val session by produceState<app.umbra.core.session.Session?>(null, p.sessionId, changes) { value = p.sessionId?.let { container.sessionStore.get(it) } }
+    val activities by container.agents.activity.collectAsStateWithLifecycle()
+    val delegated by produceState<app.umbra.core.session.Session?>(null, p.id, changes) { value = activeDelegatedWork(p.id, container.sessionStore.list()) }
     return when {
         !p.running -> stringResource(R.string.ag_status_stopped)
+        session?.state == SessionState.WAITING_APPROVAL -> stringResource(R.string.ag_work_approval)
+        session?.state == SessionState.PAUSED -> stringResource(R.string.ag_work_paused)
+        session?.state == SessionState.RUNNING || activities[p.id] != null -> currentAgentWork(session, null, activities[p.id])
+        delegated != null -> stringResource(R.string.ag_work_delegated, delegated!!.title)
         state.nextWakeMs > 0 -> stringResource(R.string.ag_next_wake, DateUtils.formatDateTime(context, state.nextWakeMs, DateUtils.FORMAT_SHOW_TIME))
         else -> stringResource(R.string.ag_status_on)
     }
 }
+
+@Composable
+internal fun currentAgentWork(session: app.umbra.core.session.Session?, conversation: ConversationState?, loop: String?): String {
+    if (loop == "triage") return stringResource(R.string.ag_work_review)
+    session?.activity?.takeIf { it.isNotBlank() }?.let { return it }
+    val tool = conversation?.tools?.values?.lastOrNull { it.running }?.name
+    return stringResource(when {
+        tool == "coding_start" || tool?.startsWith("session_") == true -> R.string.ag_work_coordinate
+        tool?.startsWith("memory_") == true -> R.string.ag_work_memory
+        tool?.startsWith("timer_") == true || tool?.startsWith("rule_") == true || tool?.startsWith("queue_") == true -> R.string.ag_work_organize
+        tool?.startsWith("android_") == true -> R.string.ag_work_apps
+        tool == "read" || tool == "grep" || tool?.startsWith("messages_") == true -> R.string.ag_work_review
+        else -> R.string.ag_work_response
+    })
+}
+
+internal fun activeDelegatedWork(agentId: String, sessions: List<app.umbra.core.session.Session>): app.umbra.core.session.Session? =
+    sessions.filter { it.kind == app.umbra.core.session.SessionKind.CODING && it.agentId == agentId && !it.state.isTerminal }
+        .sortedWith(compareByDescending<app.umbra.core.session.Session> { it.state == SessionState.RUNNING }.thenByDescending { it.createdAtMs }).firstOrNull()

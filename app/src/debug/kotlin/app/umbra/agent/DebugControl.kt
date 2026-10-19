@@ -118,6 +118,30 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             val out = container.guest.runtime.exec(argv, asRoot = true, timeoutMs = (args["timeout_ms"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 120_000, maxOutputBytes = 1024 * 1024)
             buildJsonObject { put("exit", out.exitCode); put("stdout", out.stdout.takeLast(4000)); put("stderr", out.stderr.takeLast(2000)) }
         }
+        "test.provider.begin" -> {
+            check(container.sessionStore.list().none { it.state.isActive }) { "A session is working" }
+            val backup = File(container.context.filesDir, "debug-provider-backup.json")
+            check(!backup.exists()) { "Restore the previous test configuration first" }
+            val url = str(args, "base_url")
+            require(url.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+/v1")))
+            backup.writeText(UmbraJson.encodeToString(app.umbra.agent.data.AppPrefs.serializer(), container.settings.value))
+            val provider = ProviderConfig("umbra-test-agent", "Local agent verification", custom = true, baseUrl = url, api = "openai-completions", models = listOf("fake-model"), keyless = true)
+            container.settings.update { it.copy(providers = listOf(provider), defaultModel = ModelRef(provider.id, "fake-model"), autoModel = false, autoEffort = false, thinkingLevel = "minimal") }
+            buildJsonObject { put("ok", true) }
+        }
+        "test.provider.restore" -> {
+            val backup = File(container.context.filesDir, "debug-provider-backup.json")
+            val original = UmbraJson.decodeFromString(app.umbra.agent.data.AppPrefs.serializer(), backup.readText())
+            container.settings.update { original }
+            backup.delete()
+            buildJsonObject { put("ok", true) }
+        }
+        "agent.create" -> {
+            val p = container.agents.create(str(args, "name"), "a1", app.umbra.agent.agents.Templates.ASSISTANT, str(args, "soul"), model = ModelRef("umbra-test-agent", "fake-model"), effort = app.umbra.core.session.Effort("minimal"), channels = emptyList())
+            buildJsonObject { put("id", p.id); put("session", p.sessionId.orEmpty()) }
+        }
+        "agent.talk" -> { container.agents.talk(str(args, "id"), str(args, "text")); buildJsonObject { put("ok", true) } }
+        "agent.delete" -> { container.agents.delete(str(args, "id")); buildJsonObject { put("ok", true) } }
         "provider.set" -> {
             val preset = ProviderPresets.byId(str(args, "id"))
             val keyGiven = !(args["key"] as? JsonPrimitive)?.content.isNullOrBlank()
@@ -159,6 +183,27 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             val ws = container.workspaces.create(str(args, "name"))
             buildJsonObject { put("id", ws.id); put("host_path", File(container.guest.layout.workspaces, "projects/${ws.id}").path) }
         }
+        "session.draft" -> sessionJson(container.supervisor.create(str(args, "request")))
+        "session.files.list" -> UmbraJson.encodeToJsonElement(ListSerializer(app.umbra.agent.data.SessionFile.serializer()), container.sessionFiles.items.value)
+        "session.files.attach", "session.files.mount" -> {
+            val uri = android.net.Uri.parse(str(args, "uri"))
+            val git = (args["git"] as? JsonPrimitive)?.content != "false"
+            val item = if (command.endsWith("mount")) container.sessionFiles.mountFolder(str(args, "id"), uri, git)
+                else container.sessionFiles.attach(str(args, "id"), uri, git)
+            UmbraJson.encodeToJsonElement(app.umbra.agent.data.SessionFile.serializer(), item)
+        }
+        "session.files.checkpoint" -> {
+            container.sessionFiles.checkpointSession(container.sessionStore.get(str(args, "id")) ?: error("No session"))
+            buildJsonObject { put("ok", true) }
+        }
+        "session.files.history", "session.files.recover", "session.files.disconnect" -> {
+            val item = container.sessionFiles.items.value.first { it.id == str(args, "file") }
+            when (command) {
+                "session.files.recover" -> buildJsonObject { put("path", container.sessionFiles.recover(item, str(args, "checkpoint"))) }
+                "session.files.disconnect" -> { container.sessionFiles.disconnect(item); buildJsonObject { put("ok", true) } }
+                else -> JsonArray(container.sessionFiles.history(item).map { buildJsonObject { put("id", it.id); put("at", it.at); put("message", it.message) } })
+            }
+        }
         "session.create" -> sessionJson(container.supervisor.launch(str(args, "request"), workspaceId = (args["workspace"] as? JsonPrimitive)?.content))
         "session.submit" -> sessionJson(container.supervisor.submit(str(args, "request"), projectId = (args["project"] as? JsonPrimitive)?.content))
         "session.queue" -> buildJsonObject {
@@ -169,6 +214,7 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
         "session.send" -> { container.supervisor.send(str(args, "id"), str(args, "text")); buildJsonObject { put("ok", true) } }
         "session.pause" -> { container.supervisor.pause(str(args, "id")); buildJsonObject { put("ok", true) } }
         "session.resume" -> { container.supervisor.resume(str(args, "id")); buildJsonObject { put("ok", true) } }
+        "session.delete" -> { container.supervisor.delete(str(args, "id")); buildJsonObject { put("ok", true) } }
         "session.stop" -> { container.supervisor.stop(str(args, "id")); buildJsonObject { put("ok", true) } }
         "session.get" -> container.sessionStore.get(str(args, "id"))?.let(::sessionJson) ?: error("no such session")
         "contract.set" -> {
@@ -232,7 +278,7 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
     }
 
     private fun sessionJson(s: Session): JsonObject = buildJsonObject {
-        put("id", s.id); put("title", s.title); put("state", s.state.name); put("error", s.lastError ?: ""); put("workspace", s.workspaceId ?: "")
+        put("id", s.id); put("title", s.title); put("state", s.state.name); put("kind", s.kind.name); put("activity", s.activity.orEmpty()); put("error", s.lastError ?: ""); put("workspace", s.workspaceId ?: "")
         put("plan", s.plan.size); put("omp_session_file", s.ompSessionFile ?: "")
         put("queued", s.queuedAtMs != null); put("project", s.projectId ?: "")
     }

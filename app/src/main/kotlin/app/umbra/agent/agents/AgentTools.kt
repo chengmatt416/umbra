@@ -115,6 +115,14 @@ class AgentTools(private val container: AppContainer) {
             runtime.notify(p, a.str("text") ?: return@tool err("text is missing"), urgent)
             ok("Notified the user.")
         },
+        tool("agent_status", "Describe your current task broadly, in the user's language, without private details or reasoning. Update when the task changes, not for each action.", objectSchema {
+            string("summary", "A short activity, e.g. Planning the trip or Reviewing messages.", required = true)
+        }) { a ->
+            val sid = store.get(agentId)?.sessionId ?: return@tool err("No agent session")
+            val summary = a.str("summary")?.trim()?.take(120)?.takeIf { it.isNotBlank() } ?: return@tool err("summary is missing")
+            container.sessionStore.update(sid) { it.copy(activity = summary) }
+            ok("Status updated.")
+        },
         tool("coding_start", "Start a coding session on this phone for work that needs a computer: code, files, builds, long research, operating apps step by step. It runs in its own folder with the terminal and Linux tools; its report comes back to you as a message when it finishes.", objectSchema {
             string("task", "The work, complete and self-contained.", required = true)
             string("title", "A short title.")
@@ -148,12 +156,15 @@ class AgentTools(private val container: AppContainer) {
         val effort = when (val e = a.str("effort")) { null, "", "auto" -> Effort(Effort.OMP_AUTO, auto = true); in Effort.LEVELS -> Effort(e); else -> return err("bad effort") }
         val modelName = a.str("model")?.takeIf { it.isNotBlank() && it != "auto" }
         val model = modelName?.let { container.resolveModel(it) ?: return err("No connected model is called '$it'.") }
+        val owner = p.sessionId?.let { container.sessionStore.get(it) }
+        val sharedWorkspace = owner?.takeIf { container.sessionFiles.connected(it).isNotEmpty() }?.workspaceId
         val s = container.supervisor.submit(
+            workspaceId = sharedWorkspace,
             request = task, title = a.str("title") ?: task.lineSequence().first().take(80), model = model, effort = effort,
-            spec = SessionSpec(kind = SessionKind.CODING, agentId = p.id),
+            spec = SessionSpec(kind = SessionKind.CODING, agentId = p.id, spawnedBy = owner?.id),
         )
         val handle = container.sessionBus.address(s)
-        return ok("Started the coding session $handle${if (s.queuedAtMs != null) " (queued: it starts when the phone can take another agent)" else ""}. Its report comes back to you when it finishes; follow it with session_read $handle.")
+        return ok("[Session: ${s.id}] Started the coding session $handle${if (s.queuedAtMs != null) " (queued: it starts when the phone can take another agent)" else ""}. Its report comes back to you when it finishes; follow it with session_read $handle.")
     }
 
     // ---- helpers ----
@@ -185,7 +196,7 @@ class AgentTools(private val container: AppContainer) {
     private fun JsonObject.int(k: String) = (this[k] as? JsonPrimitive)?.intOrNull
 
     companion object {
-        val NAMES = listOf("memory_add", "memory_edit", "memory_forget", "memory_list", "timer_set", "timer_list", "timer_cancel", "rule_add", "rule_list", "rule_remove", "queue_add", "queue_list", "queue_done", "notify_user", "coding_start")
+        val NAMES = listOf("memory_add", "memory_edit", "memory_forget", "memory_list", "timer_set", "timer_list", "timer_cancel", "rule_add", "rule_list", "rule_remove", "queue_add", "queue_list", "queue_done", "notify_user", "coding_start", "agent_status")
     }
 }
 
@@ -206,6 +217,7 @@ object AgentPrompt {
         appendLine("## How you live")
         appendLine("- You run all the time for the user, but you are only awake for moments: ${heartbeatMinutes?.let { "about every $it minutes" } ?: "when something happens"}, when a timer you set is due, when a rule fires, or when a message arrives. Each wake starts with a `[Wake · time · reason]` digest of what is new. The user's own messages to you come as normal messages (from Telegram they start with `[Telegram]`).")
         appendLine("- When a wake needs nothing from the user, do what is needed quietly and end your turn with exactly ${AgentRuntime.QUIET} (nothing else). Otherwise write a short message to the user, as in a chat.")
+        appendLine("- Use agent_status to show the broad task you are working on, in the user's language. Keep it brief and update it when your task changes.")
         appendLine("- Learn the user: when you learn something durable (preferences, people, routines, commitments, how they like things done), save it with `memory_add`; correct it with `memory_edit`. Never store passwords, one-time codes or bank details.")
         appendLine("- Time: `timer_set` for anything that must happen at a time (reminders, checks later), `rule_add` for \"when X arrives, do Y\". The user's own requests that can wait are in your queue (`queue_list`, `queue_done`).")
         appendLine("- Reach the user with `notify_user` for what they should see soon. Respect quiet hours: only urgent things then.")

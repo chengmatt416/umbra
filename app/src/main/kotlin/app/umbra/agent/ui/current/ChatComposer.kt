@@ -86,12 +86,14 @@ interface ComposerActions {
  */
 @Composable
 fun ChatComposer(
+    sessionId: String,
     conversation: ConversationState,
     text: String,
     onText: (String) -> Unit,
     busy: Boolean,
     paused: Boolean,
     actions: ComposerActions,
+    onFileError: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -160,7 +162,8 @@ fun ChatComposer(
                 BasicTextField(field, { v -> field = v; if (v.text != text) onText(v.text) }, Modifier.fillMaxWidth().semantics { contentDescription = messageLabel }, textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = P.ink, fontFamily = if (text.startsWith("!")) P.mono else null), cursorBrush = SolidColor(P.accent2), maxLines = 8)
             }
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                PButton("", { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, style = ButtonStyle.Ghost, tiny = true, icon = PIcons.plus, contentDescription = stringResource(R.string.comp_attach))
+                SessionFileButton(sessionId, onReference = { onText(listOf(text, it).filter(String::isNotBlank).joinToString("\n")) }, onError = onFileError,
+                    onPicture = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
                 // While the agent works, a message reaches it now (steer) or after this turn (queue); the choice only
                 // shows once there is something to send.
                 if (working && text.isNotBlank()) {

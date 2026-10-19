@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ag_work_approval">Waiting for approval</string>
+    <string name="ag_work_paused">Paused</string>
+    <string name="ag_work_review">Reviewing information</string>
+    <string name="ag_work_coordinate">Coordinating work</string>
+    <string name="ag_work_memory">Updating memory</string>
+    <string name="ag_work_organize">Organizing tasks</string>
+    <string name="ag_work_apps">Working with apps</string>
+    <string name="ag_work_response">Preparing a response</string>
+    <string name="ag_work_delegated">Delegated work · %1$s</string>
+</resources>

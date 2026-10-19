@@ -38,7 +38,7 @@ class SessionTools(
     /** Turns a model name the agent wrote (`provider/id`, a bare id, or `auto`) into a model of a connected account. */
     private val resolveModel: suspend (String) -> ModelRef? = { name -> name.split('/', limit = 2).takeIf { it.size == 2 }?.let { ModelRef(it[0], it[1]) } },
 ) {
-    fun forSession(sessionId: String): List<HostSideTool> = buildList {
+    fun forSession(sessionId: String, allowSubagents: Boolean = true): List<HostSideTool> = buildList {
         add(tool("sessions_list", LIST_DESCRIPTION, objectSchema {
             boolean("all", "Include finished sessions too (default: only those that are working, waiting or paused, plus the last few finished).")
         }) { args, _ -> list(sessionId, args.bool("all") == true) })
@@ -59,7 +59,7 @@ class SessionTools(
             integer("lines", "How many recent lines (default 20, at most 60).")
         }) { args, _ -> read(args.str("who") ?: return@tool err("who is missing"), (args.int("lines") ?: 20).coerceIn(1, 60)) })
 
-        run {
+        if (allowSubagents) {
             add(tool("subagent_start", START_DESCRIPTION, objectSchema {
                 string("task", "The work, complete and self-contained: what to do, where (paths), what done looks like, what to report back.", required = true)
                 string("name", "A short handle for it, e.g. \"token-split\" (it becomes #token-split).", required = true)

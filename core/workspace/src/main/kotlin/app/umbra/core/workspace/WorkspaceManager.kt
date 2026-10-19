@@ -53,11 +53,18 @@ class WorkspaceManager(
         origin: String? = null,
         permissions: WorkspacePermissions = WorkspacePermissions.DEFAULT,
         sessionId: String? = null,
+        externalPath: Path? = null,
     ): Workspace = io {
         mutex.withLock {
             val registry = load().toMutableList()
             val id = uniqueId(slug(name), registry.map { it.id }.toSet())
-            Files.createDirectories(layout.projectDir(id))
+            val external = externalPath?.toRealPath()?.also {
+                require(Files.isDirectory(it) && Files.isReadable(it) && Files.isWritable(it)) { "The selected folder must be readable and writable" }
+                require(!it.startsWith(layout.hostRoot.toAbsolutePath().normalize())) { "Choose a folder outside Umbra's managed workspace tree" }
+            }
+            Files.createDirectories(layout.projectsDir)
+            if (external == null) Files.createDirectories(layout.projectDir(id))
+            else Files.createSymbolicLink(layout.projectDir(id), external)
             val now = clock.nowMs()
             val ws = Workspace(
                 id = id,
@@ -67,6 +74,7 @@ class WorkspaceManager(
                 permissions = permissions,
                 origin = origin,
                 sessionIds = setOfNotNull(sessionId),
+                externalPath = external?.toString(),
             )
             registry += ws
             save(registry)
@@ -150,6 +158,7 @@ class WorkspaceManager(
             if (sessionId == null || sessionId in ws.sessionIds || ws.sessionIds.isEmpty()) {
                 roots += layout.projectDir(ws.id).toAbsolutePath().normalize().toString()
                 roots += layout.guestProjectDir(ws.id)
+                ws.externalPath?.let { roots += it }
             }
         }
         if (sessionId != null && sessionId.matches(ID_REGEX)) {
@@ -310,7 +319,7 @@ class WorkspaceManager(
         }
 
     private fun deleteRecursively(path: Path) {
-        if (!Files.exists(path)) return
+        if (!Files.exists(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return
         Files.walk(path).use { s -> s.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } }
     }
 

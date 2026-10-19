@@ -45,11 +45,12 @@ class AgentSessionTest {
         model: ScriptedModel,
         mode: ApprovalMode = ApprovalMode.BALANCED,
         governor: app.umbra.core.perf.ResourceGovernor? = null,
+        beforeWork: suspend (app.umbra.core.session.Session) -> Unit = {},
         block: suspend OrchestratorRig.() -> Unit,
     ) {
         assumeTrue(ompBinary != null, "omp is not installed; skipping the orchestrator test")
         model.use {
-            OrchestratorRig(dir, ompBinary!!, it.url, mode, governor = governor).use { rig ->
+            OrchestratorRig(dir, ompBinary!!, it.url, mode, governor = governor, beforeWork = beforeWork).use { rig ->
                 runBlocking {
                     try {
                         rig.block()
@@ -122,6 +123,79 @@ class AgentSessionTest {
             val failed = awaitState(session.id, SessionState.FAILED)
             assertTrue(failed.lastError.orEmpty().contains("invalid api key", ignoreCase = true), "the user sees why: ${failed.lastError}")
             assertEquals(1, failed.failureCount)
+        }
+    }
+
+    @Test
+    fun changingTheWorkspaceRestartsBashInTheMountedFolderAndKeepsTheConversation() {
+        val model = ScriptedModel { r ->
+            if (r.lastToolResult == null) ScriptedModel.toolCall("bash", """{"command":"pwd -P"}""")
+            else ScriptedModel.text("cwd: ${r.lastToolResult}")
+        }
+        withRig(model) {
+            val session = supervisor.launch("first directory")
+            awaitState(session.id, SessionState.COMPLETED)
+            val conversation = session(session.id).ompSessionFile
+            val original = java.nio.file.Files.createDirectories(dir.resolve("selected folder"))
+            val mounted = workspaces.create("Selected", externalPath = original)
+            supervisor.configureFiles(session.id) { current ->
+                workspaces.attachSession(mounted.id, current.id)
+                store.update(current.id) { it.copy(workspaceId = mounted.id) }
+            }
+            supervisor.send(session.id, "second directory")
+            awaitEvent(session.id) { it is SessionEvent.UserMessage && it.text == "second directory" }
+            awaitState(session.id, SessionState.COMPLETED)
+            val result = events(session.id).map { it.event }.filterIsInstance<SessionEvent.ToolResult>().last { it.tool == "bash" }
+            assertTrue(original.toRealPath().toString() in result.summary, result.summary)
+            assertEquals(conversation, session(session.id).ompSessionFile)
+            val messages = model.requests.last().body["messages"].toString()
+            assertTrue("first directory" in messages && "second directory" in messages, messages)
+        }
+    }
+
+    @Test
+    fun aFailedSafetyCheckpointPreventsTheModelFromRunning() {
+        val model = ScriptedModel { ScriptedModel.text("must not run") }
+        withRig(model, beforeWork = { error("Connected file is unavailable") }) {
+            val session = supervisor.create("protect originals")
+            val failure = runCatching { supervisor.send(session.id, "edit") }.exceptionOrNull()
+            assertTrue(failure?.message.orEmpty().contains("Connected file is unavailable"), failure.toString())
+            assertTrue(model.requests.isEmpty())
+            assertTrue(events(session.id).none { it.event is SessionEvent.ToolCall || it.event is SessionEvent.UserMessage })
+        }
+    }
+
+    @Test
+    fun changingFilesDuringAnActiveTurnIsRefusedWithoutRunningTheCallback() {
+        val model = ScriptedModel { ScriptedModel.text("finished normally", delayMs = 1_500) }
+        withRig(model) {
+            val session = supervisor.launch("work")
+            awaitState(session.id, SessionState.RUNNING)
+            var changed = false
+            val failure = runCatching { supervisor.configureFiles(session.id) { changed = true } }.exceptionOrNull()
+            assertNotNull(failure)
+            assertFalse(changed)
+            awaitState(session.id, SessionState.COMPLETED)
+            assertTrue(events(session.id).any { it.event is SessionEvent.AgentMessage && (it.event as SessionEvent.AgentMessage).text == "finished normally" })
+        }
+    }
+
+    @Test
+    fun anAgentRunsWithItsOwnAssistantPromptAndDelegatesCoding() {
+        val model = ScriptedModel { ScriptedModel.text("Ready to help.") }
+        withRig(model) {
+            val session = supervisor.create("assistant", kind = app.umbra.core.session.SessionKind.AGENT)
+            supervisor.send(session.id, "hello")
+            awaitState(session.id, SessionState.COMPLETED)
+            val request = model.requests.single()
+            assertTrue("Umbra personal assistant" in request.systemText, request.systemText.take(200))
+            assertTrue("persistent personal assistant" in request.systemText)
+            assertFalse("bash" in request.toolNames, request.toolNames.toString())
+            assertFalse("edit" in request.toolNames)
+            assertFalse("write" in request.toolNames)
+            assertTrue("android_observe" in request.toolNames)
+            assertTrue("read" in request.toolNames)
+            assertEquals(app.umbra.core.session.SessionKind.AGENT, session(session.id).kind)
         }
     }
 

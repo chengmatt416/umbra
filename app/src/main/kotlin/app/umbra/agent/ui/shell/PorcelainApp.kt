@@ -177,8 +177,12 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
     }
 
     fun openSessionNow(id: String) {
-        container.ui.focus(id)
-        go(Dest.Current)
+        val agent = container.agents.store.bySession(id)
+        if (agent != null) nav.navigate("agent/${agent.id}") { launchSingleTop = true }
+        else {
+            container.ui.focus(id)
+            go(Dest.Current)
+        }
     }
 
     var stopAll by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
@@ -190,6 +194,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
             if (openPage == app.umbra.agent.AgentService.PAGE_STOP_ALL) stopAll = true
             else if (openPage.startsWith("agent/")) nav.navigate(openPage) { launchSingleTop = true }
             else if (openPage.startsWith("messages/") && app.umbra.agent.agents.Channels.app(openPage.removePrefix("messages/")) != null) nav.navigate(openPage) { launchSingleTop = true }
+            else if (openPage.matches(Regex("workspace/[A-Za-z0-9][A-Za-z0-9._-]{0,79}"))) nav.navigate(openPage) { launchSingleTop = true }
             else if (openPage == "new-coding" || openPage == "new-agent") {
                 container.ui.homeSheet.value = openPage.removePrefix("new-")
                 nav.navigate(Dest.Home.route) { popUpTo(Dest.Home.route) { inclusive = false }; launchSingleTop = true }

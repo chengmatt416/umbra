@@ -220,7 +220,8 @@ class AppContainer(val context: Context) {
     val displays = CompositeDisplays(listOf(ServerDisplays(helper.client) { overlayDisplays.list() }, overlayDisplays))
 
     // ---- Linux environment (the desktop backend needs it, and the Android backends do not) ----
-    val guest = GuestManager(context, rootShell, scope)
+    val sessionFiles by lazy { app.umbra.agent.data.SessionFiles(this) }
+    val guest = GuestManager(context, rootShell, scope, additionalBinds = { sessionFiles.binds })
     val linuxGui = GuestGuiBackend(guest.runtime)
 
     /** The shared workspace tree, seen from the phone (host) and from Linux (`/workspace`). */
@@ -291,10 +292,11 @@ class AppContainer(val context: Context) {
     fun toolHost(sessionId: String): UmbraToolHost = hosts.getOrPut(sessionId) {
         // The Linux desktop tools are offered only once the desktop pack is installed.
         val desktop = guest.desktopInstalled
+        val profile = agents.store.bySession(sessionId)
         UmbraToolHost(
             pipeline, sessionId, decisions, exclude = { it.startsWith("gui_") && !desktop },
             // Every session can talk to the others; an agent's conversation also gets its memory, timers and the rest.
-            extra = sessionTools.forSession(sessionId) + connectors.messages.tools(sessionId) + (agents.store.bySession(sessionId)?.let { agentTools.forAgent(it.id) } ?: emptyList()),
+            extra = sessionTools.forSession(sessionId, allowSubagents = profile == null) + connectors.messages.tools(sessionId) + (profile?.let { agentTools.forAgent(it.id) } ?: emptyList()),
         )
     }
 
@@ -413,6 +415,7 @@ class AppContainer(val context: Context) {
                 session.displays.forEach { id -> runCatching { displays.destroy(id) } }
                 leases.releaseAll(session.id)
                 hosts.remove(session.id)
+                sessionFiles.checkpointSession(session)
             },
             conversations = app.umbra.agent.data.ConversationFiles(java.io.File(context.filesDir, "conversations")),
             fence = { emergency.lockdownReason() },
@@ -424,12 +427,15 @@ class AppContainer(val context: Context) {
             },
             // A deleted task's terminals (its shells and the omp TUI) end with it instead of running on unseen.
             onDeleted = { id -> terminals.closeSession(id) },
+            beforeWork = { session -> sessionFiles.checkpointSession(session) },
             // An agent's conversation is told its soul and memory each time its agent starts.
             sessionPrompt = { s ->
-                if (s.kind != app.umbra.core.session.SessionKind.AGENT) null
+                val files = sessionFiles.prompt(s)
+                val profile = if (s.kind != app.umbra.core.session.SessionKind.AGENT) null
                 else s.agentId?.let { id -> agents.store.get(id) }?.let { p ->
                     app.umbra.agent.agents.AgentPrompt.of(p, agents.store.soul(p.id), agents.store.memory(p.id).entries(), agents.intervalMs(p)?.let { (it / 60_000).toInt() })
                 }
+                listOfNotNull(profile, files).joinToString("\n\n").ifBlank { null }
             },
         ),
         scope = scope,

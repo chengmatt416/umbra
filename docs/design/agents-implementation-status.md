@@ -115,3 +115,43 @@ that session's running state has been observed; queue size, concurrency and fair
 
 The remaining specification work above is still pending; this deployment does not include the Go/VNC rewrite,
 desktop installers or the unfinished connector methods. Account-level message delivery has not been verified.
+
+
+## 0.4.1 session files and assistant sessions
+
+* The updated Figma FAB uses two 56 dp icon-only circles, original exported icons, a 10 dp horizontal gap,
+  and 12 dp above the close FAB; left-handed mode mirrors the actions. Checked on the Android emulator.
+* The paperclip accepts files and folders through Android's document picker. Device files receive managed
+  shortcuts to originals; device folders become the working directory. Cloud documents are explicitly imported
+  copies. Android file access is requested for direct paths. Mount changes require an idle/paused session.
+* Git protection starts enabled. Private repositories snapshot selected content, including ignored and uncommitted
+  files, before work and after turns. Existing source HEAD/index are preserved. New source repositories use
+  rename-based object creation for Android shared storage. Trust is scoped to selected folders, not global config.
+  Recovery creates a new managed workspace. Disconnecting removes only managed links/binds; history stays usable
+  after app restart and after source access is revoked. Delegated coding work inherits connected file protection.
+* Changing folders restarts the process in the selected working directory. The app atomically updates only the
+  app-owned transcript's cwd header while its writer is stopped, preserving the rest of the conversation.
+* Agent sessions use their own assistant system prompt and assistant tool list, with memory, scheduling, messages,
+  Android actions and delegation. Coding runs in separate sessions. Delegation and report events carry stable
+  session IDs and open the corresponding session. Agent session links open agent chat, not the coding screen.
+* Laya selects recipients among agents subscribed to an incoming source, including all relevant agents. Explicit
+  rules override relevance filtering. Unavailable or low-confidence decisions preserve subscriptions. Notifications
+  without explicit rules wait for the heartbeat; messages route immediately. Decisions are cached across agents.
+* Broad activity is shown in agent chat/list, including delegated work while the assistant is idle. Assistants can
+  update it with agent_status. Idle processes yield promptly at handoffs, and finished child processes are released
+  before reporting. The native thinking orb ports the upstream working preset at commit de85557; its MIT license is
+  included in APK assets. Background/reduced-motion states stop its clock.
+
+Verification for this change:
+
+* 58 core session tests, 23 workspace tests, 48 orchestrator tests and 53 app tests passed. The orchestrator drives
+  the real pinned omp against a scripted model; no provider credentials or real account sends are used.
+* Rooted-device mount test passed: selected file/dir binds, external atomic replacement, and disconnect preserving
+  originals. Native root mounts reject changed/symlinked paths.
+* Android document-picker tests passed for attachments and folder grants in the arm64 proot environment. Verified
+  live shortcut edits, fresh source Git initialization/commit, checkpoints, separate recovery copies, attachment
+  after folder mount, disconnect preserving originals, and recovery after restart with source access revoked.
+* scripts/ondevice-agent-session.py passed: assistant prompt/tools, broad activity/native orb, separate coding
+  session, tapping its event, returning report, and clearing finished status. Local provider settings were restored.
+* The orb geometry test compares the Kotlin renderer with upstream reference coordinates; link parsing and Laya
+  individual/broadcast/failure/uncertainty/cancellation paths have regression tests.

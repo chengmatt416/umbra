@@ -25,6 +25,7 @@ class ProotRuntime(
     override val layout: RuntimeLayout,
     private val binaries: Binaries,
     private val shell: ShellBackend,
+    private val additionalBinds: () -> List<RuntimeLayout.Bind> = { emptyList() },
 ) : LinuxRuntime {
     data class Binaries(
         /** The proot executable (`libproot.so`). */
@@ -163,6 +164,10 @@ class ProotRuntime(
             if (!File("/proc/$name").canRead()) add("${layout.rootfs}/proc/.umbra/$name:/proc/$name")
         }
         for (b in layout.binds) add("${b.host}:${b.guest}")
+        for (b in additionalBinds()) {
+            require(b.guest.startsWith("/storage/") && ':' !in b.host && ':' !in b.guest) { "Unsupported shared-storage mount path" }
+            add("${b.host}:${b.guest}")
+        }
     }
 
     override fun hostCommand(argv: List<String>, env: Map<String, String>, cwd: String?, asRoot: Boolean, envFile: String?, pidFile: String?): String {

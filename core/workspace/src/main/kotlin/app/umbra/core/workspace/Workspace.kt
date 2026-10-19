@@ -44,6 +44,8 @@ data class Workspace(
     /** Where it came from, for example a git URL. */
     val origin: String? = null,
     val pinned: Boolean = false,
+    /** A user-selected directory, linked into the workspace tree. Its contents are never owned or deleted by Umbra. */
+    val externalPath: String? = null,
 )
 
 /** Directories reserved for one session (spec §22 "session-specific files", "generated artifacts"). */

@@ -349,14 +349,15 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                     ChatList(session, conversation, mine, myQuestions, ops, onComposer = { composer = it }, live = live, onExpand = { expanded = true }, simple = simple)
                 }
                 View.Activity -> ActivityList(id)
-                View.Terminal -> Box(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 8.dp)) { app.umbra.agent.ui.terminal.TerminalsScreen(sessionId = id, embedded = true) }
+                View.Terminal -> Box(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 8.dp)) { app.umbra.agent.ui.terminal.TerminalsScreen(sessionId = id, cwd = session.workspaceId?.let(container.workspaceLayout::guestProjectDir), embedded = true) }
                 View.Changes -> ChangesView(session, onCommit)
             }
         }
         if (expanded && live != null) LiveDisplayDialog(session, live, onDismiss = { expanded = false })
         if (view == View.Chat) {
             ChatComposer(
-                conversation, composer, { composer = it }, busy = busy, paused = session.state == SessionState.PAUSED,
+                id, conversation, composer, { composer = it }, busy = busy, paused = session.state == SessionState.PAUSED,
+                onFileError = { error = it },
                 actions = object : ComposerActions {
                     override fun send(text: String, images: List<ContentBlock.Image>, mode: WhileWorking) {
                         error = null

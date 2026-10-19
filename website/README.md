@@ -22,7 +22,7 @@ export UMBRA_KEY_PASSWORD="$UMBRA_KEYSTORE_PASSWORD"
 # the Linux image to carry: build/rootfs/umbra-rootfs-<v>-arm64.tar.xz + packs + manifest.json (runtime-build/rootfs/build.sh <v>);
 # 0.4.0 includes the offline Chromium pack. A different image makes installed apps offer a Linux update.
 (cd .. && ./gradlew -Pumbra.linuxVersion=0.4.0 :app:assembleRelease)
-node tools/upload-release.mjs ../app/build/outputs/apk/release/app-release.apk umbra-0.4.0.apk   # writes src/apk.json (size, sha256, version, versionCode)
+node tools/upload-release.mjs ../app/build/outputs/apk/release/app-release.apk umbra-0.4.1.apk   # writes src/apk.json (size, sha256, version, versionCode)
 # bump version/file in src/content.mjs (APK.version/versionCode/file) and LATEST_APK in wrangler.toml, then:
 node build.mjs && npx wrangler pages deploy dist --project-name umbra-agent --branch main
 node tools/verify-release.mjs  # checks feed, ranges, redirect and full published APK SHA-256

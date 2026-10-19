@@ -33,6 +33,23 @@ class WorkspaceManagerTest {
     private fun manager() = WorkspaceManager(layout(), clock)
 
     @Test
+    fun mountedFoldersWorkOnOriginalsAndDeletingTheWorkspaceOnlyRemovesTheLink(): Unit = runBlocking {
+        val original = dir.resolve("original folder").createDirectories()
+        original.resolve("keep.txt").writeText("original")
+        val m = manager()
+        val ws = m.create("Mounted", externalPath = original)
+        assertEquals(original.toRealPath().toString(), ws.externalPath)
+        m.resolve(ws.id, "keep.txt").writeText("edited in place")
+        assertEquals("edited in place", Files.readString(original.resolve("keep.txt")))
+        assertEquals(ws.externalPath, manager().get(ws.id)?.externalPath)
+        assertTrue(original.toRealPath().toString() in m.riskRoots(null))
+        assertTrue(m.delete(ws.id))
+        assertTrue(Files.isDirectory(original))
+        assertEquals("edited in place", Files.readString(original.resolve("keep.txt")))
+        assertFalse(Files.exists(layout().projectDir(ws.id)))
+    }
+
+    @Test
     fun createsProjectDirectoriesWithReadableUniqueIds(): Unit = runBlocking {
         val m = manager()
         val a = m.create("My Android App!")

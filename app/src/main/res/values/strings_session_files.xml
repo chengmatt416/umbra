@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sf_title">Session files</string>
+    <string name="sf_note">Attach a file to add its shortcut. Mount a device folder to work directly in it. Pause a working session before changing connections. Cloud files are imported as copies.</string>
+    <string name="sf_git">Protect with Git</string>
+    <string name="sf_git_note">Save originals before work starts, then checkpoint each turn. Existing repositories keep their staging index. Recovery creates a separate copy.</string>
+    <string name="sf_photo">Photo</string>
+    <string name="sf_attach">Attach file</string>
+    <string name="sf_mount">Mount folder</string>
+    <string name="sf_busy">Connecting and saving the first checkpoint…</string>
+    <string name="sf_failed">Could not connect the selected item.</string>
+    <string name="sf_access_denied">Allow device file access to edit originals directly. No connection was added.</string>
+    <string name="sf_original">Original file · edits affect this file</string>
+    <string name="sf_folder">Mounted folder · session working directory</string>
+    <string name="sf_copy">Imported copy · original unchanged</string>
+    <string name="sf_disconnected">Disconnected · checkpoints kept</string>
+    <string name="sf_reference">Insert shortcut</string>
+    <string name="sf_history">Git checkpoints</string>
+    <string name="sf_disconnect">Disconnect</string>
+    <string name="sf_recover_note">Recover files into a new workspace. Your current originals stay unchanged; open or share the recovered files there.</string>
+    <string name="sf_recover">Recover copy · %1$s</string>
+</resources>

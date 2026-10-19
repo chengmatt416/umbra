@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ag_work_approval">等待核准</string>
+    <string name="ag_work_paused">已暫停</string>
+    <string name="ag_work_review">正在整理資訊</string>
+    <string name="ag_work_coordinate">正在協調工作</string>
+    <string name="ag_work_memory">正在更新記憶</string>
+    <string name="ag_work_organize">正在安排工作</string>
+    <string name="ag_work_apps">正在操作應用程式</string>
+    <string name="ag_work_response">正在準備回覆</string>
+    <string name="ag_work_delegated">委派的工作 · %1$s</string>
+</resources>

@@ -292,6 +292,11 @@ class AgentSupervisor(
     /** Whether an omp process runs for the session now. */
     fun isProcessAlive(sessionId: String): Boolean = live[sessionId]?.isProcessAlive == true
 
+    suspend fun configureFiles(sessionId: String, block: suspend (Session) -> Unit) {
+        checkTui(sessionId)
+        sessionFor(sessionId).configureFiles(block)
+    }
+
     /** The session's last answer: the text of its latest assistant message (empty when it has none). */
     suspend fun finalText(sessionId: String): String {
         val items = runCatching { conversation(sessionId).value.items }.getOrNull() ?: return ""

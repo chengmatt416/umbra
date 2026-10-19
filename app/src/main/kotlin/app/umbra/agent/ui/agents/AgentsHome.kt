@@ -114,6 +114,7 @@ private fun AgentRow(p: AgentProfile, onClick: () -> Unit) {
             }
             Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 PIcon(if (p.running) PIcons.clock else PIcons.pause, size = 12.dp, tint = P.muted)
+                if (conversation.working) app.umbra.agent.ui.porcelain.ThinkingOrb(status)
                 Text(status, fontSize = 12.sp, color = P.muted, maxLines = 1)
             }
         }

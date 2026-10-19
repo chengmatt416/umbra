@@ -44,6 +44,7 @@ class GuestManager(
     private val context: Context,
     private val root: ShellBackend,
     private val scope: CoroutineScope,
+    private val additionalBinds: () -> List<RuntimeLayout.Bind> = { emptyList() },
 ) {
     sealed interface State {
         data object Checking : State
@@ -70,7 +71,7 @@ class GuestManager(
 
     // ---- how the environment runs ----
 
-    private val chroot = RootChrootRuntime(root, layout)
+    private val chroot = RootChrootRuntime(root, layout, additionalBinds)
 
     /** proot as the APK carries it, or null where it is missing (an x86 build, a stripped APK). */
     private val proot: ProotRuntime? = run {
@@ -85,6 +86,7 @@ class GuestManager(
                 tmpDir = File(context.cacheDir, "proot").path,
             ),
             ProcessShell.app(),
+            additionalBinds,
         )
     }
 

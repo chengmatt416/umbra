@@ -53,6 +53,7 @@ class OrchestratorRig(
     val governor: app.umbra.core.perf.ResourceGovernor? = null,
     fence: () -> String? = { null },
     admission: (String?, Map<String?, Int>) -> String? = { _, _ -> null },
+    beforeWork: suspend (Session) -> Unit = {},
 ) : AutoCloseable {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val home: Path = Files.createDirectories(dir.resolve("home"))
@@ -123,6 +124,7 @@ class OrchestratorRig(
         policy = recovery,
         fence = fence,
         admission = admission,
+        beforeWork = beforeWork,
         onTodos = { id, phases ->
             plans.observe(id, phases.map { p -> app.umbra.core.control.PlanPhase(p.name, p.tasks.map { app.umbra.core.control.PlanTask(it.content, it.status) }) }, "agent")
         },

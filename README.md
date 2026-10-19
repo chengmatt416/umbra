@@ -32,6 +32,17 @@ its own work, and asks before anything risky.
   publishes only what you authorize and reads it back, security evidence with independent anchors, and your
   own computers as execution nodes ([`umbra-node`](#your-computers-as-nodes)), which you can revoke.
 
+* **Session files.** The paperclip attaches a device file as a shortcut to its original, or mounts a device folder
+  as the session's working directory. Git protection starts enabled: private checkpoints include ignored files and
+  uncommitted changes without changing an existing repository's staging index. Recovery opens a separate workspace;
+  disconnecting keeps originals and history. Direct access requires Android's file-access permission; cloud files
+  are imported as copies.
+* **Personal assistants.** Agents have their own assistant prompt, memory, timers, inbox and tools. They delegate
+  implementation to separate coding sessions; tap the delegation or report event to open that work. Broad activity
+  labels and a native [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) indicator show current work.
+  Laya routes incoming items among agents subscribed to that source, including broadcasts when relevant to all;
+  without a confident Laya answer, subscriptions and explicit rules remain in force.
+
 * **English and 繁體中文.** The whole interface is in both; it follows the phone's language, or pick one in
   Android's per-app language settings.
 

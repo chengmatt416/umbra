@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sf_title">工作階段檔案</string>
+    <string name="sf_note">附加檔案會加入捷徑；掛載裝置資料夾後會直接在其中工作。變更連接前請先暫停執行中的工作階段。雲端檔案會匯入副本。</string>
+    <string name="sf_git">使用 Git 保護</string>
+    <string name="sf_git_note">開始工作前先保存原始內容，之後每輪建立檢查點。既有儲存庫的暫存索引不受影響。復原時會建立獨立副本。</string>
+    <string name="sf_photo">照片</string>
+    <string name="sf_attach">附加檔案</string>
+    <string name="sf_mount">掛載資料夾</string>
+    <string name="sf_busy">正在連接並保存第一個檢查點…</string>
+    <string name="sf_failed">無法連接選取的項目。</string>
+    <string name="sf_access_denied">請允許裝置檔案存取權以直接編輯原始內容。目前未新增連接。</string>
+    <string name="sf_original">原始檔案 · 編輯會直接影響此檔案</string>
+    <string name="sf_folder">已掛載資料夾 · 工作階段的工作目錄</string>
+    <string name="sf_copy">匯入的副本 · 原始內容不變</string>
+    <string name="sf_disconnected">已中斷連接 · 檢查點已保留</string>
+    <string name="sf_reference">插入捷徑</string>
+    <string name="sf_history">Git 檢查點</string>
+    <string name="sf_disconnect">中斷連接</string>
+    <string name="sf_recover_note">將檔案復原到新的工作區。目前的原始內容不變；可在新工作區開啟或分享復原的檔案。</string>
+    <string name="sf_recover">復原副本 · %1$s</string>
+</resources>

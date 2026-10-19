@@ -43,6 +43,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -97,6 +98,14 @@ class AgentRuntime(private val container: AppContainer) {
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val sources = CopyOnWriteArrayList<IncomingSource>()
     private var started = false
+    private val delivery = AgentDeliveryRouter(container.laya.engine) { container.laya.state.value == LayaSidecar.State.RUNNING }
+
+    private suspend fun recipients(item: Incoming): Set<String> {
+        val eligible = store.profiles.value.filter { it.running && watches(it, item) }
+        val selected = delivery.recipients(item.key, item.line(), eligible.map { AgentDeliveryRouter.Recipient(it.id, it.name, store.soul(it.id)) })
+        // A rule is an explicit user request and takes precedence over automatic relevance routing.
+        return selected + eligible.filter { p -> store.rules(p.id).any { it.enabled && matches(it, item) } }.map { it.id }
+    }
 
     /** The agent whose chat is on screen: its new messages need no notification. */
     val onScreen = MutableStateFlow<String?>(null)
@@ -327,11 +336,15 @@ class AgentRuntime(private val container: AppContainer) {
             val freshQueue = queue.filter { it.addedAtMs > state.lastRunMs }
 
             // Triage: what needs the agent now, what can wait for its next run, what it can ignore.
-            mutableActivity.value = mutableActivity.value + (agentId to "triage")
-            val verdicts = if (skipTriage || arrived.isEmpty()) arrived.associateWith { Verdict.NOW } else triage(p, arrived)
-            mutableActivity.value = mutableActivity.value - agentId
-            val now_ = arrived.filter { verdicts[it] == Verdict.NOW }
-            val later = arrived.filter { verdicts[it] == Verdict.LATER }.map { it.line() }
+            mutableActivity.update { it + (agentId to "triage") }
+            val (routed, verdicts) = try {
+                val relevant = arrived.filter { agentId in recipients(it) }
+                relevant to if (skipTriage || relevant.isEmpty()) relevant.associateWith { Verdict.NOW } else triage(p, relevant)
+            } finally {
+                mutableActivity.update { it - agentId }
+            }
+            val now_ = routed.filter { verdicts[it] == Verdict.NOW }
+            val later = routed.filter { verdicts[it] == Verdict.LATER }.map { it.line() }
 
             val runNow = timers.isNotEmpty() || fired.isNotEmpty() || now_.isNotEmpty() || freshQueue.isNotEmpty() || reason == Reason.MANUAL
             if (!runNow) {
@@ -349,7 +362,9 @@ class AgentRuntime(private val container: AppContainer) {
 
     /** Something arrived (a message, a notification): rules fire at once; otherwise a quick triage decides. */
     suspend fun onIncoming(item: Incoming) {
-        for (p in store.profiles.value.filter { it.running && watches(it, item) }) {
+        val targets = if (item.kind == Incoming.Kind.MESSAGE) recipients(item)
+            else store.profiles.value.filter { it.running && watches(it, item) }.map { it.id }.toSet()
+        for (p in store.profiles.value.filter { it.running && it.id in targets }) {
             val rules = store.rules(p.id).filter { r -> r.enabled && matches(r, item) }
             if (rules.isNotEmpty()) {
                 wake(p.id, Reason.RULE, fired = rules.map { it to item }, extra = listOf(item), skipTriage = true)
@@ -399,7 +414,7 @@ class AgentRuntime(private val container: AppContainer) {
         val answers = withTimeoutOrNull(8_000) { runCatching { container.laya.engine.decide(request) }.getOrNull() }?.answers ?: return fallback
         return items.associateWith { item ->
             val i = batch.indexOf(item)
-            val a = (answers["i$i"] as? Answer.ChoiceAnswer)?.choice
+            val a = (answers["i$i"] as? Answer.ChoiceAnswer)?.takeIf { it.confidence >= 0.65 }?.choice
             when (a) { "now" -> Verdict.NOW; "ignore" -> Verdict.IGNORE; "later" -> Verdict.LATER; else -> fallback.getValue(item) }
         }
     }
@@ -461,9 +476,13 @@ class AgentRuntime(private val container: AppContainer) {
                 // Tell the user what the agent said, unless they are looking at its chat or it had nothing to say.
                 val text = container.supervisor.finalText(s.id).trim()
                 if (text.isNotEmpty() && !text.startsWith(QUIET) && onScreen.value != p.id) notify(p, text, urgent = false)
-                // Between wakes the agent holds no process.
-                delay(RELEASE_AFTER_MS)
-                runCatching { container.supervisor.releaseIfIdle(s.id, RELEASE_AFTER_MS) }
+                // Yield memory to delegated work immediately, including on phones that admit only one turn.
+                val delegated = container.sessionStore.list().any { it.agentId == p.id && it.kind == SessionKind.CODING && !it.state.isTerminal }
+                if (delegated) runCatching { container.supervisor.releaseIfIdle(s.id, 0) }
+                else {
+                    delay(RELEASE_AFTER_MS)
+                    runCatching { container.supervisor.releaseIfIdle(s.id, RELEASE_AFTER_MS) }
+                }
             }
         }
     }

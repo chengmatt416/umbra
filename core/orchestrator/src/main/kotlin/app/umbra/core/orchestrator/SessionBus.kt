@@ -151,9 +151,11 @@ class SessionBus(
         } else {
             // A coding session reporting to its agent: what it was, how it ended, what it said.
             val minutes = ((clock.nowMs() - child.createdAtMs) / 60_000).coerceAtLeast(0)
-            "[Report from ${address(child)} · $state · ${child.title.take(80)} · ${minutes} min]\n" + answer.take(REPORT_LIMIT) +
+            "[Report from ${address(child)} · $state · ${child.title.take(80)} · ${minutes} min]\n[Session: ${child.id}]\n" + answer.take(REPORT_LIMIT) +
                 "\n\n(This is a coding session's report. Tell the user what matters, and keep what you learned about them in memory.)"
         }
+        // A report must not require retaining both processes on a phone with a single process budget.
+        supervisor.releaseIfIdle(child.id, 0)
         supervisor.send(parent.id, text, whileRunning = StreamingBehavior.FOLLOW_UP)
         mutableTraffic.tryEmit(Envelope("m" + counter.incrementAndGet(), child.id, parent.id, answer, 1, clock.nowMs(), kind = Kind.REPORT))
     }

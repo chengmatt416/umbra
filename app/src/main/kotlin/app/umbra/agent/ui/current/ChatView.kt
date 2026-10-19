@@ -123,7 +123,7 @@ fun AssistantMessage(item: ChatItem.Assistant, tools: Map<String, ToolRun>, resu
                 }
             }
             if (item.streaming && item.blocks.isEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp, color = P.accent)
+                app.umbra.agent.ui.porcelain.ThinkingOrb(stringResource(R.string.ag_work_response))
                 Text("  " + stringResource(R.string.chat_thinking), fontSize = 12.sp, color = P.muted)
             }
             item.error?.takeIf { item.stopReason == "error" || item.stopReason == "aborted" }?.let { Callout(it, if (item.stopReason == "aborted") Tone.Warn else Tone.Danger) }
@@ -147,7 +147,7 @@ private fun Thinking(block: Block.Thinking, live: Boolean) {
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(pc(0x80E8EFE4)).clickable { open = !open }.animateContentSize().padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (live) CircularProgressIndicator(Modifier.size(11.dp), strokeWidth = 1.2.dp, color = P.muted)
+            if (live) app.umbra.agent.ui.porcelain.ThinkingOrb(stringResource(R.string.ag_work_response))
             Text(if (block.redacted) stringResource(R.string.chat_thinking_hidden) else if (live) "  " + stringResource(R.string.chat_thinking) else stringResource(R.string.chat_thought), fontSize = 12.sp, fontStyle = FontStyle.Italic, color = P.muted)
         }
         if (open || live) Text(block.text.takeLast(if (open) 20_000 else 400), Modifier.padding(top = 4.dp), fontSize = 12.sp, lineHeight = 17.sp, color = P.sub, fontStyle = FontStyle.Italic)

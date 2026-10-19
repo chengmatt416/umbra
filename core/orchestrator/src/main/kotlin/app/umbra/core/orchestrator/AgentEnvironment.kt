@@ -35,6 +35,9 @@ interface AgentEnvironment {
     /** Where omp stores the conversation of [sessionId], as omp sees the path. */
     fun ompSessionDir(sessionId: String): String
 
+    /** App-owned transcript directory, used only while its writer is stopped to update its cwd header. */
+    fun conversationHostDirectory(sessionId: String): Path? = null
+
     /** Makes the environment usable (mounts the guest). Safe to repeat. */
     suspend fun prepare()
 
@@ -100,6 +103,8 @@ class GuestEnvironment(
     }
 
     override fun ompSessionDir(sessionId: String) = "${RuntimeLayout.GUEST_HOME}/.umbra/omp-sessions/$sessionId"
+
+    override fun conversationHostDirectory(sessionId: String): Path = hostHome.resolve(".umbra/omp-sessions/$sessionId")
 
     override suspend fun writePrivateFile(path: String, content: String) = runtime.writeFile(path, content, "600")
 
@@ -173,6 +178,8 @@ class LocalEnvironment(
     override fun agentFiles(profile: String): AgentFiles = LocalAgentFiles(home.resolve(".umbra/agents/$profile"))
 
     override fun ompSessionDir(sessionId: String) = home.resolve(".umbra/omp-sessions/$sessionId").toString()
+
+    override fun conversationHostDirectory(sessionId: String): Path = home.resolve(".umbra/omp-sessions/$sessionId")
 
     override suspend fun writePrivateFile(path: String, content: String) {
         val file = java.nio.file.Path.of(path)
