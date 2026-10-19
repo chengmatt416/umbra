@@ -56,7 +56,7 @@ its browser tool.
    pairing QR, GUI/TUI wizard, signed installer/checksums and macOS/Linux download artifacts.
 
 0.4.0 (versionCode 7) is an incremental preview of the implemented features above. It does not mark all phases
-of the approved specification complete. Release verification and deployment are recorded below when finished.
+of the approved specification complete. Release verification and deployment are recorded below.
 
 Keep these constraints: no website re-recording is needed; no global omp/provider configuration; do not disturb
 Supabase containers; preserve the installed app's data and signing identity; no account sends during verification
@@ -100,3 +100,18 @@ that session's running state has been observed; queue size, concurrency and fair
   embedded 0.4.0 Linux manifest match the rebuilt artifacts.
 * The signed release installed over the emulator's existing app with `adb install -r` and launched successfully.
   Android reports version 0.4.0 / code 7, with the original first-install timestamp unchanged.
+
+## Deployment — 2026-10-19
+
+* Source commit: `1f30a25` on `app-fixes-capsule-recording`.
+* Production: https://umbra-agent.pages.dev (Cloudflare Pages deployment https://dc5609c1.umbra-agent.pages.dev).
+* APK: https://umbra-agent.pages.dev/download/umbra-0.4.0.apk — 851,813,993 bytes (812 MiB), versionCode 7.
+* SHA-256: `1ec0306ad06c9311231df18b7c9830f3a9ef92f1ddc1d29fbdbbfdf9c1985e55`.
+* Multipart R2 upload completed and its temporary Worker was deleted. Existing release objects were retained.
+* `node tools/verify-release.mjs`: passed against production. The update feed matches the artifact, HEAD and Range
+  responses have the expected sizes, `/download/latest` redirects to 0.4.0, and the checksum file matches. A complete
+  download of the published APK matched the local SHA-256. Both website languages link to the new APK.
+* Existing demo clips were kept unchanged. The development emulator is running with the signed 0.4.0 release.
+
+The remaining specification work above is still pending; this deployment does not include the Go/VNC rewrite,
+desktop installers or the unfinished connector methods. Account-level message delivery has not been verified.
