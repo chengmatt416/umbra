@@ -158,3 +158,14 @@ Verification for this change:
   access settings were restored after the test.
 * The orb geometry test compares the Kotlin renderer with upstream reference coordinates; link parsing and Laya
   individual/broadcast/failure/uncertainty/cancellation paths have regression tests.
+
+
+0.4.1 artifact verification:
+
+* Source: 0c195aa (following fd2da4c), versionName 0.4.1 / versionCode 8.
+* :app:assembleRelease -Pumbra.linuxVersion=0.4.0 and :app:lintRelease passed. The 0.4.0 Linux image is intentionally
+  reused; rootfs and offline add-on archive sizes and SHA-256 values match the APK's bundle metadata.
+* APK package and original signing certificate verified with apksigner; thinking-orbs MIT attribution is bundled.
+  APK size: 852,013,388 bytes. SHA-256: 969a2b3f0864fc064eb43d622dbd9fecd9dbd56fedc3019ab48f94d666c6c7dc.
+* The signed release installed over the existing Android emulator app. Version 0.4.1 / code 8 is installed,
+  the original first-install timestamp is unchanged, and Home launched successfully.
