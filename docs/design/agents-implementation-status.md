@@ -169,3 +169,16 @@ Verification for this change:
   APK size: 852,013,388 bytes. SHA-256: 969a2b3f0864fc064eb43d622dbd9fecd9dbd56fedc3019ab48f94d666c6c7dc.
 * The signed release installed over the existing Android emulator app. Version 0.4.1 / code 8 is installed,
   the original first-install timestamp is unchanged, and Home launched successfully.
+
+
+## 0.4.1 deployment — 2026-10-19
+
+* Production: https://umbra-agent.pages.dev; Pages deployment https://da04ebf8.umbra-agent.pages.dev.
+* APK: https://umbra-agent.pages.dev/download/umbra-0.4.1.apk — 852,013,388 bytes, versionCode 8.
+* Source commits fd2da4c and 0c195aa; verified artifact/site metadata committed as eab0ead.
+* Multipart R2 upload completed; its temporary Worker was deleted and older release objects were retained.
+* node tools/verify-release.mjs passed against production: update feed fields, HEAD/Range responses, latest redirect,
+  checksum file, a complete APK download matching SHA-256 969a2b3f0864fc064eb43d622dbd9fecd9dbd56fedc3019ab48f94d666c6c7dc,
+  and both website languages' download links/version.
+* Both right- and left-handed FAB layouts were checked on the signed release. Original handedness/file-access
+  settings were restored, existing demo videos were unchanged, and the emulator remains on the signed 0.4.1 release.
