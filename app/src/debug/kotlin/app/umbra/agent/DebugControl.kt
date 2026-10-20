@@ -186,8 +186,27 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             buildJsonObject { put("mode", p.uiMode.name); put("onboarded", p.onboarded); put("providers", p.providers.size); put("effort", if (p.autoEffort) "auto" else p.thinkingLevel.orEmpty()) }
         }
         "approval_mode" -> {
-            container.settings.update { it.copy(approvalMode = app.umbra.core.safety.ApprovalMode.valueOf(str(args, "mode").uppercase())) }
+            (args["mode"] as? JsonPrimitive)?.content?.let { mode ->
+                container.settings.update { it.copy(approvalMode = app.umbra.core.safety.ApprovalMode.valueOf(mode.uppercase())) }
+            }
             buildJsonObject { put("mode", container.settings.value.approvalMode.name) }
+        }
+        "laya.security.check" -> {
+            val request = app.umbra.core.model.action.ActionRequest(
+                id = "laya-android-fixture", operation = app.umbra.core.model.action.Operation.Tap,
+            )
+            val check = app.umbra.core.safety.LayaActionSecurityCheck(
+                app.umbra.core.decision.LayaHttpEngine("http://127.0.0.1:8765"),
+            )
+            val assessment = check.assess(request, app.umbra.core.safety.ActionContext())
+            val decision = app.umbra.core.safety.ApprovalPolicy(container.settings.value.approvalMode).decide(request, assessment)
+            val network = android.security.NetworkSecurityPolicy.getInstance()
+            buildJsonObject {
+                put("risk", assessment.level.name)
+                put("decision", decision.javaClass.simpleName)
+                put("loopbackAllowed", network.isCleartextTrafficPermitted("127.0.0.1"))
+                put("externalHttpAllowed", network.isCleartextTrafficPermitted("example.com"))
+            }
         }
         "workspace.create" -> {
             val ws = container.workspaces.create(str(args, "name"))
