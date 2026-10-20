@@ -29,7 +29,7 @@ jobs:
         with:
           go-version-file: node-go/go.mod
           cache-dependency-path: node-go/go.sum
-      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev build-essential squashfs-tools file desktop-file-utils
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev build-essential squashfs-tools file desktop-file-utils xvfb x11vnc
       - name: Test
         working-directory: node-go
         run: go test -race ./... && go vet ./...

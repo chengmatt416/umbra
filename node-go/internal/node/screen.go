@@ -7,8 +7,9 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"os/exec"
-	"strconv"
+	"path/filepath"
 	"time"
 )
 
@@ -25,7 +26,7 @@ func screenInfo(c Config) screenStatus {
 	}
 	if c.Screen == "x11vnc" || c.Screen == "wayvnc" {
 		_, e := exec.LookPath(c.Screen)
-		return screenStatus{e == nil, c.Screen, "Loopback VNC through pinned mTLS"}
+		return screenStatus{e == nil, c.Screen, "Private VNC socket through pinned mTLS"}
 	}
 	return screenStatus{false, "", "Jobs only · screen access skipped"}
 }
@@ -63,18 +64,15 @@ func (s *Server) screen(conn net.Conn, reader *bufio.Reader, r Frame) error {
 		serveRFB(conn, reader, cfg.Name)
 		return nil
 	}
-	// A private per-connection listener is created by the selected backend, always loopback-only.
-	listener, e := net.Listen("tcp", "127.0.0.1:0")
+	// A private directory confines the backend to this OS user; loopback TCP would admit other users.
+	dir, e := os.MkdirTemp("", "umbra-node-screen-")
 	if e != nil {
 		return e
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-	var cmd *exec.Cmd
-	if cfg.Screen == "x11vnc" {
-		cmd = exec.Command("x11vnc", "-localhost", "-rfbport", strconv.Itoa(port), "-once", "-shared", "-nopw", "-quiet")
-	} else {
-		cmd = exec.Command("wayvnc", "127.0.0.1", strconv.Itoa(port))
+	defer os.RemoveAll(dir)
+	cmd, address, e := screenBackend(cfg.Screen, dir)
+	if e != nil {
+		return e
 	}
 	if e = cmd.Start(); e != nil {
 		return e
@@ -82,7 +80,7 @@ func (s *Server) screen(conn net.Conn, reader *bufio.Reader, r Frame) error {
 	defer func() { cmd.Process.Kill(); cmd.Wait() }()
 	var backend net.Conn
 	for i := 0; i < 30; i++ {
-		backend, e = net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 200*time.Millisecond)
+		backend, e = net.DialTimeout("unix", address, 200*time.Millisecond)
 		if e == nil {
 			break
 		}
@@ -101,6 +99,21 @@ func (s *Server) screen(conn net.Conn, reader *bufio.Reader, r Frame) error {
 	conn.Close()
 	<-copied
 	return nil
+}
+
+func screenBackend(name, dir string) (*exec.Cmd, string, error) {
+	address := filepath.Join(dir, "rfb.sock")
+	if name == "x11vnc" {
+		return exec.Command(name, "-norc", "-unixsock", address, "-rfbport", "0", "-no6", "-once", "-shared", "-nopw", "-quiet", "-noremote"), address, nil
+	}
+	if name == "wayvnc" {
+		config := filepath.Join(dir, "wayvnc.conf")
+		if e := os.WriteFile(config, []byte("enable_auth=false\n"), 0600); e != nil {
+			return nil, "", e
+		}
+		return exec.Command(name, "--config", config, "--socket", filepath.Join(dir, "control.sock"), "--unix-socket", address), address, nil
+	}
+	return nil, "", errors.New("unsupported screen backend")
 }
 func serveRFB(conn net.Conn, in io.Reader, name string) error {
 	conn.SetDeadline(time.Now().Add(15 * time.Second))

@@ -34,7 +34,7 @@ def find(value, root=None):
     root = root if root is not None else tree()
     return next((n for n in root.iter('node') if value in (n.attrib.get('text'), n.attrib.get('content-desc'))), None)
 def tap(value):
-    node = find(value)
+    node = until(lambda: find(value))
     assert node is not None, f'UI element missing: {value}'
     adb('shell', 'input', 'tap', *map(str, bounds(node)))
 def shot(name):
@@ -44,7 +44,7 @@ def until(check, seconds=30):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         value = check()
-        if value:
+        if isinstance(value, ET.Element) or value:
             return value
         time.sleep(.3)
     raise AssertionError('Timed out waiting for node state')
@@ -104,7 +104,10 @@ def main():
         invite['addresses'] = [{'host': '10.0.2.2', 'port': state['addresses'][0]['port'], 'kind': 'lan'}]
         uri = 'umbra-node://pair?data=' + base64.urlsafe_b64encode(json.dumps(invite, separators=(',', ':')).encode()).decode().rstrip('=')
         tap('Paste node invitation link')
-        adb('shell', 'input', 'text', shlex.quote(uri))
+        for offset in range(0, len(uri), 32):
+            adb('shell', 'input', 'text', shlex.quote(uri[offset:offset + 32]))
+            prefix = uri[:offset + 32]
+            until(lambda: any(n.attrib.get('text') == prefix for n in tree().iter('node')))
         adb('shell', 'input', 'keyevent', '4')
         tap('Read invitation')
         assert find('Found “' + state['name'] + '”') is not None
@@ -123,6 +126,8 @@ def main():
         until(lambda: any(n['id'] == node_id and n.get('info', {}).get('screen', {}).get('available') for n in bridge.control('nodes.list')))
         tap('View screen')
         until(lambda: find('Live remote desktop') is not None)
+        x1, y1, x2, y2 = map(int, re.findall(r'\d+', find('Live remote desktop').attrib['bounds']))
+        assert x2 - x1 > 500 and .5 < (y2 - y1) / (x2 - x1) < .65, 'Remote framebuffer must fill the 16:9 viewer'
         shot('remote-screen-watch')
         assert not log.exists(), 'Viewing unexpectedly sent desktop input'
         tap('Take over')

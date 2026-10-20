@@ -6,11 +6,11 @@ import socket
 import struct
 import sys
 
-port = int(sys.argv[sys.argv.index('-rfbport') + 1])
+address = sys.argv[sys.argv.index('-unixsock') + 1]
 log = os.environ['UMBRA_NODE_TEST_INPUT_LOG']
-server = socket.socket()
-server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-server.bind(('127.0.0.1', port))
+assert sys.argv[sys.argv.index('-rfbport') + 1] == '0', 'TCP listener must remain disabled'
+server = socket.socket(socket.AF_UNIX)
+server.bind(address)
 server.listen(1)
 conn, _ = server.accept()
 conn.settimeout(30)
