@@ -54,6 +54,7 @@ class OrchestratorRig(
     fence: () -> String? = { null },
     admission: (String?, Map<String?, Int>) -> String? = { _, _ -> null },
     beforeWork: suspend (Session) -> Unit = {},
+    securityCheck: app.umbra.core.safety.ActionSecurityCheck? = null,
 ) : AutoCloseable {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val home: Path = Files.createDirectories(dir.resolve("home"))
@@ -73,7 +74,7 @@ class OrchestratorRig(
 
     private val shell = ProcessShell.app()
     private val journal = ActionJournal()
-    private val gate = SafetyGate(RiskClassifier(), { ApprovalPolicy(approvalMode) }, approvals)
+    private val gate = SafetyGate(RiskClassifier(), { ApprovalPolicy(approvalMode) }, approvals, securityCheck = securityCheck)
     private val pipeline = ActionPipeline(
         backends = ShellDevice.backends(shell),
         safety = gate,

@@ -29,9 +29,9 @@ import app.umbra.core.safety.RiskLevel.MEDIUM
  * It never executes or expands anything.
  */
 class ShellRiskAnalyzer {
-    fun analyze(command: String, asRoot: Boolean = false, ctx: ActionContext = ActionContext()): List<RiskFinding> {
+    fun analyze(command: String, asRoot: Boolean = false, ctx: ActionContext = ActionContext(), stdin: String? = null): List<RiskFinding> {
         val out = LinkedHashSet<RiskFinding>()
-        Analysis(ctx, out).run(command, asRoot, 0)
+        Analysis(ctx, out).run(command, asRoot, 0, stdin)
         return out.toList()
     }
 
@@ -50,7 +50,7 @@ class ShellRiskAnalyzer {
             out += RiskFinding(category, level, reason)
         }
 
-        fun run(command: String, asRoot: Boolean, depth: Int) {
+        fun run(command: String, asRoot: Boolean, depth: Int, stdin: String? = null) {
             if (depth > MAX_DEPTH) {
                 add(DYNAMIC_COMMAND, MEDIUM, "command is nested too deeply to analyse")
                 return
@@ -63,6 +63,13 @@ class ShellRiskAnalyzer {
             var previous: Unwrapped? = null
             for (segment in ShellLexer.parse(command)) {
                 val unwrapped = unwrap(segment.words)
+                if (!stdin.isNullOrBlank()) {
+                    if (unwrapped.command in SHELLS || unwrapped.command == "su") {
+                        run(stdin, asRoot || unwrapped.root, depth + 1)
+                    } else if (unwrapped.command in setOf("python", "python3", "node", "bun", "perl", "ruby", "php", "lua")) {
+                        add(DYNAMIC_COMMAND, HIGH, "supplies program input to an interpreter")
+                    }
+                }
                 analyzeSegment(segment, unwrapped, previous, asRoot, depth)
                 previous = unwrapped
             }

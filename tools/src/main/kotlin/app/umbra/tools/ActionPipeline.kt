@@ -133,8 +133,8 @@ class ActionPipeline(
 
                 // ---- baseline, execute, verify ----
                 // Approval and display admission can wait: the user may have taken the app back meanwhile.
-                if (OperationTraits.mutatesUi(op)) {
-                    inputGate(request.copy(target = request.target.copy(app = context.foregroundPackage)), displayId, true)?.let { why ->
+                if (OperationTraits.hasSideEffects(op)) {
+                    inputGate(request.copy(target = request.target.copy(app = context.foregroundPackage)), displayId, OperationTraits.mutatesUi(op))?.let { why ->
                         return fail(request, started, attempts, OpOutcome.fail(ErrorCode.LEASE_UNAVAILABLE, why, status = ActionStatus.NEEDS_USER))
                     }
                 }

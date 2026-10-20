@@ -41,6 +41,15 @@ class RiskClassifierTest {
     }
 
     @Test
+    fun shellInputAndWorkingDirectoryCannotHideConsequentialActions() {
+        assertTrue(assess(Operation.Shell("sh", stdin = "rm -rf /sdcard/DCIM\n")).categories.contains(IMPORTANT_DATA_DELETION))
+        assertTrue(assess(Operation.Shell("env sh -s", stdin = "pm clear app.umbra.agent\n")).isSelfProtectionViolation)
+        assertTrue(assess(Operation.Shell("rm -rf DCIM", cwd = "/sdcard")).categories.contains(IMPORTANT_DATA_DELETION))
+        assertTrue(assess(Operation.LaunchCommand("rm", listOf("-rf", "DCIM"), cwd = "/sdcard")).categories.contains(IMPORTANT_DATA_DELETION))
+        assertEquals(RiskLevel.NONE, assess(Operation.Shell("cat", stdin = "rm -rf /sdcard/DCIM\n")).level, "Data supplied to cat is not a script")
+    }
+
+    @Test
     fun asRootFlagAndRequiredPrivilegeBothMakeTheCommandRoot() {
         val a = assess(Operation.Shell("rm -rf /system/app", asRoot = true))
         assertTrue(a.findings.any { it.category == RiskCategory.IRREVERSIBLE_ROOT }, a.describe())

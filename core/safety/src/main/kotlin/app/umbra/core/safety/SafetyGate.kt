@@ -143,7 +143,7 @@ class SafetyGate(
         sessionId = request.sessionId ?: "-",
         source = source,
         title = "Approve ${request.operation.name}?",
-        description = describe(request),
+        description = ctx.actionDescription?.take(1_000) ?: describe(request),
         assessment = assessment,
         toolName = request.operation.name,
         operation = request.operation.name,

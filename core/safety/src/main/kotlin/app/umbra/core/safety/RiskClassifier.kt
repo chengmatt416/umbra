@@ -35,8 +35,8 @@ class RiskClassifier(
         findings += selfProtection(request.operation, ctx)
 
         when (val op = request.operation) {
-            is Operation.Shell -> findings += shell.analyze(op.command, op.asRoot || rooted, ctx)
-            is Operation.LaunchCommand -> findings += shell.analyze(joinCommand(op.command, op.args), rooted, ctx)
+            is Operation.Shell -> findings += shell.analyze(op.command, op.asRoot || rooted, ctx.copy(cwd = op.cwd ?: ctx.cwd), op.stdin)
+            is Operation.LaunchCommand -> findings += shell.analyze(joinCommand(op.command, op.args), rooted, ctx.copy(cwd = op.cwd ?: ctx.cwd))
             is Operation.Packages -> findings += packages(op, rooted, ctx)
             is Operation.File -> findings += file(op, rooted, ctx)
             is Operation.Process -> findings += process(op, rooted, ctx)

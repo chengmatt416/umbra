@@ -41,7 +41,7 @@ class LayaActionSecurityCheck(
     internal fun question(request: ActionRequest, context: ActionContext) = DecisionRequest(
         state = buildString {
             appendLine("Operation: ${request.operation.name}; environment: ${request.target.environment}; privilege: ${request.requires}")
-            appendLine("Action: ${bounded(describe(request.operation), 1_000)}")
+            appendLine("Action: ${bounded(describe(request.operation), 1_600)}")
             context.actionDescription?.let { appendLine("Adapter context: ${bounded(it, 400)}") }
             context.foregroundPackage?.let { appendLine("Foreground app: ${it.take(150)}") }
             context.targetNode?.label?.let { appendLine("Target: ${it.take(200)}") }
@@ -60,8 +60,10 @@ class LayaActionSecurityCheck(
     )
 
     private fun describe(op: Operation): String = when (op) {
-        is Operation.Shell -> "root=${op.asRoot}; ${op.command}"
-        is Operation.LaunchCommand -> "${op.command} ${op.args.joinToString(" ")}"
+        is Operation.Shell -> "root=${op.asRoot}; cwd=${op.cwd.orEmpty()}; command=${bounded(op.command, 700)}; " +
+            "stdin=${op.stdin?.let { bounded(it, 500) }.orEmpty()}; environment override keys=${op.env.keys.joinToString(",").take(100)}"
+        is Operation.LaunchCommand -> "cwd=${op.cwd.orEmpty()}; ${bounded(op.command + " " + op.args.joinToString(" "), 1_000)}; " +
+            "environment override keys=${op.env.keys.joinToString(",").take(100)}"
         is Operation.TypeText -> "submit=${op.submit}; " + if (op.secret) "[secret text withheld]" else op.text
         is Operation.File -> "${op.action} ${op.path} ${op.destination.orEmpty()}"
         is Operation.Clipboard -> "clipboard ${op.action}"

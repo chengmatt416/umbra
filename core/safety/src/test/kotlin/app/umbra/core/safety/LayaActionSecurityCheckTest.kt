@@ -145,5 +145,10 @@ class LayaActionSecurityCheckTest {
         assertTrue(seen.single().state.contains("example.app"))
         check.assess(request(Operation.File(app.umbra.core.model.action.FileAction.WRITE, "/workspace/file", content = "private-content")), ActionContext())
         assertFalse(seen.last().state.contains("private-content"))
+        check.assess(request(Operation.Shell("sh", cwd = "/dummy/cwd", stdin = "echo dummy-stdin", env = mapOf("DUMMY_KEY" to "dummy-env-secret"))), ActionContext())
+        assertTrue(seen.last().state.contains("/dummy/cwd"))
+        assertTrue(seen.last().state.contains("echo dummy-stdin"))
+        assertTrue(seen.last().state.contains("DUMMY_KEY"))
+        assertFalse(seen.last().state.contains("dummy-env-secret"))
     }
 }

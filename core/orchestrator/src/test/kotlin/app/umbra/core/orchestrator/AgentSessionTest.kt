@@ -46,11 +46,12 @@ class AgentSessionTest {
         mode: ApprovalMode = ApprovalMode.BALANCED,
         governor: app.umbra.core.perf.ResourceGovernor? = null,
         beforeWork: suspend (app.umbra.core.session.Session) -> Unit = {},
+        securityCheck: app.umbra.core.safety.ActionSecurityCheck? = null,
         block: suspend OrchestratorRig.() -> Unit,
     ) {
         assumeTrue(ompBinary != null, "omp is not installed; skipping the orchestrator test")
         model.use {
-            OrchestratorRig(dir, ompBinary!!, it.url, mode, governor = governor, beforeWork = beforeWork).use { rig ->
+            OrchestratorRig(dir, ompBinary!!, it.url, mode, governor = governor, beforeWork = beforeWork, securityCheck = securityCheck).use { rig ->
                 runBlocking {
                     try {
                         rig.block()
@@ -200,6 +201,34 @@ class AgentSessionTest {
     }
 
     // ---- tools ----
+
+    @Test
+    fun anIndependentSecurityDenialStopsACodingWriteInAutonomousMode() {
+        val marker = dir.resolve("independent-check-denied.txt")
+        val checked = CopyOnWriteArrayList<String>()
+        val model = ScriptedModel { r ->
+            if (r.lastToolResult == null) ScriptedModel.toolCall("write", """{"path":"$marker","content":"dummy fixture"}""")
+            else ScriptedModel.text("The write was not approved.")
+        }
+        val review = app.umbra.core.safety.ActionSecurityCheck { action, ctx ->
+            checked += action.operation.name
+            assertTrue(ctx.actionDescription.orEmpty().contains("Coding tool write"))
+            app.umbra.core.safety.RiskAssessment.of(app.umbra.core.safety.RiskFinding(
+                app.umbra.core.safety.RiskCategory.ACCOUNT_SECURITY_CHANGE,
+                app.umbra.core.safety.RiskLevel.HIGH,
+                "Independent test review requires approval",
+            ))
+        }
+        withRig(model, ApprovalMode.AUTONOMOUS, securityCheck = review) {
+            val session = supervisor.launch("Write a dummy fixture")
+            val approval = withTimeout(60_000) { approvals.pending.first { it.isNotEmpty() }.single() }
+            assertEquals(ApprovalSource.OMP, approval.source)
+            approvals.resolve(approval.id, ApprovalDecision.Denied())
+            awaitState(session.id, SessionState.COMPLETED)
+            assertFalse(marker.toFile().exists(), "An unapproved coding write must never execute")
+            assertEquals(listOf("file"), checked.toList())
+        }
+    }
 
     @Test
     fun aHarmlessShellCommandRunsWithoutAskingAndIsRecorded() {
