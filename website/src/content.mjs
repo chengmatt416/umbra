@@ -12,7 +12,7 @@ export const L = {
     description: 'Tell Umbra what to do. It works in the background, operates apps for you, builds and tests code in a real Linux environment on the same phone, checks its own work, and asks before anything risky.',
     nav: { features: 'Features', how: 'Get started', trust: 'Trust', faq: 'FAQ', download: 'Download APK' },
     hero: {
-      eyebrow: 'Your AI companion · Android 16',
+      eyebrow: 'Your AI companion',
       h1: ['An agent that lives', 'on your phone.'],
       lead: 'Tell it what to do. Umbra works in the background, operates apps for you, writes and builds code in a real Linux environment on the same device, checks its own work, and asks before anything risky.',
       cta: 'Download the APK', cta2: 'See what it does',
@@ -22,7 +22,7 @@ export const L = {
     story: {
       eyebrow: 'Every feature, in motion',
       title: 'Scroll to watch Umbra work.',
-      note: 'Every clip is the real app recorded on an Android 16 emulator. The language model is scripted in these recordings, since a real model needs your own API key; everything the agent does with its answers is real.',
+      note: 'Every clip is the real app recorded on an Android 16 emulator.',
       parts: ['Do the work', 'Keep it running', 'Stay in control'],
     },
     chapters: [
