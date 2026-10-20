@@ -207,3 +207,12 @@ Verification for this change:
 * The final APK installed over the existing Android 16 app with `adb install -r`. Its on-device SHA-256 matches
   the verified release, the first-install timestamp is unchanged, and Home launched successfully.
 * Telegram failure replies now use the current failure text, rather than the previous successful response.
+
+### 0.4.2 production deployment
+
+* Release metadata commit: `407f7f2`. Production: https://umbra-agent.pages.dev, deployment
+  https://50edd52c.umbra-agent.pages.dev.
+* APK: https://umbra-agent.pages.dev/download/umbra-0.4.2.apk. The production download's complete SHA-256
+  matches `e91beafe830c621986bfb31f5914676ab0643262524eddce350ac4b7077cf94c` (852,017,188 bytes).
+* `node tools/verify-release.mjs`: passed update feed, download headers, byte-range resume, latest redirect,
+  checksum file, full APK hash, and both website languages. The temporary uploader Worker was deleted.
