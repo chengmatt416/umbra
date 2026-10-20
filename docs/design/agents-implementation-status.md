@@ -196,3 +196,14 @@ Verification for this change:
 * App unit tests: 59 passed, zero failures/errors/skips. Regression coverage includes wake-only histories, date
   separators, retained replies and session links, result transitions for all session kinds, and channel selection
   across reports, wakes and subsequent in-app requests. No live Telegram account messages were sent.
+
+### 0.4.2 release verification
+
+* Source: `346e564`. `:app:testDebugUnitTest :app:assembleRelease :app:lintRelease
+  --no-parallel --max-workers=1 -Pumbra.linuxVersion=0.4.0`: passed.
+* APK: version 0.4.2 / code 9, 852,017,188 bytes. SHA-256:
+  `e91beafe830c621986bfb31f5914676ab0643262524eddce350ac4b7077cf94c`.
+* APK signature matches the existing release identity; both bundled Linux archives match their manifest hashes.
+* The final APK installed over the existing Android 16 app with `adb install -r`. Its on-device SHA-256 matches
+  the verified release, the first-install timestamp is unchanged, and Home launched successfully.
+* Telegram failure replies now use the current failure text, rather than the previous successful response.
