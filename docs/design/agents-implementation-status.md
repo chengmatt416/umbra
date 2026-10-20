@@ -250,3 +250,20 @@ Verification for this change:
 * APK package/version, original release signing certificate, bundled Linux archive hashes and orb license passed
   validation. The uploaded R2 object matches this metadata. The dedicated temporary upload Worker
   `umbra-orb-release-uploader-043` was deleted.
+
+### 0.4.3 production deployment
+
+* Release metadata commit: `427fa30`. Production: https://umbra-agent.pages.dev, deployment
+  https://b7ab3cce.umbra-agent.pages.dev. APK: https://umbra-agent.pages.dev/download/umbra-0.4.3.apk.
+* `node tools/verify-release.mjs`: passed update feed, download headers, byte-range resume, latest redirect,
+  checksum file, the full 852,048,292-byte APK hash, and both website languages. Public SHA-256 matches
+  `528796e1b2b24f5004458e4e03c9a6808942971c87e79eb8c83532bf52d68894`.
+* The original emulator lacked room for a full offline APK, so release installation used a dedicated
+  `umbra-orb-release-043` Android 16 emulator with a 16 GiB data partition. Installed published 0.4.2 first, then
+  updated to 0.4.3 with `adb install -r`: the signing identity, on-device APK hash and original install timestamp
+  were preserved. Normal startup, all four onboarding steps, Home, and a post-onboarding Home deep link passed.
+* Existing issue found during this check: forcing the Home deep link before first-run onboarding completes
+  crashes because the navigation graph has not been mounted. Both published 0.4.2 and 0.4.3 reproduced it.
+  The normal launcher/onboarding flow works; this first-run deep-link issue remains separate from the orb change.
+  Recorded crash logs: `build/release-isolated-crash.log`; successful release receipt:
+  `build/release-0.4.3-installed.json`.
