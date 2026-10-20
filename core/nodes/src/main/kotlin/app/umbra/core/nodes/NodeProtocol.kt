@@ -57,6 +57,8 @@ data class NodeInfo(
     val workspace: String,
     val maxManifestBytes: Long,
     val protocol: Int = Rsp.VERSION,
+    val screen: NodeScreenInfo = NodeScreenInfo(),
+    val addresses: List<NodeAddress> = emptyList(),
 )
 
 @Serializable
@@ -148,6 +150,30 @@ class NodeChannel private constructor(private val socket: SSLSocket, scope: Coro
     }
 
     companion object {
+        /** A separate pinned TLS connection switches to raw RFB after an authenticated protocol reply. */
+        suspend fun screenTunnel(host: String, port: Int, context: SSLContext, agent: Boolean): SSLSocket = withContext(Dispatchers.IO) {
+            val socket = context.socketFactory.createSocket() as SSLSocket
+            try {
+                socket.soTimeout = 15_000
+                socket.enabledProtocols = arrayOf("TLSv1.3")
+                socket.connect(InetSocketAddress(host, port), 8_000)
+                socket.startHandshake()
+                val request = buildJsonObject { put("id", JsonPrimitive(1)); put("op", JsonPrimitive("vnc")); put("agent", JsonPrimitive(agent)) }
+                socket.outputStream.write((request.toString() + "\n").toByteArray()); socket.outputStream.flush()
+                val line = java.io.ByteArrayOutputStream()
+                while (true) {
+                    val b = socket.inputStream.read()
+                    if (b < 0) throw NodeException("The screen connection closed")
+                    if (b == 10) break
+                    if (line.size() >= 8192) throw NodeException("Invalid screen reply")
+                    line.write(b)
+                }
+                val reply = Rsp.json.parseToJsonElement(line.toString(Charsets.UTF_8.name())).jsonObject
+                if ((reply["ok"] as? JsonPrimitive)?.content != "true") throw NodeException((reply["error"] as? JsonPrimitive)?.content ?: "Screen access refused")
+                socket
+            } catch (e: Exception) { runCatching { socket.close() }; throw e }
+        }
+
         /** Connects and completes the TLS handshake (whose trust decides whether this node is the paired one). */
         suspend fun connect(host: String, port: Int, context: SSLContext, scope: CoroutineScope, timeoutMs: Int = 8_000): NodeChannel = withContext(Dispatchers.IO) {
             val s = context.socketFactory.createSocket() as SSLSocket

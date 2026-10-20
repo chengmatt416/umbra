@@ -1,0 +1,62 @@
+name: Remote node builds
+on:
+  push:
+    branches: [remote-nodes]
+    paths: ['node-go/**', '.github/workflows/node.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+            image_arch: x86_64
+            tool_sha: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+            runtime_sha: 617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            image_arch: aarch64
+            tool_sha: f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
+            runtime_sha: 9a72a744d221576c9347ec074243acc5c3c7568896b12714e0e82e9f0bf47900
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: node-go/go.mod
+          cache-dependency-path: node-go/go.sum
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev build-essential squashfs-tools file desktop-file-utils
+      - name: Test
+        working-directory: node-go
+        run: go test -race ./... && go vet ./...
+      - name: Fetch pinned packaging tools
+        env:
+          TOOL_SHA: ${{ matrix.tool_sha }}
+          RUNTIME_SHA: ${{ matrix.runtime_sha }}
+          IMAGE_ARCH: ${{ matrix.image_arch }}
+        run: |
+          mkdir -p node-go/build/tools
+          cd node-go/build/tools
+          curl -fL --retry 3 "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-$IMAGE_ARCH.AppImage" -o tool.AppImage
+          echo "$TOOL_SHA  tool.AppImage" | sha256sum -c -
+          chmod +x tool.AppImage
+          ./tool.AppImage --appimage-extract
+          curl -fL --retry 3 "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-$IMAGE_ARCH" -o runtime
+          echo "$RUNTIME_SHA  runtime" | sha256sum -c -
+      - name: Package
+        env:
+          UMBRA_BUILD_APPIMAGE: '1'
+          NODE_ARCH: ${{ matrix.arch }}
+        run: |
+          export APPIMAGETOOL="$PWD/node-go/build/tools/squashfs-root/AppRun"
+          export APPIMAGE_RUNTIME="$PWD/node-go/build/tools/runtime"
+          bash node-go/packaging/package-linux.sh 0.4.4 "$NODE_ARCH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-linux-${{ matrix.arch }}
+          path: node-go/build/release/*
+          retention-days: 14

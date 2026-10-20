@@ -76,7 +76,7 @@ import kotlinx.coroutines.withContext
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun NodesScreen() {
+fun NodeAdvancedControls() {
     val container = LocalContext.current.container
     val context = LocalContext.current
     val resources = androidx.compose.ui.platform.LocalResources.current

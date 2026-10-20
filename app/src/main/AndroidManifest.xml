@@ -4,6 +4,8 @@
 
     <!-- Speaking to Umbra: the speech recognizer hears through the app (ui/voice). Asked the first time the mic is tapped. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
     <!-- Direct native editing of files explicitly connected by the user; requested from the file picker flow. -->

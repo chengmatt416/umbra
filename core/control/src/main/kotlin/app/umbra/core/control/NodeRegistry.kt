@@ -32,6 +32,8 @@ data class PairedNode(
     val info: NodeInfo? = null,
     /** Set when the user revoked the node: the phone refuses it from then on, whatever the node does. */
     val revocation: NodeRevocation? = null,
+    val addresses: List<app.umbra.core.nodes.NodeAddress> = emptyList(),
+    val allowAgentScreen: Boolean = false,
 )
 
 /**
@@ -140,6 +142,11 @@ class NodeRegistry(private val store: ControlStore) {
     fun setTrust(id: String, trust: NodeTrust) {
         nodes.update(id) { it.copy(trust = trust) }
         journal.append("nodes.trust", buildJsonObject { put("node", id); put("trust", trust.name.lowercase()) })
+    }
+
+    fun allowAgentScreen(id: String, allow: Boolean) {
+        nodes.update(id) { it.copy(allowAgentScreen = allow) }
+        journal.append("nodes.agent_screen", buildJsonObject { put("node", id); put("allow", allow) })
     }
 
     /** Forgets the node here. The node still lists this phone until it is unpaired there too. */

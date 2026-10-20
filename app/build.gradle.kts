@@ -183,6 +183,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
     implementation(libs.zxing.core)
+    implementation("com.caverock:androidsvg-aar:1.4")
     implementation(libs.kyant.backdrop)
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)

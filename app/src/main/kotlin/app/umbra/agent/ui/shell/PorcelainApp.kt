@@ -225,6 +225,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
         app.umbra.agent.data.UiMode.SIMPLE -> listOf(
             MenuEntry(PIcons.target, select, selectScreen),
             MenuEntry(PIcons.key, accountsLabel) { go(Dest.Accounts) },
+            MenuEntry(PIcons.cloud, nodesLabel) { go(Dest.Nodes) },
             MenuEntry(PIcons.settings, settingsLabel) { go(Dest.Settings) },
         )
         app.umbra.agent.data.UiMode.POWER -> listOf(
@@ -328,7 +329,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 composable(Dest.Inbox.route) { Page(Dest.Inbox, back) { InboxScreen(onOpenSession = ::openSessionNow, onHistory = { go(Dest.ApprovalHistory) }) } }
                 composable(Dest.Sessions.route) { Page(Dest.Sessions, back) { SessionsScreen(onOpenSession = ::openSessionNow) } }
                 composable(Dest.Runtime.route) { Page(Dest.Runtime, back) { app.umbra.agent.ui.runtime.RuntimeScreen(onOpenSession = ::openSessionNow) } }
-                composable(Dest.Nodes.route) { Page(Dest.Nodes, back) { app.umbra.agent.ui.nodes.NodesScreen() } }
+                composable(Dest.Nodes.route) { app.umbra.agent.ui.nodes.NodesScreen(onBack = back) }
                 composable(Dest.Repositories.route) { Page(Dest.Repositories, back) { app.umbra.agent.ui.integration.RepositoryHubScreen(onCommit = { go(Dest.Commit) }) } }
                 composable(Dest.Commit.route) { Page(Dest.Commit, back) { app.umbra.agent.ui.integration.CommitScreen(onOpenVault = { go(Dest.Vault) }) } }
                 composable(Dest.Security.route) {

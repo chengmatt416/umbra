@@ -296,7 +296,7 @@ class AppContainer(val context: Context) {
         UmbraToolHost(
             pipeline, sessionId, decisions, exclude = { it.startsWith("gui_") && !desktop },
             // Every session can talk to the others; an agent's conversation also gets its memory, timers and the rest.
-            extra = sessionTools.forSession(sessionId, allowSubagents = profile == null) + connectors.messages.tools(sessionId) + (profile?.let { agentTools.forAgent(it.id) } ?: emptyList()),
+            extra = sessionTools.forSession(sessionId, allowSubagents = profile == null) + connectors.messages.tools(sessionId) + remoteNodeTools.forSession(sessionId) + (profile?.let { agentTools.forAgent(it.id) } ?: emptyList()),
         )
     }
 
@@ -306,6 +306,7 @@ class AppContainer(val context: Context) {
     /** The agents: profiles, their wake loop, their conversations (docs/design/agents-2026-10.md §6–§9). */
     val agents by lazy { app.umbra.agent.agents.AgentRuntime(this) }
     val agentTools by lazy { app.umbra.agent.agents.AgentTools(this) }
+    val remoteNodeTools by lazy { app.umbra.agent.nodes.RemoteNodeTools(this) }
     /** The message apps and how each is reached (docs/design/agents-2026-10.md §6). */
     val connectors by lazy { app.umbra.agent.connectors.Connectors(this) }
     val notificationReader by lazy { app.umbra.agent.notifications.NotificationReader(this) }

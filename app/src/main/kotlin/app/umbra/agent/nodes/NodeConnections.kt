@@ -36,6 +36,7 @@ import javax.net.ssl.X509ExtendedKeyManager
 import javax.security.auth.x500.X500Principal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -52,6 +53,50 @@ import kotlinx.serialization.json.put
  * manifest of what leaves the phone, lease renewal while connected, and rejoin reconciliation.
  */
 class NodeConnections(private val c: AppContainer, private val scope: CoroutineScope) {
+    data class ConnectionState(val online: Boolean = false, val latencyMs: Long? = null, val error: String? = null)
+    private val mutableStates = kotlinx.coroutines.flow.MutableStateFlow<Map<String, ConnectionState>>(emptyMap())
+    val states: kotlinx.coroutines.flow.StateFlow<Map<String, ConnectionState>> = mutableStates
+    private val connecting = kotlinx.coroutines.sync.Mutex()
+    private val screenSockets = ConcurrentHashMap<String, MutableSet<javax.net.ssl.SSLSocket>>()
+    private val userScreens = ConcurrentHashMap.newKeySet<String>()
+
+    fun userScreen(nodeId: String, active: Boolean) {
+        if (active) {
+            userScreens.add(nodeId)
+            screenSockets[nodeId]?.let { sockets -> synchronized(sockets) { sockets.toList().forEach { runCatching { it.close() } }; sockets.clear() } }
+        } else userScreens.remove(nodeId)
+    }
+
+    fun screenProblem(nodeId: String, agent: Boolean): String? {
+        val node = registry[nodeId] ?: return "No such node"
+        return when {
+            node.revocation != null -> "This node is revoked"
+            node.info?.screen?.available != true -> "Screen access is unavailable; open setup on the computer"
+            agent && (node.trust != app.umbra.core.control.NodeTrust.OWNED || !node.allowAgentScreen) -> "Allow agent screen access on this node first"
+            agent && nodeId in userScreens -> "The user has taken over this screen"
+            else -> null
+        }
+    }
+
+    suspend fun openScreen(nodeId: String, agent: Boolean = false): javax.net.ssl.SSLSocket = withContext(Dispatchers.IO) {
+        screenProblem(nodeId, agent)?.let { throw NodeException(it) }
+        val node = registry[nodeId] ?: throw NodeException("No such node")
+        var failure: Exception? = null
+        for (address in (listOf(app.umbra.core.nodes.NodeAddress(node.host, node.port)) + node.addresses).distinctBy { it.host to it.port }) {
+            try {
+                val socket = NodeChannel.screenTunnel(address.host, address.port, tlsContext(keyManagers(), PinnedTrust({ setOf(node.fingerprint) })), agent)
+                val sockets = screenSockets.getOrPut(nodeId) { mutableSetOf() }
+                synchronized(sockets) {
+                    sockets.removeAll { it.isClosed }
+                    screenProblem(nodeId, agent)?.let { socket.close(); throw NodeException(it) }
+                    sockets.add(socket)
+                }
+                return@withContext socket
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { failure = e }
+        }
+        throw failure ?: NodeException("No reachable address")
+    }
     private val registry: NodeRegistry get() = c.nodes
     private val channels = ConcurrentHashMap<String, NodeChannel>()
     private val renewals = ConcurrentHashMap<String, Job>()
@@ -94,23 +139,35 @@ class NodeConnections(private val c: AppContainer, private val scope: CoroutineS
     // ---- pairing ----
 
     /** Pairs with the node at [host]:[port] showing [code]; its certificate is pinned from then on. */
-    suspend fun pair(host: String, port: Int, code: String, phoneName: String): PairedNode = withContext(Dispatchers.IO) {
+    suspend fun pair(host: String, port: Int, code: String, phoneName: String, expectedPin: String? = null, addresses: List<app.umbra.core.nodes.NodeAddress> = emptyList()): PairedNode = withContext(Dispatchers.IO) {
         var seen = ""
-        val ch = NodeChannel.connect(host, port, tlsContext(keyManagers(), PinnedTrust({ emptySet() }, { true }) { seen = it }), scope)
+        val ch = NodeChannel.connect(host, port, tlsContext(keyManagers(), PinnedTrust({ expectedPin?.let(::setOf) ?: emptySet() }, { expectedPin == null }) { seen = it }), scope)
         ch.use {
+            seen = it.peerFingerprint
             val mine = it.localFingerprint ?: throw NodeException("this phone presented no certificate")
-            val reply = it.request("pair", buildJsonObject { put("name", phoneName); put("proof", Pairing.phoneProof(code, seen, mine)) })
+            val reply = it.request("pair", buildJsonObject { put("name", phoneName); put("proof", Pairing.phoneProof(code, seen, mine)) }, timeoutMs = 120_000)
             if (!Pairing.same(reply.str("proof").orEmpty(), Pairing.nodeProof(code, seen, mine))) throw NodeException("the node could not prove it knows the code: not paired")
-            val node = PairedNode(reply.str("node_id") ?: seen.take(16), reply.str("node_name") ?: host, host, port, seen, pairedAtMs = System.currentTimeMillis())
+            val node = PairedNode(reply.str("node_id") ?: seen.take(16), reply.str("node_name") ?: host, host, port, seen, pairedAtMs = System.currentTimeMillis(), addresses = addresses)
             registry.paired(node)
             node
         }
     }
 
-    private suspend fun channel(node: PairedNode): NodeChannel {
+    suspend fun pair(invitation: app.umbra.core.nodes.NodeInvitation, phoneName: String): PairedNode {
+        invitation.validate()
+        var failure: Exception? = null
+        for (address in invitation.addresses) {
+            try { return pair(address.host, address.port, invitation.code, phoneName, invitation.fingerprint, invitation.addresses) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { failure = e; if (!e.message.orEmpty().startsWith("could not reach")) throw e }
+        }
+        throw failure ?: NodeException("No reachable address")
+    }
+
+    private suspend fun channel(node: PairedNode): NodeChannel = connecting.withLock {
         if (node.revocation != null) throw NodeException("${node.name} is revoked: this phone does not talk to it")
-        channels[node.id]?.takeIf { !it.closed }?.let { return it }
-        val ch = NodeChannel.connect(node.host, node.port, tlsContext(keyManagers(), PinnedTrust({ setOf(node.fingerprint) })), scope)
+        channels[node.id]?.takeIf { !it.closed }?.let { return@withLock it }
+        val ch = connect(node)
         channels[node.id] = ch
         scope.launch {
             ch.events.collect { e ->
@@ -121,15 +178,34 @@ class NodeConnections(private val c: AppContainer, private val scope: CoroutineS
                 }
             }
         }
-        return ch
+        ch
+    }
+
+    private suspend fun connect(node: PairedNode): NodeChannel {
+        var failure: Exception? = null
+        for (address in (listOf(app.umbra.core.nodes.NodeAddress(node.host, node.port)) + node.addresses).distinctBy { it.host to it.port }) {
+            try { return NodeChannel.connect(address.host, address.port, tlsContext(keyManagers(), PinnedTrust({ setOf(node.fingerprint) })), scope) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { failure = e }
+        }
+        throw failure ?: NodeException("No reachable address")
     }
 
     /** Preflight: what the node is now (its capabilities and epoch), and that its pinned certificate still answers. */
     suspend fun preflight(nodeId: String): NodeInfo {
         val node = registry[nodeId] ?: throw NodeException("no such node")
-        val info = Rsp.json.decodeFromJsonElement(NodeInfo.serializer(), channel(node).request("hello")["info"]!!)
-        registry.seen(nodeId, info)
-        return info
+        val started = android.os.SystemClock.elapsedRealtime()
+        try {
+            val info = Rsp.json.decodeFromJsonElement(NodeInfo.serializer(), channel(node).request("hello")["info"]!!)
+            registry.seen(nodeId, info)
+            mutableStates.value = mutableStates.value + (nodeId to ConnectionState(true, android.os.SystemClock.elapsedRealtime() - started))
+            return info
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) {
+            mutableStates.value = mutableStates.value + (nodeId to ConnectionState(error = e.message))
+            disconnect(nodeId)
+            throw e
+        }
     }
 
     /**
@@ -265,6 +341,8 @@ class NodeConnections(private val c: AppContainer, private val scope: CoroutineS
 
     fun disconnect(nodeId: String) {
         channels.remove(nodeId)?.close()
+        screenSockets.remove(nodeId)?.let { sockets -> synchronized(sockets) { sockets.forEach { runCatching { it.close() } }; sockets.clear() } }
+        mutableStates.value = mutableStates.value + (nodeId to ConnectionState())
     }
 
     fun connected(nodeId: String) = channels[nodeId]?.closed == false

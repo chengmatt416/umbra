@@ -76,8 +76,8 @@ fun ScreensScreen(onBack: () -> Unit) {
     var tab by remember { mutableStateOf(0) }
     PorcelainPage(stringResource(R.string.r_screens_title), onBack) {
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-            Segmented(listOf(0 to stringResource(R.string.r_screens_background), 1 to stringResource(R.string.r_screens_linux)), tab, { tab = it }, Modifier.padding(top = 6.dp, bottom = 12.dp), fill = true)
-            if (tab == 0) BackgroundScreens() else LinuxDesktop()
+            Segmented(listOf(0 to stringResource(R.string.r_screens_background), 1 to stringResource(R.string.r_screens_linux), 2 to stringResource(R.string.rn_title)), tab, { tab = it }, Modifier.padding(top = 6.dp, bottom = 12.dp), fill = true)
+            when (tab) { 0 -> BackgroundScreens(); 1 -> LinuxDesktop(); else -> app.umbra.agent.ui.nodes.RemoteScreenPicker() }
         }
     }
 }
