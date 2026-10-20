@@ -97,10 +97,10 @@ internal sealed interface Line {
 
 /**
  * The agent's conversation turned into chat lines: the user's messages on the right, the agent's words on the left,
- * wakes and what the agent did with its tools as small notes, coding sessions' reports as cards; "[quiet]" turns and
- * tool chatter left out.
+ * what the agent did with its tools as small notes, coding sessions' reports as cards; wake digests, "[quiet]" turns
+ * and tool chatter left out.
  */
-internal fun chatLines(state: ConversationState, wakeNote: (String) -> String, toolNote: (String, Map<String, String>) -> String?): List<Line> {
+internal fun chatLines(state: ConversationState, toolNote: (String, Map<String, String>) -> String?): List<Line> {
     val out = ArrayList<Line>()
     var lastDay: LocalDate? = null
     fun day(at: Long) {
@@ -110,11 +110,11 @@ internal fun chatLines(state: ConversationState, wakeNote: (String) -> String, t
     for (item in state.items) {
         when (item) {
             is ChatItem.User -> {
+                if (item.text.startsWith("[Wake")) continue
                 day(item.timestamp)
                 val t = item.text
                 val bus = SessionBus.HEADER.find(t)
                 when {
-                    t.startsWith("[Wake") -> out += Line.Note(item.key, item.timestamp, wakeNote(t))
                     bus != null && bus.groupValues[1].startsWith("Report") -> {
                         val head = t.substringBefore('\n').removePrefix("[").removeSuffix("]").split(" · ")
                         out += Line.Report(item.key, item.timestamp, bus.groupValues[4], head.getOrNull(1).orEmpty(), head.getOrNull(2).orEmpty(), head.getOrNull(3).orEmpty(),
@@ -161,23 +161,6 @@ internal fun chatLines(state: ConversationState, wakeNote: (String) -> String, t
 }
 
 internal fun sessionReference(text: String): String? = Regex("""\[Session: ([a-zA-Z0-9-]+)]""").find(text)?.groupValues?.get(1)
-
-/** "Woke up · heartbeat · 2 messages, 1 timer" from a wake digest. */
-@Composable
-internal fun rememberWakeNote(): (String) -> String {
-    val woke = stringResource(R.string.ag_note_woke)
-    return { digest ->
-        val reason = Regex("""\[Wake · [^·]+ · ([^\]]+)\]""").find(digest)?.groupValues?.get(1).orEmpty()
-        val counts = listOf("Timers due:", "Rules that fired:", "New messages:", "New notifications:", "The user asked you to do").mapNotNull { h ->
-            val i = digest.indexOf(h)
-            if (i < 0) null else {
-                val n = digest.substring(i).lines().drop(1).takeWhile { it.startsWith("- ") || it.startsWith("  ") }.count { it.startsWith("- ") }
-                when (h) { "Timers due:" -> "$n ⏰"; "Rules that fired:" -> "$n ⚡"; "New messages:" -> "$n ✉"; "New notifications:" -> "$n 🔔"; else -> "$n ☰" }
-            }
-        }
-        listOf(woke, reason).filter { it.isNotBlank() }.joinToString(" · ") + if (counts.isEmpty()) "" else " · " + counts.joinToString(" ")
-    }
-}
 
 @Composable
 internal fun rememberToolNote(): (String, Map<String, String>) -> String? {
@@ -230,9 +213,8 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
     val activity by container.agents.activity.collectAsStateWithLifecycle()
     val timers by produceState(emptyList<app.umbra.agent.agents.AgentTimer>(), agentId) { while (true) { value = container.agents.store.timers(agentId).sortedBy { it.nextMs }; delay(3_000) } }
     val state by produceState(app.umbra.agent.agents.AgentState(), agentId) { while (true) { value = container.agents.store.state(agentId); delay(5_000) } }
-    val wakeNote = rememberWakeNote()
     val toolNote = rememberToolNote()
-    val lines = remember(conversation.items, conversation.tools, wakeNote, toolNote) { chatLines(conversation, wakeNote, toolNote) }
+    val lines = remember(conversation.items, conversation.tools, toolNote) { chatLines(conversation, toolNote) }
     var draft by remember(agentId) { mutableStateOf("") }
     val pictures = remember(agentId) { mutableStateListOf<ContentBlock.Image>() }
     var error by remember { mutableStateOf<String?>(null) }

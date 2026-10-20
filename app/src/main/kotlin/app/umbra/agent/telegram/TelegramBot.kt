@@ -86,8 +86,6 @@ class TelegramBot(private val container: AppContainer) {
     private val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(75, TimeUnit.SECONDS).writeTimeout(60, TimeUnit.SECONDS).build()
     private var poller: Job? = null
     private var watchers: Job? = null
-    /** Agents whose latest message came from Telegram: their next answer goes back there. */
-    private val answerOnTelegram = ConcurrentHashMap.newKeySet<String>()
     /** Approvals already shown in the chat (request id -> message id). */
     private val shown = ConcurrentHashMap<String, Long>()
     /** The agent waiting for the user's words after "Edit" on an approval. */
@@ -259,7 +257,6 @@ class TelegramBot(private val container: AppContainer) {
         // "Edit" on an approval: the next words say how to change it.
         val edit = editing
         val body = if (edit == agent.id) { editing = null; container.context.getString(R.string.tg_edit_prefix) + " " + words.joinToString("\n") } else words.joinToString("\n").ifEmpty { "(picture)" }
-        answerOnTelegram += agent.id
         typing(chatId)
         runCatching { container.agents.talk(agent.id, body, images, via = "Telegram") }.onFailure { send(chatId, it.message ?: "error") }
     }
@@ -372,12 +369,19 @@ class TelegramBot(private val container: AppContainer) {
             if (sentFor[session.id]?.let { session.updatedAtMs - it < 1_500 } == true) return@collect
             sentFor[session.id] = session.updatedAtMs
             val chatId = mutable.value.chatId ?: return@collect
-            val asked = answerOnTelegram.remove(p.id)
-            val text = container.supervisor.finalText(session.id).trim()
+            val asked = container.agents.repliesOnTelegram(p.id)
+            val text = if (session.state == SessionState.FAILED) container.context.getString(
+                R.string.notif_failed_text, session.title, session.lastError ?: container.context.getString(R.string.notif_see_task),
+            ) else container.supervisor.finalText(session.id).trim()
             if (text.isEmpty() || text.startsWith(AgentRuntime.QUIET)) return@collect
             // Answers to Telegram always; the agent's own news only while the user is not looking at its chat.
             if (asked || container.agents.onScreen.value != p.id) runCatching { send(chatId, if (asked) text else "${p.name}: $text") }
         }
+    }
+
+    suspend fun notifyAgent(text: String) {
+        val chatId = mutable.value.chatId ?: error("Telegram is not linked")
+        send(chatId, text)
     }
 
     // ---- Telegram's API ----

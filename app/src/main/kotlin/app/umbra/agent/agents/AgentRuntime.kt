@@ -475,7 +475,7 @@ class AgentRuntime(private val container: AppContainer) {
             container.scope.launch {
                 // Tell the user what the agent said, unless they are looking at its chat or it had nothing to say.
                 val text = container.supervisor.finalText(s.id).trim()
-                if (text.isNotEmpty() && !text.startsWith(QUIET) && onScreen.value != p.id) notify(p, text, urgent = false)
+                if (text.isNotEmpty() && !text.startsWith(QUIET) && onScreen.value != p.id && !repliesOnTelegram(p.id)) notify(p, text, urgent = false)
                 // Yield memory to delegated work immediately, including on phones that admit only one turn.
                 val delegated = container.sessionStore.list().any { it.agentId == p.id && it.kind == SessionKind.CODING && !it.state.isTerminal }
                 if (delegated) runCatching { container.supervisor.releaseIfIdle(s.id, 0) }
@@ -512,7 +512,17 @@ class AgentRuntime(private val container: AppContainer) {
         return joules / (capacityWh * 3_600.0) * 100.0
     }
 
-    fun notify(p: AgentProfile, text: String, urgent: Boolean) {
+    suspend fun repliesOnTelegram(agentId: String): Boolean {
+        val sid = store.get(agentId)?.sessionId ?: return false
+        return try { repliesOnTelegram(container.supervisor.conversation(sid).value) }
+        catch (_: app.umbra.core.session.SessionNotFoundException) { false }
+    }
+
+    suspend fun notify(p: AgentProfile, text: String, urgent: Boolean) {
+        if (repliesOnTelegram(p.id)) {
+            container.telegram.notifyAgent(text)
+            return
+        }
         val manager = context.getSystemService(NotificationManager::class.java)
         val open = PendingIntent.getActivity(
             context, p.id.hashCode(),

@@ -73,7 +73,6 @@
     <string name="ag_note_rule">新規則</string>
     <string name="ag_note_sent">傳給</string>
     <string name="ag_note_timer">計時</string>
-    <string name="ag_note_woke">醒來</string>
     <string name="ag_notification_reader">通知讀取</string>
     <string name="ag_notification_reader_sub">代理可以讀哪些 App 的通知</string>
     <string name="ag_notifications_off">不讀</string>

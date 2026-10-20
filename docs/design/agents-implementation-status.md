@@ -182,3 +182,17 @@ Verification for this change:
   and both website languages' download links/version.
 * Both right- and left-handed FAB layouts were checked on the signed release. Original handedness/file-access
   settings were restored, existing demo videos were unchanged, and the emulator remains on the signed 0.4.1 release.
+
+## 0.4.2 notification behavior — 2026-10-20
+
+* Agent chat hides wake digests, including existing history, without removing them from the agent's context or
+  inserting empty date separators. User messages, replies and linked coding reports remain visible.
+* Completing an agent turn no longer posts the generic “Task finished” notification. Ordinary coding/subagent
+  completion alerts and non-Telegram failure alerts retain their existing behavior.
+* Replies, explicit `notify_user` messages, coding results and approval alerts follow the last direct user request's
+  channel. Telegram requests stay on Telegram across wake digests and delegated reports; a new in-app request
+  switches back to phone notifications. Both reply observers derive the channel from the saved conversation,
+  rather than consuming an in-memory Telegram marker after the first answer.
+* App unit tests: 59 passed, zero failures/errors/skips. Regression coverage includes wake-only histories, date
+  separators, retained replies and session links, result transitions for all session kinds, and channel selection
+  across reports, wakes and subsequent in-app requests. No live Telegram account messages were sent.

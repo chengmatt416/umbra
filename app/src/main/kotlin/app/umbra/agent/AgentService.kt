@@ -12,6 +12,7 @@ import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.os.PowerManager
 import app.umbra.agent.ui.localizedDescription
+import app.umbra.agent.notifications.shouldAnnounceResult
 import app.umbra.agent.ui.sessionsFlow
 import app.umbra.core.safety.ApprovalDecision
 import app.umbra.core.safety.ApprovalRequest
@@ -186,16 +187,18 @@ class AgentService : Service() {
      * One heads-up notification per pending approval. The shade shows one line and needs no unlock, so it answers only
      * what the shared rule lets it (LOW and MEDIUM); anything riskier opens the Inbox (UX report C-07, C-08).
      */
-    private fun syncApprovals(pending: List<ApprovalRequest>) {
+    private suspend fun syncApprovals(pending: List<ApprovalRequest>) {
         val enabled = container.settings.value.notifyOnApproval
-        val ids = pending.map { it.id }.toSet()
+        val local = pending.filterNot { fromTelegram(it.sessionId) }
+        val ids = local.map { it.id }.toSet()
         approvalNotifications.keys.filter { it !in ids }.forEach { manager.cancel(approvalNotifications.remove(it)!!) }
         if (!enabled) return
-        for (request in pending) if (request.id !in approvalNotifications) notifyApproval(request, lastMinute = false)
+        for (request in local) if (request.id !in approvalNotifications) notifyApproval(request, lastMinute = false)
     }
 
-    private fun notifyApproval(request: ApprovalRequest, lastMinute: Boolean) {
+    private suspend fun notifyApproval(request: ApprovalRequest, lastMinute: Boolean) {
         if (!container.settings.value.notifyOnApproval) return
+        if (fromTelegram(request.sessionId)) return
         val id = approvalNotifications.getOrPut(request.id) { NEXT_ID_BASE + approvalNotifications.size + (request.id.hashCode() and 0xFFFF) }
         val risk = request.assessment.level
         val riskText = getString(app.umbra.agent.ui.riskRes(risk))
@@ -227,11 +230,14 @@ class AgentService : Service() {
         manager.notify(id, notification)
     }
 
-    private fun announceResults(sessions: List<Session>) {
+    private suspend fun fromTelegram(sessionId: String): Boolean =
+        container.sessionStore.get(sessionId)?.agentId?.let { container.agents.repliesOnTelegram(it) } == true
+
+    private suspend fun announceResults(sessions: List<Session>) {
         for (s in sessions) {
             val before = lastStates.put(s.id, s.state)
-            if (before == null || before == s.state) continue
-            if (before != SessionState.RUNNING && before != SessionState.WAITING_APPROVAL) continue
+            if (!shouldAnnounceResult(s, before)) continue
+            if (s.agentId?.let { container.agents.repliesOnTelegram(it) } == true) continue
             val (title, text) = when (s.state) {
                 SessionState.COMPLETED -> getString(R.string.notif_finished) to s.title
                 SessionState.FAILED -> getString(R.string.notif_failed) to getString(R.string.notif_failed_text, s.title, s.lastError ?: getString(R.string.notif_see_task))

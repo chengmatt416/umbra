@@ -105,7 +105,7 @@ class AgentTools(private val container: AppContainer) {
             store.setQueue(agentId, store.queue(agentId).map { if (it.id == id) it.copy(done = true) else it })
             ok("Done: $id.")
         },
-        tool("notify_user", "Tell the user something now with a phone notification (your chat messages reach them too, but only when they look). Use it for what they should see soon; during quiet hours only when urgent.", objectSchema {
+        tool("notify_user", "Tell the user something now via the request's channel: Telegram for a Telegram request, otherwise a phone notification. Use it for what they should see soon; during quiet hours only when urgent.", objectSchema {
             string("text", "What to tell them, short.", required = true)
             boolean("urgent", "Urgent: also during quiet hours, with sound.")
         }) { a ->

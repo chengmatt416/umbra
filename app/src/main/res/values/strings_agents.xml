@@ -73,7 +73,6 @@
     <string name="ag_note_rule">New rule</string>
     <string name="ag_note_sent">Wrote to</string>
     <string name="ag_note_timer">Timer</string>
-    <string name="ag_note_woke">Woke up</string>
     <string name="ag_notification_reader">Notification reader</string>
     <string name="ag_notification_reader_sub">Which apps the agents may read</string>
     <string name="ag_notifications_off">Not read</string>
