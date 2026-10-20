@@ -105,7 +105,7 @@ fun SessionFileButton(
     val title = stringResource(R.string.sf_title)
     if (compact) {
         if (busy) androidx.compose.foundation.layout.Box(Modifier.padding(10.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
-            app.umbra.agent.ui.porcelain.ThinkingOrb(stringResource(R.string.sf_busy))
+            app.umbra.agent.ui.porcelain.ThinkingOrb(stringResource(R.string.sf_busy), state = app.umbra.agent.ui.porcelain.ThinkingOrbState.CONNECTING)
         } else PIconButton(PIcons.clip, title, { open = true }, size = 40.dp, tint = P.sub)
     } else PButton(if (busy) stringResource(R.string.sf_busy) else title, { open = true }, enabled = !busy, style = ButtonStyle.Alt, icon = PIcons.clip)
 

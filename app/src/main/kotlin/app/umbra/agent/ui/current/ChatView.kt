@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
@@ -122,10 +121,6 @@ fun AssistantMessage(item: ChatItem.Assistant, tools: Map<String, ToolRun>, resu
                     is Block.Picture -> Base64Picture(block.image.base64, 180)
                 }
             }
-            if (item.streaming && item.blocks.isEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
-                app.umbra.agent.ui.porcelain.ThinkingOrb(stringResource(R.string.ag_work_response))
-                Text("  " + stringResource(R.string.chat_thinking), fontSize = 12.sp, color = P.muted)
-            }
             item.error?.takeIf { item.stopReason == "error" || item.stopReason == "aborted" }?.let { Callout(it, if (item.stopReason == "aborted") Tone.Warn else Tone.Danger) }
             if (!item.streaming && (item.outputTokens > 0 || item.cost > 0)) {
                 Text(
@@ -147,7 +142,7 @@ private fun Thinking(block: Block.Thinking, live: Boolean) {
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(pc(0x80E8EFE4)).clickable { open = !open }.animateContentSize().padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (live) app.umbra.agent.ui.porcelain.ThinkingOrb(stringResource(R.string.ag_work_response))
+            if (live) app.umbra.agent.ui.porcelain.ThinkingOrb(stringResource(R.string.orb_thinking), state = app.umbra.agent.ui.porcelain.ThinkingOrbState.SOLVING)
             Text(if (block.redacted) stringResource(R.string.chat_thinking_hidden) else if (live) "  " + stringResource(R.string.chat_thinking) else stringResource(R.string.chat_thought), fontSize = 12.sp, fontStyle = FontStyle.Italic, color = P.muted)
         }
         if (open || live) Text(block.text.takeLast(if (open) 20_000 else 400), Modifier.padding(top = 4.dp), fontSize = 12.sp, lineHeight = 17.sp, color = P.sub, fontStyle = FontStyle.Italic)
@@ -176,7 +171,7 @@ fun ToolCard(call: Block.ToolCall, run: ToolRun?, images: List<app.umbra.core.or
             .clickable { open = !open }.animateContentSize().padding(horizontal = 12.dp, vertical = 9.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (running) CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = tone)
+            if (running) app.umbra.agent.ui.porcelain.ThinkingOrb(describeTool(call.name, call.arguments), state = app.umbra.agent.ui.porcelain.thinkingOrbStateForTool(call.name))
             else Box(Modifier.size(9.dp).clip(CircleShape).background(tone))
             Text(call.name, Modifier.padding(start = 9.dp), fontSize = 12.sp, fontFamily = P.mono, fontWeight = FontWeight.Bold, color = P.ink)
             Text(describeTool(call.name, call.arguments), Modifier.padding(start = 8.dp).weight(1f), fontSize = 12.sp, color = P.sub, maxLines = 1, overflow = TextOverflow.Ellipsis)

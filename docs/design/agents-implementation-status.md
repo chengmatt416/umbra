@@ -216,3 +216,26 @@ Verification for this change:
   matches `e91beafe830c621986bfb31f5914676ab0643262524eddce350ac4b7077cf94c` (852,017,188 bytes).
 * `node tools/verify-release.mjs`: passed update feed, download headers, byte-range resume, latest redirect,
   checksum file, full APK hash, and both website languages. The temporary uploader Worker was deleted.
+
+## 0.4.3 thinking-orb integration — 2026-10-20
+
+* Native thinking-orbs now supports working, searching, solving, composing and connecting, with the upstream
+  size-specific 20/64 presets. All ten presets, including constellation edges, match upstream numeric golden
+  frames. Projection and solver rotations are calculated once per frame instead of per dot.
+* Agent and coding chats show a 64 dp activity orb with broad status text. Compact header indicators remain
+  visible when reading older messages. Tool cards and file connections use the corresponding animation.
+* The Agents list tracks delegated work even after the assistant yields its process slot; the indicator disappears
+  after work settles. Offscreen and background instances stop their frame loops, and changing Android's motion
+  setting to zero immediately freezes a representative frame. Accessible status labels update independently of
+  animation frames.
+* Completion news no longer changes the selected coding session while the app is visible. Continuous assistant
+  turns no longer trigger Capsule completion focus/peeks. The on-device handoff test reproduced the previous
+  focus switch and passes with the fix.
+* App unit tests: 63 passed, zero failures/errors/skips. `scripts/ondevice-agent-session.py --orb` passed real
+  frame comparisons, live reduced-motion changes, persistent headers after scrolling, coding-session orbs,
+  delegated Agents-list activity and idle cleanup, together with session links and returning reports. Provider
+  settings and the original animator-duration setting were restored; no real provider keys or account sends were
+  used. Visual captures are in `reports/orb-activity/`.
+* Built in the isolated `orb-improvements` worktree from `c18a54f` while unrelated edits continued in the shared
+  checkout. Bundled native runtime binaries were copied from the hash-verified published 0.4.2 APK; Linux
+  archives retain the existing 0.4.0 bundle.

@@ -95,7 +95,7 @@ private fun AgentRow(p: AgentProfile, onClick: () -> Unit) {
     }
     val (last, unread) = lastLine(conversation, p.lastReadMs)
     val lastAt = conversation.items.lastOrNull { it is ChatItem.Assistant || it is ChatItem.User }?.timestamp
-    val status = agentStatus(p)
+    val status = agentStatus(p, conversation)
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 6.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -114,8 +114,8 @@ private fun AgentRow(p: AgentProfile, onClick: () -> Unit) {
             }
             Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 PIcon(if (p.running) PIcons.clock else PIcons.pause, size = 12.dp, tint = P.muted)
-                if (conversation.working) app.umbra.agent.ui.porcelain.ThinkingOrb(status)
-                Text(status, fontSize = 12.sp, color = P.muted, maxLines = 1)
+                if (status.working) app.umbra.agent.ui.porcelain.ThinkingOrb(status.label, state = status.orb, paused = status.paused)
+                Text(status.label, fontSize = 12.sp, color = P.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

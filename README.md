@@ -39,7 +39,9 @@ its own work, and asks before anything risky.
   are imported as copies.
 * **Personal assistants.** Agents have their own assistant prompt, memory, timers, inbox and tools. They delegate
   implementation to separate coding sessions; tap the delegation or report event to open that work. Broad activity
-  labels and a native [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) indicator show current work.
+  labels and native [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) indicators follow thinking,
+  reviewing, writing, connecting and active work. Chats show a larger orb; headers and the Agents list keep a compact
+  indicator visible during delegated work. Animation stops offscreen, in the background and with reduced motion.
   Wake digests stay out of chat, and agent turns do not send generic “Task finished” notifications. Telegram
   requests keep replies, reminders and approval alerts on Telegram until the user sends a new request in the app.
   Laya routes incoming items among agents subscribed to that source, including broadcasts when relevant to all;

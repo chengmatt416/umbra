@@ -133,7 +133,8 @@ class Capsule(internal val context: Context, private val container: AppContainer
                     val session = (change as? app.umbra.core.session.StoreChange.SessionChanged)?.session ?: return@collect
                     val before = last.put(session.id, session.state)
                     val ended = session.state == app.umbra.core.session.SessionState.COMPLETED || session.state == app.umbra.core.session.SessionState.FAILED
-                    if (before != null && before != session.state && ended) {
+                    if (before != null && before != session.state && ended &&
+                        session.kind != app.umbra.core.session.SessionKind.AGENT && !container.ui.appVisible.value) {
                         container.ui.focus(session.id)
                         peek(hold = false)
                     }

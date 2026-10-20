@@ -66,6 +66,10 @@ import app.umbra.agent.ui.porcelain.PIcon
 import app.umbra.agent.ui.porcelain.PIconButton
 import app.umbra.agent.ui.porcelain.PIcons
 import app.umbra.agent.ui.porcelain.Tone
+import app.umbra.agent.ui.porcelain.ThinkingOrb
+import app.umbra.agent.ui.porcelain.ThinkingOrbActivity
+import app.umbra.agent.ui.porcelain.ThinkingOrbState
+import app.umbra.agent.ui.porcelain.thinkingOrbState
 import app.umbra.agent.ui.porcelain.pc
 import app.umbra.core.orchestrator.Block
 import app.umbra.core.orchestrator.ChatItem
@@ -233,7 +237,9 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
         scope.launch { uris.forEach { u -> app.umbra.agent.ui.current.encodePicture(context, u)?.let { pictures += it } } }
     }
     val ownWork = session?.state == SessionState.RUNNING || activity[agentId] != null
-    val working = ownWork || delegated != null
+    val working = p.running && (ownWork || delegated != null)
+    val orbState = if (!ownWork && delegated != null) ThinkingOrbState.WORKING else thinkingOrbState(conversation, activity[agentId] == "triage")
+    val orbPaused = !ownWork && delegated?.state != SessionState.RUNNING
     val status = when {
         !p.running -> stringResource(R.string.ag_status_stopped)
         session?.state == SessionState.WAITING_APPROVAL -> stringResource(R.string.ag_work_approval)
@@ -255,7 +261,10 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                 AgentAvatar(p.avatar, p.name, 40.dp)
                 Column(Modifier.weight(1f)) {
                     Text(p.name, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = P.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(status, fontSize = 12.sp, color = if (working) P.good else P.sub, maxLines = 1)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (working) ThinkingOrb(status, state = orbState, paused = orbPaused)
+                        Text(status, Modifier.weight(1f), fontSize = 12.sp, color = if (working) P.good else P.sub, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
             PIconButton(PIcons.more, stringResource(R.string.ag_profile), onProfile, size = 36.dp)
@@ -317,10 +326,7 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                 }
             }
             if (working) item(key = "typing") {
-                Row(Modifier.padding(start = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    app.umbra.agent.ui.porcelain.ThinkingOrb(status)
-                    Text(status, fontSize = 12.sp, color = P.sub)
-                }
+                ThinkingOrbActivity(status, orbState, Modifier.fillMaxWidth().padding(vertical = 8.dp), paused = orbPaused)
             }
         }
         error?.let { Box(Modifier.padding(horizontal = 16.dp)) { Callout(it, Tone.Danger) } }
@@ -464,8 +470,10 @@ internal fun lastLine(state: ConversationState, lastReadMs: Long): Pair<String, 
 }
 
 /** The agent's face with its state for a row: whether it is working, its next wake. */
+internal data class AgentStatus(val label: String, val working: Boolean, val orb: ThinkingOrbState, val paused: Boolean)
+
 @Composable
-internal fun agentStatus(p: AgentProfile): String {
+internal fun agentStatus(p: AgentProfile, conversation: ConversationState): AgentStatus {
     val container = LocalContext.current.container
     val context = LocalContext.current
     val state by produceState(app.umbra.agent.agents.AgentState(), p.id) { while (true) { value = container.agents.store.state(p.id); delay(10_000) } }
@@ -473,15 +481,19 @@ internal fun agentStatus(p: AgentProfile): String {
     val session by produceState<app.umbra.core.session.Session?>(null, p.sessionId, changes) { value = p.sessionId?.let { container.sessionStore.get(it) } }
     val activities by container.agents.activity.collectAsStateWithLifecycle()
     val delegated by produceState<app.umbra.core.session.Session?>(null, p.id, changes) { value = activeDelegatedWork(p.id, container.sessionStore.list()) }
-    return when {
+    val ownWork = session?.state == SessionState.RUNNING || activities[p.id] != null
+    val label = when {
         !p.running -> stringResource(R.string.ag_status_stopped)
         session?.state == SessionState.WAITING_APPROVAL -> stringResource(R.string.ag_work_approval)
         session?.state == SessionState.PAUSED -> stringResource(R.string.ag_work_paused)
-        session?.state == SessionState.RUNNING || activities[p.id] != null -> currentAgentWork(session, null, activities[p.id])
+        ownWork -> currentAgentWork(session, conversation, activities[p.id])
         delegated != null -> stringResource(R.string.ag_work_delegated, delegated!!.title)
         state.nextWakeMs > 0 -> stringResource(R.string.ag_next_wake, DateUtils.formatDateTime(context, state.nextWakeMs, DateUtils.FORMAT_SHOW_TIME))
         else -> stringResource(R.string.ag_status_on)
     }
+    return AgentStatus(label, p.running && (ownWork || delegated != null),
+        if (!ownWork && delegated != null) ThinkingOrbState.WORKING else thinkingOrbState(conversation, activities[p.id] == "triage"),
+        !ownWork && delegated?.state != SessionState.RUNNING)
 }
 
 @Composable

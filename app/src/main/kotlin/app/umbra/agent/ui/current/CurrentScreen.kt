@@ -286,6 +286,10 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                     fontFamily = P.serif, fontSize = 21.sp, lineHeight = 25.sp, color = P.ink, letterSpacing = (-0.3).sp,
                     maxLines = if (titleOpen) 5 else 1, overflow = TextOverflow.Ellipsis,
                 )
+                if (session.state == SessionState.RUNNING) {
+                    val orb = app.umbra.agent.ui.porcelain.thinkingOrbState(conversation)
+                    app.umbra.agent.ui.porcelain.ThinkingOrb(app.umbra.agent.ui.porcelain.thinkingOrbLabel(orb), Modifier.padding(horizontal = 8.dp), state = orb)
+                }
                 Box {
                     PIconButton(PIcons.more, stringResource(R.string.cur_actions), { menu = true }, size = 36.dp)
                     DropdownMenu(menu, { menu = false }) {
@@ -484,6 +488,10 @@ private fun ChatList(
                 is ChatItem.Notice -> NoticeLine(item)
                 is ChatItem.ToolResult -> Unit
             }
+        }
+        if (session.state == SessionState.RUNNING) item(key = "orb-activity") {
+            val orb = app.umbra.agent.ui.porcelain.thinkingOrbState(conversation)
+            app.umbra.agent.ui.porcelain.ThinkingOrbActivity(session.activity?.takeIf { it.isNotBlank() } ?: app.umbra.agent.ui.porcelain.thinkingOrbLabel(orb), orb, Modifier.fillMaxWidth())
         }
         conversation.retry?.let { r ->
             item(key = "retry") {

@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="orb_working">正在處理工作</string>
+    <string name="orb_thinking">正在思考請求</string>
+    <string name="orb_composing">正在撰寫與整理</string>
+    <string name="orb_connecting">正在連接與協調</string>
     <string name="ag_work_approval">等待核准</string>
     <string name="ag_work_paused">已暫停</string>
     <string name="ag_work_review">正在整理資訊</string>

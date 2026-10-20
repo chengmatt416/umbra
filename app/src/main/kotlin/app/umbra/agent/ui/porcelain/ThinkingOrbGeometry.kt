@@ -5,6 +5,11 @@ import kotlin.math.*
 /** Native port of thinking-orbs' working state at de85557 (Jakub Antalik, MIT; assets/licenses). */
 internal object ThinkingOrbGeometry {
     data class Dot(val x: Double, val y: Double, val z: Double, val radius: Double, val white: Double, val alpha: Double)
+    data class Edge(val x1: Double, val y1: Double, val x2: Double, val y2: Double, val white: Double, val alpha: Double, val width: Double)
+    data class Frame(val dots: List<Dot>, val edges: List<Edge> = emptyList())
+
+    fun frame(state: ThinkingOrbState, size: Int, seconds: Double): Frame =
+        if (state == ThinkingOrbState.WORKING) Frame(frame(size, seconds)) else ThinkingOrbModes.frame(state, size, seconds)
     private fun hash(a: Double, b: Double): Double {
         val value = sin(a * 12.9898 + b * 78.233) * 43758.5453
         return value - floor(value)

@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="orb_working">Working on the task</string>
+    <string name="orb_thinking">Thinking through the request</string>
+    <string name="orb_composing">Writing and organizing</string>
+    <string name="orb_connecting">Connecting and coordinating</string>
     <string name="ag_work_approval">Waiting for approval</string>
     <string name="ag_work_paused">Paused</string>
     <string name="ag_work_review">Reviewing information</string>
