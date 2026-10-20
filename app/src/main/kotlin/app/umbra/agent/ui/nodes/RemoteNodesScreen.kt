@@ -70,7 +70,9 @@ internal fun RefreshNodes() {
     LaunchedEffect(nodes.keys, lifecycle) {
         lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
             while (true) {
-                nodes.values.filter { it.revocation == null }.forEach { n -> launch { runCatching { c.nodeConnections.preflight(n.id); c.nodeConnections.reconcile(n.id) } } }
+                kotlinx.coroutines.coroutineScope {
+                    nodes.values.filter { it.revocation == null }.map { n -> launch { runCatching { c.nodeConnections.preflight(n.id); c.nodeConnections.reconcile(n.id) } } }.forEach { it.join() }
+                }
                 delay(15_000)
             }
         }
@@ -178,9 +180,11 @@ private fun NodeRow(asset: String, title: String, subtitle: String, trailing: St
 }
 
 @Composable
-internal fun NodePill(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, secondary: Boolean = false, enabled: Boolean = true, asset: String? = null) {
-    Row(modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(24.dp)).background(if (secondary || !enabled) P.base2 else P.accent2).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+internal fun NodePill(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, secondary: Boolean = false, enabled: Boolean = true, asset: String? = null, dark: Boolean = false) {
+    val background = if (dark) androidx.compose.ui.graphics.Color(if (secondary || !enabled) 0xff2a342e else 0xff9dbba1) else if (secondary || !enabled) P.base2 else P.accent2
+    val foreground = if (dark) androidx.compose.ui.graphics.Color(if (secondary || !enabled) 0xffeef3ec else 0xff26372f) else if (secondary || !enabled) P.ink else androidx.compose.ui.graphics.Color.White
+    Row(modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(24.dp)).background(background).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
         asset?.let { NodeDesignIcon(it); Spacer(Modifier.width(8.dp)) }
-        Text(text, fontSize = 15.sp, color = if (secondary || !enabled) P.ink else androidx.compose.ui.graphics.Color.White, fontWeight = FontWeight.Medium)
+        Text(text, fontSize = 15.sp, color = foreground, fontWeight = FontWeight.Medium)
     }
 }

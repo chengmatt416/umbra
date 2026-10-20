@@ -253,7 +253,6 @@ class AppContainer(val context: Context) {
     // ---- safety, decisions, pipeline ----
     val approvals = ApprovalBroker(ledger = ledger)
     val approvalMode: ApprovalMode get() = settings.value.approvalMode
-    private val gate = SafetyGate(RiskClassifier(), { ApprovalPolicy(approvalMode) }, approvals)
     /** Fast typed decisions: the Laya sidecar when the user has installed and started it, built-in rules otherwise. */
     val laya = LayaSidecar(this, scope)
 
@@ -266,6 +265,10 @@ class AppContainer(val context: Context) {
     /** Auto: Laya picks each new task's model (data/AutoModel). */
     val autoModel by lazy { app.umbra.agent.data.AutoModel(this) }
     val decisions = DecisionRouter(primary = laya.engine)
+    val safetyGate = SafetyGate(
+        RiskClassifier(), { ApprovalPolicy(approvalMode) }, approvals,
+        securityCheck = app.umbra.core.safety.LayaActionSecurityCheck(laya.engine),
+    )
     val journal = ActionJournal()
     val leases = DisplayLeaseManager(onBlocked = { session, display, holder ->
         inputLeases.recordBlocked("display:$display", app.umbra.core.control.Principal.agent(session), app.umbra.core.control.Principal.agent(holder))
@@ -274,7 +277,7 @@ class AppContainer(val context: Context) {
 
     val pipeline = ActionPipeline(
         backends = backends,
-        safety = gate,
+        safety = safetyGate,
         decisions = decisions,
         leases = leases,
         journal = journal,
@@ -400,7 +403,7 @@ class AppContainer(val context: Context) {
             environment = environment,
             providers = AppProviderResolver(settings, secrets, { name, provider -> vault.admits(name, provider) }, { modelDirectory.auto(it) }),
             toolHosts = ::toolHost,
-            gate = gate,
+            gate = safetyGate,
             approvals = approvals,
             questions = questions,
             prompts = ::promptContext,

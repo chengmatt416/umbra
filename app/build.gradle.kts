@@ -14,8 +14,8 @@ android {
     defaultConfig {
         applicationId = "app.umbra.agent"
         // `-Pumbra.versionCode=… -Pumbra.versionName=…` override them, for testing the updater with a later build.
-        versionCode = providers.gradleProperty("umbra.versionCode").orNull?.toInt() ?: 10
-        versionName = providers.gradleProperty("umbra.versionName").orNull ?: "0.4.3"
+        versionCode = providers.gradleProperty("umbra.versionCode").orNull?.toInt() ?: 11
+        versionName = providers.gradleProperty("umbra.versionName").orNull ?: "0.4.4"
     }
 
     // Releases are signed with the key in UMBRA_KEYSTORE (see .github/workflows/release.yml); without it the

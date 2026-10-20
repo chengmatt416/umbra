@@ -318,7 +318,7 @@
     <string name="set_diagnostics_summary">確認各項功能真的可用</string>
     <string name="set_section_ask">何時詢問你</string>
     <string name="set_ask_now">立即套用到所有任務，包含執行中的。</string>
-    <string name="set_ask_detail">唯一例外：已在執行的代理，要到下次啟動後才會在「謹慎」模式下詢問唯讀的步驟。所有會改變東西的動作都會立即依新的選擇處理。</string>
+    <string name="set_ask_detail">Laya 執行時會獨立檢查動作，並依此政策決定何時詢問。Laya 無法使用時，內建安全檢查仍會運作。傳送訊息、付款、刪除重要資料及安全性變更等高風險動作仍需要核准。</string>
     <string name="mode_cautious">謹慎</string>
     <string name="mode_cautious_body">任何會改變東西的動作都先問，小事也問。</string>
     <string name="mode_balanced">平衡</string>

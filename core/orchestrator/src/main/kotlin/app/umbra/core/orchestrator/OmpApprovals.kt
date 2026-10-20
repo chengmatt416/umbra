@@ -83,7 +83,8 @@ class OmpApprovalBridge(
             sessionId = sessionId,
             rationale = prompt.reason,
         )
-        return when (gate.check(action, context(), app.umbra.core.safety.ApprovalSource.OMP)) {
+        val ctx = context().copy(actionDescription = "Coding tool ${prompt.tool}: ${prompt.details.joinToString("\n")}")
+        return when (gate.check(action, ctx, app.umbra.core.safety.ApprovalSource.OMP)) {
             is SafetyGate.Outcome.Proceed -> UiResponse.Value(APPROVE)
             is SafetyGate.Outcome.Blocked -> UiResponse.Value(DENY)
         }

@@ -86,6 +86,8 @@ data class ActionContext(
     val protectedPackages: Set<String> = setOf(Umbra.APPLICATION_ID),
     /** Extra paths (approval ledger, policy files) the agent must never write. */
     val protectedPaths: List<String> = emptyList(),
+    /** Trusted adapter's description of an operation that has no phone UI target (for example a remote tool). */
+    val actionDescription: String? = null,
 ) {
     companion object {
         val DEFAULT_STAGING_ROOTS = listOf("/data/local/tmp/umbra")

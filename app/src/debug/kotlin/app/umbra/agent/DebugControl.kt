@@ -162,6 +162,16 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             buildJsonObject { put("on", on) }
         }
         // The redesign's own switches, for recordings and tests: the mode, first-run setup, the theme.
+        "nodes.list" -> UmbraJson.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(app.umbra.core.control.PairedNode.serializer()), container.nodes.all.value.values.toList())
+        "nodes.trust" -> {
+            container.nodes.setTrust(str(args, "id"), app.umbra.core.control.NodeTrust.valueOf(str(args, "trust")))
+            buildJsonObject { put("ok", true) }
+        }
+        "nodes.unpair" -> {
+            val id = str(args, "id")
+            container.nodeConnections.unpair(id)
+            buildJsonObject { put("ok", true) }
+        }
         "ui.set" -> {
             container.settings.update { p ->
                 var q = p

@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,7 +27,6 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import app.umbra.agent.R
 import app.umbra.agent.container
 import app.umbra.agent.ui.porcelain.*
-import app.umbra.agent.ui.shell.PorcelainPage
 import app.umbra.core.nodes.NodeInvitation
 import app.umbra.core.nodes.Pairing
 import app.umbra.core.nodes.Rsp
@@ -37,6 +37,19 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun NodePairingScreen(onBack: () -> Unit, onPaired: (String) -> Unit) {
     val context = LocalContext.current
+    val view = androidx.compose.ui.platform.LocalView.current
+    val ink = Color(0xffeef3ec)
+    val sub = Color(0xff93a595)
+    val fieldColors = OutlinedTextFieldDefaults.colors(focusedTextColor = ink, unfocusedTextColor = ink, focusedLabelColor = ink, unfocusedLabelColor = sub, focusedBorderColor = Color(0xff9dbba1), unfocusedBorderColor = sub)
+    DisposableEffect(view) {
+        val window = (context as? android.app.Activity)?.window
+        val controller = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
+        val status = controller?.isAppearanceLightStatusBars
+        val nav = controller?.isAppearanceLightNavigationBars
+        controller?.isAppearanceLightStatusBars = false
+        controller?.isAppearanceLightNavigationBars = false
+        onDispose { status?.let { controller.isAppearanceLightStatusBars = it }; nav?.let { controller.isAppearanceLightNavigationBars = it } }
+    }
     val scope = rememberCoroutineScope()
     var permission by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
     val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permission = it }
@@ -53,36 +66,37 @@ internal fun NodePairingScreen(onBack: () -> Unit, onPaired: (String) -> Unit) {
     fun scanned(value: String) {
         runCatching { NodeInvitation.parse(value) }.onSuccess { invitation = it; error = null }.onFailure { error = it.message }
     }
-    PorcelainPage(stringResource(R.string.rn_add), onBack) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    androidx.activity.compose.BackHandler(onBack = onBack)
+    Box(Modifier.fillMaxSize().background(Color(0xff0e1511)).statusBarsPadding().navigationBarsPadding()) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 26.dp, vertical = 56.dp), verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
             if (!manual) {
                 Box(Modifier.size(260.dp).clip(RoundedCornerShape(28.dp)).background(Color(0xff0e1511)).border(3.dp, Color(0xff9dbba1), RoundedCornerShape(28.dp)), contentAlignment = Alignment.Center) {
                     when {
                         invitation != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) { PIcon(PIcons.check, tint = Color(0xff9dbba1), size = 48.dp); Text(stringResource(R.string.rn_found, invitation!!.name), color = Color(0xffeef3ec), modifier = Modifier.padding(18.dp)) }
                         permission && active -> NodeQrCamera(onCode = ::scanned, onError = { error = it })
-                        else -> PButton(stringResource(R.string.rn_camera), { request.launch(Manifest.permission.CAMERA) }, icon = PIcons.camera)
+                        else -> NodePill(stringResource(R.string.rn_camera), { request.launch(Manifest.permission.CAMERA) }, Modifier.padding(20.dp), dark = true)
                     }
                 }
-                Text(stringResource(R.string.rn_aim), color = P.ink, fontSize = 17.sp)
+                Text(stringResource(R.string.rn_aim), color = ink, fontSize = 17.sp)
             }
             error?.let { Callout(it, Tone.Danger) }
-            PCard(padding = PaddingValues(18.dp)) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color(0xff121815)).padding(18.dp)) {
                 val invite = invitation
                 if (invite != null) {
-                    Text(stringResource(R.string.rn_found, invite.name), fontSize = 16.sp, color = P.ink)
-                    Subtle(shortFingerprint(invite.fingerprint), Modifier.padding(top = 6.dp))
-                    Subtle(invite.addresses.joinToString(" · ") { it.label() }, Modifier.padding(top = 6.dp))
+                    Text(stringResource(R.string.rn_found, invite.name), fontSize = 16.sp, color = ink)
+                    Text(shortFingerprint(invite.fingerprint), Modifier.padding(top = 6.dp), fontSize = 12.sp, color = sub)
+                    Text(invite.addresses.joinToString(" · ") { it.label() }, Modifier.padding(top = 6.dp), fontSize = 12.sp, color = sub)
                 } else if (manual) {
-                    OutlinedTextField(pasted, { pasted = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.rn_invitation)) }, maxLines = 3)
-                    PButton(stringResource(R.string.rn_read_invitation), { scanned(pasted) }, style = ButtonStyle.Ghost, enabled = pasted.isNotBlank())
-                    OutlinedTextField(host, { host = it.trim() }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.np_address)) }, singleLine = true)
-                    OutlinedTextField(port, { port = it }, Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text(stringResource(R.string.np_port)) }, singleLine = true)
-                    OutlinedTextField(code, { code = it }, Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text(stringResource(R.string.rn_code)) }, singleLine = true)
+                    OutlinedTextField(pasted, { pasted = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.rn_invitation)) }, maxLines = 3, colors = fieldColors)
+                    NodePill(stringResource(R.string.rn_read_invitation), { scanned(pasted) }, Modifier.padding(top = 8.dp), secondary = true, dark = true, enabled = pasted.isNotBlank())
+                    OutlinedTextField(host, { host = it.trim() }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.np_address)) }, singleLine = true, colors = fieldColors)
+                    OutlinedTextField(port, { port = it }, Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text(stringResource(R.string.np_port)) }, singleLine = true, colors = fieldColors)
+                    OutlinedTextField(code, { code = it }, Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text(stringResource(R.string.rn_code)) }, singleLine = true, colors = fieldColors)
                 }
-                Subtle(stringResource(R.string.rn_confirm_names, "${Build.MANUFACTURER} ${Build.MODEL}"), Modifier.padding(top = 10.dp))
+                Text(stringResource(R.string.rn_confirm_names, "${Build.MANUFACTURER} ${Build.MODEL}"), Modifier.padding(top = 10.dp), color = sub, fontSize = 13.sp)
                 if (busy) Callout(stringResource(R.string.rn_awaiting), Tone.Neutral, Modifier.padding(top = 12.dp))
                 Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    NodePill(stringResource(if (manual || invite != null) R.string.rn_scan_again else R.string.rn_manual), { invitation = null; manual = !manual; error = null }, Modifier.weight(1f), secondary = true, enabled = !busy)
+                    NodePill(stringResource(if (manual || invite != null) R.string.rn_scan_again else R.string.rn_manual), { manual = if (invitation != null) false else !manual; invitation = null; error = null }, Modifier.weight(1f), secondary = true, enabled = !busy, dark = true)
                     NodePill(stringResource(R.string.np_pair), {
                         busy = true; error = null
                         scope.launch {
@@ -96,10 +110,11 @@ internal fun NodePairingScreen(onBack: () -> Unit, onPaired: (String) -> Unit) {
                             catch (e: Exception) { error = e.message }
                             finally { busy = false }
                         }
-                    }, Modifier.weight(1f), enabled = !busy && (invite != null || manual && host.isNotBlank() && port.toIntOrNull() in 1..65535 && Pairing.normalize(code).length == 12))
+                    }, Modifier.weight(1f), enabled = !busy && (invite != null || manual && host.isNotBlank() && port.toIntOrNull() in 1..65535 && Pairing.normalize(code).length == 12), dark = true)
                 }
             }
-            Subtle(stringResource(R.string.rn_pair_limits))
+            Text(stringResource(R.string.rn_pair_limits), fontSize = 12.sp, color = sub)
         }
+        Box(Modifier.align(Alignment.TopStart).padding(8.dp)) { PIconButton(PIcons.chevronLeft, stringResource(R.string.action_back), onBack, tint = ink) }
     }
 }

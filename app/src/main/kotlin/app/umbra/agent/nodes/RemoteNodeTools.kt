@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import app.umbra.agent.AppContainer
 import app.umbra.core.nodes.RfbClient
 import app.umbra.core.nodes.Rsp
+import app.umbra.core.model.action.ActionRequest
+import app.umbra.core.model.action.Operation
 import app.umbra.core.safety.*
 import app.umbra.runtime.omp.*
 import app.umbra.tools.HostSideTool
@@ -35,7 +37,7 @@ class RemoteNodeTools(private val c: AppContainer) {
                 "run" -> {
                     val command = a.str("command")?.takeIf { it.isNotBlank() && it.length <= 16000 } ?: error("command is required (up to 16000 characters)")
                     c.nodes.placementProblem(id, 0)?.let { error(it) }
-                    approve(sessionId, "node_job", "Run on ${c.nodes[id]?.name}", command, RiskCategory.DYNAMIC_COMMAND)
+                    approve(sessionId, "node_job", "Run on ${c.nodes[id]?.name}", command, RiskCategory.DYNAMIC_COMMAND, Operation.Shell(command))
                     val job = c.nodeConnections.run(id, listOf("sh", "-c", command))
                     HostToolPayload.text("Started ${job.id} on $id; lease until ${job.leaseUntilMs}. Use node_job list for output.")
                 }
@@ -81,11 +83,13 @@ class RemoteNodeTools(private val c: AppContainer) {
         },
     )
 
-    private suspend fun approve(session: String, tool: String, title: String, details: String, category: RiskCategory) {
-        val request = ApprovalRequest(UUID.randomUUID().toString(), session, ApprovalSource.HOST_TOOL, title, details,
-            RiskAssessment.of(RiskFinding(category, RiskLevel.HIGH, "Executes on another computer as its user")),
-            toolName = tool, operation = "remote", createdAtMs = System.currentTimeMillis(), timeoutMs = 10 * 60_000)
-        check(c.approvals.request(request).isApproved) { "Remote operation was not approved" }
+    private suspend fun approve(session: String, tool: String, title: String, details: String, category: RiskCategory, operation: Operation = Operation.Shell(tool)) {
+        val result = c.safetyGate.check(
+            ActionRequest(UUID.randomUUID().toString(), operation, sessionId = session),
+            ActionContext(actionDescription = "$title: $details"),
+            additionalAssessment = RiskAssessment.of(RiskFinding(category, RiskLevel.HIGH, "Executes on another computer as its user")),
+        )
+        check(result is SafetyGate.Outcome.Proceed) { (result as SafetyGate.Outcome.Blocked).result.summary }
     }
     private fun tool(name: String, description: String, schema: JsonObject, body: suspend (JsonObject) -> HostToolPayload) =
         HostSideTool(HostToolDefinition(name, description, schema)) { call, _ ->

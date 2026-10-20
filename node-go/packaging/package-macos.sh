@@ -20,7 +20,7 @@ codesign --force --deep --sign - --identifier app.umbra.node "$app"
 stage="build/macos/dmg-$version"
 mkdir -p "$stage"
 ditto "$app" "$stage/Umbra Node.app"
-ln -s /Applications "$stage/Applications"
+ln -sfn /Applications "$stage/Applications"
 cat > "$stage/OPEN-FIRST.txt" <<'NOTE'
 Drag Umbra Node into Applications, then open it to begin setup.
 This build is ad-hoc signed and is not notarized. On first launch, right-click → Open, or use System Settings → Privacy & Security → Open Anyway.

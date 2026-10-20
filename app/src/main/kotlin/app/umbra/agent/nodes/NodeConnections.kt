@@ -56,7 +56,7 @@ class NodeConnections(private val c: AppContainer, private val scope: CoroutineS
     data class ConnectionState(val online: Boolean = false, val latencyMs: Long? = null, val error: String? = null)
     private val mutableStates = kotlinx.coroutines.flow.MutableStateFlow<Map<String, ConnectionState>>(emptyMap())
     val states: kotlinx.coroutines.flow.StateFlow<Map<String, ConnectionState>> = mutableStates
-    private val connecting = kotlinx.coroutines.sync.Mutex()
+    private val connecting = ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
     private val screenSockets = ConcurrentHashMap<String, MutableSet<javax.net.ssl.SSLSocket>>()
     private val userScreens = ConcurrentHashMap.newKeySet<String>()
 
@@ -164,10 +164,11 @@ class NodeConnections(private val c: AppContainer, private val scope: CoroutineS
         throw failure ?: NodeException("No reachable address")
     }
 
-    private suspend fun channel(node: PairedNode): NodeChannel = connecting.withLock {
+    private suspend fun channel(node: PairedNode): NodeChannel = connecting.getOrPut(node.id) { kotlinx.coroutines.sync.Mutex() }.withLock {
         if (node.revocation != null) throw NodeException("${node.name} is revoked: this phone does not talk to it")
         channels[node.id]?.takeIf { !it.closed }?.let { return@withLock it }
         val ch = connect(node)
+        if (registry[node.id]?.revocation != null || registry[node.id] == null) { ch.close(); throw NodeException("This node is no longer trusted") }
         channels[node.id] = ch
         scope.launch {
             ch.events.collect { e ->

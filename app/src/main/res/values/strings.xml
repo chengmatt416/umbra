@@ -328,7 +328,7 @@
     <string name="set_diagnostics_summary">Check that everything really works</string>
     <string name="set_section_ask">When to ask you</string>
     <string name="set_ask_now">Applies right away to every task, including running ones.</string>
-    <string name="set_ask_detail">One exception: an agent that is already running starts asking about read-only steps under Cautious only after its next start. Everything that changes something follows the new choice at once.</string>
+    <string name="set_ask_detail">Laya independently reviews actions when it is running. This policy decides when to ask; built-in safety checks remain active if Laya is unavailable. Sending messages, payments, important data deletion and security changes still require approval at high risk.</string>
     <string name="mode_cautious">Cautious</string>
     <string name="mode_cautious_body">Ask before anything that changes something, even small things.</string>
     <string name="mode_balanced">Balanced</string>

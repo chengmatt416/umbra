@@ -179,9 +179,10 @@ class NodeChannel private constructor(private val socket: SSLSocket, scope: Coro
             val s = context.socketFactory.createSocket() as SSLSocket
             try {
                 s.connect(InetSocketAddress(host, port), timeoutMs)
-                s.soTimeout = 0
+            s.soTimeout = timeoutMs
                 s.enabledProtocols = arrayOf("TLSv1.3")
                 s.startHandshake()
+                s.soTimeout = 0
             } catch (e: Exception) {
                 runCatching { s.close() }
                 throw NodeException("could not reach $host:$port securely: ${e.message}")

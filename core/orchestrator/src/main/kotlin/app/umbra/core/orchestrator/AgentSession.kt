@@ -379,11 +379,9 @@ class AgentSession internal constructor(
     }
 
     private fun ompSettings(session: Session, browserAvailable: Boolean) = OmpSettings(
-            approvalMode = when (deps.approvalMode()) {
-                app.umbra.core.safety.ApprovalMode.CAUTIOUS -> OmpApprovalMode.ALWAYS_ASK
-                // The host classifies every call omp asks about, so omp must keep asking: never yolo.
-                else -> OmpApprovalMode.WRITE
-            },
+            // Every write and execution reaches the independent host check, in every Settings mode.
+            // ALWAYS_ASK is the host checkpoint; harmless calls still pass without a user prompt.
+            approvalMode = OmpApprovalMode.ALWAYS_ASK,
             // The host's own gate decides about host tools; omp must not ask a second time.
             toolPolicies = toolHost.toolNames.associateWith { ToolPolicy.ALLOW },
             bashPatterns = OmpSettings.PRODUCT_BASH_PATTERNS,

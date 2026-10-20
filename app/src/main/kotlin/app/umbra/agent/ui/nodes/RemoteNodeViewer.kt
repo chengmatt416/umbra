@@ -98,7 +98,7 @@ private fun RemoteNodeImage(nodeId: String, preview: Boolean, initiallyControlli
         if (!preview && control) Callout(stringResource(R.string.rn_you_control), Tone.Good)
         Box(Modifier.fillMaxWidth().then(if (preview) Modifier.height(180.dp) else if (image != null) Modifier.aspectRatio(image.width.toFloat() / image.height) else Modifier.height(300.dp)).clip(RoundedCornerShape(12.dp)).background(P.night), contentAlignment = Alignment.Center) {
             if (image != null && node?.revocation == null) {
-                Image(image.asImageBitmap(), contentDescription = stringResource(R.string.rn_screen_preview), modifier = Modifier.fillMaxWidth().then(if (control && !preview) Modifier.pointerInput(nodeId, image.width, image.height, trackpad, connection) {
+                Image(image.asImageBitmap(), contentDescription = stringResource(R.string.rn_screen_preview), modifier = Modifier.fillMaxSize().then(if (control && !preview) Modifier.pointerInput(nodeId, image.width, image.height, trackpad, connection) {
                     var px = image.width / 2f; var py = image.height / 2f
                     awaitEachGesture {
                         val down = awaitFirstDown()

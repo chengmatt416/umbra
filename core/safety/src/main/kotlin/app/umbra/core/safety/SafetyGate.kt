@@ -21,6 +21,7 @@ class SafetyGate(
     private val broker: ApprovalBroker,
     private val clock: Clock = Clock.System,
     private val approvalTimeoutMs: Long = 5 * 60_000,
+    private val securityCheck: ActionSecurityCheck? = null,
 ) {
     sealed interface Outcome {
         data class Proceed(val assessment: RiskAssessment, val how: String) : Outcome
@@ -40,9 +41,18 @@ class SafetyGate(
         rulesBySession.remove(sessionId)
     }
 
-    suspend fun check(request: ActionRequest, ctx: ActionContext = ActionContext(), source: ApprovalSource = ApprovalSource.HOST_TOOL): Outcome {
-        val assessment = classifier.assess(request, ctx)
+    suspend fun check(
+        request: ActionRequest,
+        ctx: ActionContext = ActionContext(),
+        source: ApprovalSource = ApprovalSource.HOST_TOOL,
+        additionalAssessment: RiskAssessment = RiskAssessment.NONE,
+    ): Outcome {
+        val baseline = classifier.assess(request, ctx) + additionalAssessment
         val sessionId = request.sessionId ?: "-"
+        // A hard denial is final. The independent model only adds findings, never removes them.
+        val assessment = if (policy().decide(request, baseline) is PolicyDecision.Deny) baseline
+            else baseline + (securityCheck?.assess(request, ctx) ?: RiskAssessment.NONE)
+        // Read settings after inference, so a running task observes a policy change immediately.
         val decision = policy().decide(request, assessment, rulesFor(sessionId), ctx.foregroundPackage)
         return when (decision) {
             PolicyDecision.Allow -> Outcome.Proceed(assessment, "allowed")
