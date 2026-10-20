@@ -239,3 +239,14 @@ Verification for this change:
 * Built in the isolated `orb-improvements` worktree from `c18a54f` while unrelated edits continued in the shared
   checkout. Bundled native runtime binaries were copied from the hash-verified published 0.4.2 APK; Linux
   archives retain the existing 0.4.0 bundle.
+
+### 0.4.3 release verification
+
+* Source: `44448b5` on `orb-improvements`. The isolated `:app:testDebugUnitTest :app:assembleRelease
+  :app:lintRelease --no-parallel --max-workers=1 -Pumbra.linuxVersion=0.4.0` build passed: 63 app tests,
+  no failures/errors/skips, and release lint completed successfully.
+* APK: version 0.4.3 / code 10, 852,048,292 bytes. SHA-256:
+  `528796e1b2b24f5004458e4e03c9a6808942971c87e79eb8c83532bf52d68894`.
+* APK package/version, original release signing certificate, bundled Linux archive hashes and orb license passed
+  validation. The uploaded R2 object matches this metadata. The dedicated temporary upload Worker
+  `umbra-orb-release-uploader-043` was deleted.

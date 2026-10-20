@@ -7,4 +7,4 @@ binding = "RELEASES"
 bucket_name = "umbra-releases"
 
 [vars]
-LATEST_APK = "umbra-0.4.2.apk"
+LATEST_APK = "umbra-0.4.3.apk"

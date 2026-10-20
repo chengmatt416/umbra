@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 // src/apk.json is written by publish.sh from the real file; the defaults only keep a fresh checkout building.
 const fromDisk = existsSync(new URL('./apk.json', import.meta.url)) ? JSON.parse(readFileSync(new URL('./apk.json', import.meta.url), 'utf8')) : {};
-export const APK = { version: '0.4.2', versionCode: 9, file: 'umbra-0.4.2.apk', size: '? MiB', sha256: '(see /download/umbra-0.4.2.apk.sha256)', bytes: 0, ...fromDisk };
+export const APK = { version: '0.4.3', versionCode: 10, file: 'umbra-0.4.3.apk', size: '? MiB', sha256: '(see /download/umbra-0.4.3.apk.sha256)', bytes: 0, ...fromDisk };
 export const GITHUB = 'https://github.com/chengmatt416/umbra';
 
 export const L = {
@@ -22,7 +22,7 @@ export const L = {
     story: {
       eyebrow: 'Every feature, in motion',
       title: 'Scroll to watch Umbra work.',
-      note: 'Every clip is the real app recorded on an Android 16 emulator.',
+      note: 'Every clip is the real app recorded on an Android 16 emulator using a scripted model. Live model responses require your own provider account.',
       parts: ['Do the work', 'Keep it running', 'Stay in control'],
     },
     chapters: [
