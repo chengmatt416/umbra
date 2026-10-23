@@ -22,6 +22,8 @@ class SafetyGate(
     private val clock: Clock = Clock.System,
     private val approvalTimeoutMs: Long = 5 * 60_000,
     private val securityCheck: ActionSecurityCheck? = null,
+    private val commandRules: () -> List<AllowRule> = { emptyList() },
+    private val saveCommandRule: (AllowRule) -> Unit = {},
 ) {
     sealed interface Outcome {
         data class Proceed(val assessment: RiskAssessment, val how: String) : Outcome
@@ -53,7 +55,7 @@ class SafetyGate(
         val assessment = if (policy().decide(request, baseline) is PolicyDecision.Deny) baseline
             else baseline + (securityCheck?.assess(request, ctx) ?: RiskAssessment.NONE)
         // Read settings after inference, so a running task observes a policy change immediately.
-        val decision = policy().decide(request, assessment, rulesFor(sessionId), ctx.foregroundPackage)
+        val decision = policy().decide(request, assessment, rulesFor(sessionId) + commandRules(), ctx.foregroundPackage, ctx.cwd)
         return when (decision) {
             PolicyDecision.Allow -> Outcome.Proceed(assessment, "allowed")
             is PolicyDecision.AllowByRule -> {
@@ -86,7 +88,7 @@ class SafetyGate(
         val approval = toApproval(request, assessment, ctx, source)
         return when (val answer = broker.request(approval)) {
             is ApprovalDecision.Approved -> {
-                answer.remember?.let { remember(request, assessment, ctx, it) }
+                answer.remember?.takeIf { it in approval.rememberOptions }?.let { remember(request, assessment, ctx, it) }
                 Outcome.Proceed(assessment, "approved by the user")
             }
             is ApprovalDecision.Denied -> Outcome.Blocked(
@@ -125,7 +127,19 @@ class SafetyGate(
         val sessionId = request.sessionId ?: return
         val categories = assessment.findings.filter { it.level < RiskLevel.CRITICAL }.map { it.category }.toSet()
         if (categories.isEmpty()) return
-        val shellCommand = (request.operation as? Operation.Shell)?.command?.trim()?.substringBefore(' ')
+        if (assessment.level >= RiskLevel.CRITICAL) return
+        val shellCommand = CommandPrefixes.offered(request.operation)
+        if (scope == RememberScope.THIS_COMMAND_FOREVER) {
+            if (shellCommand == null || request.requires == app.umbra.core.model.action.Privilege.ROOT) return
+            saveCommandRule(AllowRule(
+                id = "prefix-${clock.nowMs()}-${counter.incrementAndGet()}", sessionId = "*", categories = categories,
+                operation = "shell", commandPrefix = shellCommand,
+                workingDirectory = (request.operation as Operation.Shell).cwd, contextDirectory = ctx.cwd, literalCommand = true,
+            ))
+            return
+        }
+        if (scope == RememberScope.THIS_COMMAND_THIS_SESSION && shellCommand == null) return
+        if (scope == RememberScope.THIS_APP_THIS_SESSION && ctx.foregroundPackage == null) return
         val rule = AllowRule(
             id = "rule-${counter.incrementAndGet()}",
             sessionId = sessionId,
@@ -153,14 +167,21 @@ class SafetyGate(
             ctx.foregroundPackage?.let { put("app", it) }
             ctx.targetNode?.label?.let { put("element", it) }
             put("risk", assessment.describe())
+            (request.operation as? Operation.Shell)?.let { shell ->
+                put("command", shell.command)
+                (shell.cwd ?: ctx.cwd)?.let { put("cwd", it) }
+                shell.stdin?.let { put("stdin", it) }
+                if (shell.env.isNotEmpty()) put("environment_keys", shell.env.keys.sorted().joinToString(", "))
+            }
+            CommandPrefixes.offered(request.operation)?.let { put("command_prefix", it) }
         },
         createdAtMs = clock.nowMs(),
         timeoutMs = approvalTimeoutMs,
-        rememberOptions = listOf(
-            RememberScope.THIS_APP_THIS_SESSION,
-            RememberScope.THIS_COMMAND_THIS_SESSION,
-            RememberScope.THIS_CATEGORY_THIS_SESSION,
-        ),
+        rememberOptions = if (assessment.level >= RiskLevel.CRITICAL) emptyList() else when {
+            CommandPrefixes.offered(request.operation) != null && request.requires != app.umbra.core.model.action.Privilege.ROOT -> listOf(RememberScope.THIS_COMMAND_FOREVER)
+            request.operation !is Operation.Shell && ctx.foregroundPackage != null -> listOf(RememberScope.THIS_APP_THIS_SESSION, RememberScope.THIS_CATEGORY_THIS_SESSION)
+            else -> emptyList()
+        },
     )
 
     /** One-line, secret-free description of what will run. */

@@ -56,7 +56,10 @@ its own work, and asks before anything risky.
   is running: silently through the helper or root, otherwise through Android's installer, which asks you once.
   Settings → *About* shows the state and has the switches ([`AppUpdater`](app/src/main/kotlin/app/umbra/agent/update/AppUpdater.kt)).
 
-Free software under the MIT License. Sideload or F-Droid; there is no Play Store build.
+Umbra's original code is free software under the [MIT License](LICENSE); bundled components retain
+their [own licenses and notices](THIRD_PARTY_NOTICES.md). Distribution is by sideload; there is no Play Store build.
+Read the [privacy policy](PRIVACY.md), [preview use policy](USAGE_POLICY.md) and
+[public-release review and outstanding requirements](docs/RELEASE_LEGAL_REVIEW.md).
 
 ## Requirements
 
@@ -92,6 +95,9 @@ for no longer than its lease ([ADR 0018](docs/adr/0018-distributed-nodes.md)). `
 `umbra-node unpair <prefix>` manage the phones it trusts.
 
 ## What is verified
+
+[Requested feature readiness](docs/FEATURE_READINESS.md) maps Laya security checks and residency,
+command approvals, sign-out, result history, usage limits, phone session access, and deferred voice modes.
 
 Every part is tested against the real thing: the real omp binary, a real Android 16 emulator, a real
 Debian environment on it. The one stand-in is the language model in automated runs (a scripted

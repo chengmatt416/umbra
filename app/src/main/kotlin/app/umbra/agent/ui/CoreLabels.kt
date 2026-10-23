@@ -48,6 +48,7 @@ fun riskCategoryRes(c: RiskCategory): Int = when (c) {
     RiskCategory.NETWORK_CHANGE -> R.string.rc_network_change
     RiskCategory.PLACES_CALL -> R.string.rc_places_call
     RiskCategory.DYNAMIC_COMMAND -> R.string.rc_dynamic_command
+    RiskCategory.PROMPT_INJECTION -> R.string.rc_prompt_injection
     RiskCategory.SELF_PROTECTION -> R.string.rc_self_protection
 }
 

@@ -49,6 +49,7 @@ data class AppPrefs(
     /** "Auto" effort: Laya reads each new task and picks how hard the model thinks (omp's own judge without Laya). */
     val autoEffort: Boolean = true,
     val approvalMode: ApprovalMode = ApprovalMode.BALANCED,
+    val commandApprovals: List<app.umbra.core.safety.AllowRule> = emptyList(),
     /** Appended to the agent's instructions in every session. */
     val standingInstructions: String = "",
     val notifyOnApproval: Boolean = true,
@@ -84,7 +85,7 @@ data class AppPrefs(
     val skippedUpdateVersion: Long = 0,
     /** Laya was offered (first-run setup): its answer is final until the user changes it in Settings. */
     val layaOffered: Boolean = false,
-    /** Laya should be installed and start with every task. */
+    /** Keep the installed Laya model resident while the app service runs, including between tasks. */
     val layaWanted: Boolean = false,
     /**
      * How these settings were written. Defaults are not stored (UmbraJson), so a missing "autoModel" is ambiguous in

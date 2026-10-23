@@ -9,6 +9,7 @@ from umbractl import Bridge, adb, setup
 
 class Fixture(BaseHTTPRequestHandler):
     risk = 'MEDIUM'
+    injection = 'CLEAR'
     calls = 0
 
     def do_POST(self):
@@ -16,11 +17,12 @@ class Fixture(BaseHTTPRequestHandler):
         size = int(self.headers['Content-Length'])
         assert 0 < size < 16_384
         payload = json.loads(self.rfile.read(size))
-        assert set(payload['questions']) == {'risk', 'category'}
+        assert set(payload['questions']) == {'risk', 'category', 'injection'}
         Fixture.calls += 1
         body = json.dumps({'answers': {
             'risk': {'choice': Fixture.risk, 'confidence': .99},
             'category': {'choice': 'SYSTEM_CONFIGURATION', 'confidence': .99},
+            'injection': {'choice': Fixture.injection, 'confidence': .99},
         }}).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
@@ -51,8 +53,14 @@ try:
             assert result['risk'] == risk, result
             assert result['decision'] == ('Ask' if risk_index >= mode_index else 'Allow'), result
             print(f'{mode}: {risk} -> {result["decision"]}', flush=True)
-    assert Fixture.calls == 9
-    print('Passed: real Android loopback HTTP, external HTTP blocked, 9 Settings/risk combinations.')
+    Fixture.risk = 'NONE'
+    Fixture.injection = 'SUSPECTED'
+    for mode in ('CAUTIOUS', 'BALANCED', 'AUTONOMOUS'):
+        bridge.control('approval_mode', {'mode': mode})
+        result = bridge.control('laya.security.check')
+        assert result['risk'] == 'CRITICAL' and result['decision'] == 'Ask', result
+    assert Fixture.calls == 12
+    print('Passed: real Android loopback HTTP, external HTTP blocked, 9 Settings/risk combinations and 3 injection reviews.')
 finally:
     bridge.control('approval_mode', {'mode': original})
     adb('reverse', '--remove', 'tcp:8765')

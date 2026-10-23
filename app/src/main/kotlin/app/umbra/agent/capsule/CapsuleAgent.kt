@@ -35,6 +35,9 @@ import app.umbra.core.orchestrator.ChatItem
 import app.umbra.core.orchestrator.ConversationState
 import app.umbra.core.safety.ApprovalDecision
 import app.umbra.core.safety.ApprovalRequest
+import app.umbra.core.safety.approveGesture
+import app.umbra.core.safety.ApprovalSurface
+import app.umbra.core.safety.ApproveGesture
 
 /**
  * The default agent in the Capsule's card (Figma 11.6): its face and state, the last thing it said, and what it asks
@@ -73,7 +76,11 @@ internal fun AgentBlock(capsule: Capsule, container: AppContainer, agent: AgentP
         approvals.firstOrNull { it.sessionId == agent.sessionId }?.let { request ->
             Text(request.description, fontSize = 14.sp, color = Attention, maxLines = 5, overflow = TextOverflow.Ellipsis)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DarkButton(stringResource(R.string.ag_send), null, primary = true) { container.approvals.resolve(request.id, ApprovalDecision.Approved()) }
+                if (approveGesture(request, ApprovalSurface.CAPSULE) == ApproveGesture.ONE_TAP) {
+                    DarkButton(stringResource(R.string.appr_approve_once), null, primary = true) { container.approvals.resolve(request.id, ApprovalDecision.Approved()) }
+                } else {
+                    DarkButton(stringResource(R.string.appr_review_inbox), null, primary = true) { capsule.open(null, request.sessionId) }
+                }
                 DarkButton(stringResource(R.string.ag_edit), null) {
                     container.approvals.resolve(request.id, ApprovalDecision.Denied("the user wants to change it; their words follow"))
                     container.ui.saveDraft(capsule.context.getString(R.string.ag_edit_prefix) + " ")

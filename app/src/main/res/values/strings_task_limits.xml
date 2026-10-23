@@ -1,0 +1,26 @@
+<resources>
+    <string name="appr_remember_forever">Approve this prefix forever</string>
+    <string name="appr_prefix_confirm">Always allow literal commands beginning with “%1$s” in this working directory. Shell syntax, interpreter input, root actions and critical risks still require approval. You can revoke this in Settings.</string>
+    <string name="r_acc_signing_out">Signing out…</string>
+    <string name="appr_saved_prefixes">Saved command prefixes</string>
+    <string name="appr_revoke_prefix">Revoke: %1$s</string>
+    <string name="task_result_summary">Result summary</string>
+    <string name="ai_usage_limit">AI usage limit</string>
+    <string name="ai_limit_enabled">Limit usage</string>
+    <string name="ai_agent_limit_body">Shared by this agent and its coding sessions, across restarts.</string>
+    <string name="ai_task_limit_body">Applies to this task, including follow-ups. Agent limits also apply.</string>
+    <string name="ai_unit_usd">API-equivalent USD</string>
+    <string name="ai_unit_usd_body">Uses the model catalog price, including subscription sessions. Unpriced models stop.</string>
+    <string name="ai_unit_5h">Percentage of five-hour quota</string>
+    <string name="ai_unit_week">Percentage of weekly quota</string>
+    <string name="ai_unit_percent_body">Uses provider-reported quota. Missing or stale reports stop requests.</string>
+    <string name="ai_limit_amount">Maximum amount</string>
+    <string name="ai_reset_never">No scheduled reset</string>
+    <string name="ai_reset_10m">Every 10 minutes</string>
+    <string name="ai_reset_hour">Every hour</string>
+    <string name="ai_reset_day">Every 24 hours</string>
+    <string name="ai_spent">Used this period: %1$.4f</string>
+    <string name="ai_limit_none">No limit</string>
+    <string name="ai_limit_note">Stops before the next model request. Requests already in flight may exceed the cap. Quota changes include other activity on the account. Schedules start when saved; changing the unit or schedule starts a new period. Limited sessions use the managed coding view.</string>
+    <string name="appr_once_required">This command requires one-time approval.</string>
+</resources>

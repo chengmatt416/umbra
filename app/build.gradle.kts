@@ -14,8 +14,8 @@ android {
     defaultConfig {
         applicationId = "app.umbra.agent"
         // `-Pumbra.versionCode=… -Pumbra.versionName=…` override them, for testing the updater with a later build.
-        versionCode = providers.gradleProperty("umbra.versionCode").orNull?.toInt() ?: 11
-        versionName = providers.gradleProperty("umbra.versionName").orNull ?: "0.4.4"
+        versionCode = providers.gradleProperty("umbra.versionCode").orNull?.toInt() ?: 12
+        versionName = providers.gradleProperty("umbra.versionName").orNull ?: "0.4.5"
     }
 
     // Releases are signed with the key in UMBRA_KEYSTORE (see .github/workflows/release.yml); without it the
@@ -119,8 +119,40 @@ abstract class StageGuestFiles : DefaultTask() {
     }
 }
 
+abstract class StageLegalDocuments : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val thirdParty: DirectoryProperty
+
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val documents: ConfigurableFileCollection
+
+    @get:OutputDirectory
+    abstract val output: DirectoryProperty
+
+    @get:Inject
+    abstract val files: FileSystemOperations
+
+    @TaskAction
+    fun stage() {
+        files.sync {
+            into(output.dir("legal"))
+            from(documents)
+            from(thirdParty) { into("third_party") }
+        }
+    }
+}
+
 extensions.configure<ApplicationAndroidComponentsExtension> {
     onVariants { variant ->
+        val legal = tasks.register<StageLegalDocuments>("stageLegalDocuments${variant.name.replaceFirstChar { it.uppercase() }}") {
+            thirdParty.set(rootProject.layout.projectDirectory.dir("third_party"))
+            documents.from(listOf("LICENSE", "PRIVACY.md", "USAGE_POLICY.md", "THIRD_PARTY_NOTICES.md").map { rootProject.file(it) })
+            output.set(layout.buildDirectory.dir("generated/legal-assets/${variant.name}"))
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(legal, StageLegalDocuments::output)
+
         val stage = tasks.register<StageGuestFiles>("stageGuestFiles${variant.name.replaceFirstChar { it.uppercase() }}") {
             source.set(rootProject.layout.projectDirectory.dir("guest"))
             output.set(layout.buildDirectory.dir("generated/guest-assets/${variant.name}"))

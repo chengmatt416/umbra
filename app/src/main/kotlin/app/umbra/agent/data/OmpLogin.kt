@@ -22,6 +22,7 @@ class OmpLogin(private val container: AppContainer) {
     sealed interface State {
         data object Idle : State
         data object Starting : State
+        data object SigningOut : State
         /** omp waits for the browser to come back from [url]; [opened]: the phone did open it (no browser, or Android
          *  refused to bring one up from the background, leaves it to the person to open it). */
         data class Browser(val url: String, val opened: Boolean = true) : State
@@ -130,14 +131,30 @@ class OmpLogin(private val container: AppContainer) {
      * Signs out: omp has no logout command, so the account's rows in omp's store (`agent.db`) get the tombstone omp
      * itself uses for a credential it tore down (`disabled_cause`); omp then no longer offers them to any session.
      */
-    suspend fun logout(provider: String) {
-        val db = container.guestAgentFiles(PROFILE).ompPath.trimEnd('/') + "/agent.db"
-        val script = "const { Database } = require('bun:sqlite'); const db = new Database(process.env.UMBRA_DB); " +
-            "db.run(\"UPDATE auth_credentials SET disabled_cause = 'signed out in Umbra', updated_at = unixepoch() WHERE provider = ? AND disabled_cause IS NULL\", [process.env.UMBRA_PROVIDER]);"
-        runCatching {
-            container.guest.runtime.exec(listOf("bun", "-e", script), env = mapOf("UMBRA_DB" to db, "UMBRA_PROVIDER" to provider), cwd = HOME, timeoutMs = 30_000)
+    suspend fun logout(provider: String) = running.withLock {
+        set(provider, State.SigningOut)
+        try {
+            check(container.guest.ensureReady()) { "The Linux environment is not ready." }
+            val db = container.guestAgentFiles(PROFILE).ompPath.trimEnd('/') + "/agent.db"
+            signOutVerified(revoke = {
+                container.guest.runtime.exec(
+                    listOf("bun", "-e", SIGN_OUT_SCRIPT),
+                    env = mapOf("UMBRA_DB" to db, "UMBRA_PROVIDER" to provider), cwd = HOME, timeoutMs = 30_000,
+                )
+            }, forget = {
+                container.settings.update { p -> p.copy(
+                    providers = p.providers.filterNot { it.oauth && it.id == provider },
+                    defaultModel = p.defaultModel?.takeIf { it.provider != provider },
+                ) }
+            })
+            set(provider, State.Idle)
+        } catch (e: CancellationException) {
+            set(provider, State.Idle)
+            throw e
+        } catch (e: Exception) {
+            set(provider, State.Failed("Sign-out failed. The account is still connected. Please retry."))
+            throw e
         }
-        set(provider, State.Idle)
     }
 
     /** Ends a waiting `omp login` (its pid is the shell's, which became omp with `exec`). */
@@ -150,6 +167,23 @@ class OmpLogin(private val container: AppContainer) {
     companion object {
         /** The agent directory every session uses (AgentSession's provider profile). */
         const val PROFILE = "default"
+        internal val SIGN_OUT_SCRIPT = """
+            try {
+                const { Database } = require('bun:sqlite');
+                const db = new Database(process.env.UMBRA_DB, { create: false, readwrite: true });
+                try {
+                    db.transaction(() => {
+                        db.run("UPDATE auth_credentials SET disabled_cause = 'signed out in Umbra', updated_at = unixepoch() WHERE provider = ? AND disabled_cause IS NULL", [process.env.UMBRA_PROVIDER]);
+                        const row = db.query("SELECT count(*) AS remaining FROM auth_credentials WHERE provider = ? AND disabled_cause IS NULL").get(process.env.UMBRA_PROVIDER);
+                        if (!row || row.remaining !== 0) throw new Error('Credential revocation failed');
+                    })();
+                } finally { db.close(); }
+                console.log('UMBRA_SIGNOUT_OK');
+            } catch {
+                console.error('Account revocation failed.');
+                process.exit(1);
+            }
+        """.trimIndent()
         private const val HOME = "/home/agent"
         private const val TIMEOUT_MS = 10 * 60_000L
 

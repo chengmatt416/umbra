@@ -300,7 +300,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 },
             ) {
                 val back: () -> Unit = { if (!nav.popBackStack()) go(Dest.Home) }
-                composable(Dest.Home.route) { HomeScreen(onOpenSession = ::openSessionNow, onOpenAgent = { nav.navigate("agent/$it") { launchSingleTop = true } }, entries = entries, onAccounts = { go(Dest.Accounts) }) }
+                composable(Dest.Home.route) { HomeScreen(onOpenSession = ::openSessionNow, onOpenAgent = { nav.navigate("agent/$it") { launchSingleTop = true } }, entries = entries, onAccounts = { go(Dest.Accounts) }, onComputers = { go(Dest.Nodes) }) }
                 // Agents (docs/design/agents-2026-10.md, Figma 11): the chat, the agent's page and what hangs off it.
                 composable("agent/{id}") { e ->
                     val id = e.arguments?.getString("id").orEmpty()
@@ -321,7 +321,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 composable("messages") { app.umbra.agent.ui.agents.MessageAppsScreen(onBack = back, onGo = { nav.navigate(it) }) }
                 composable("messages/{app}") { e -> app.umbra.agent.ui.agents.MessageAppScreen(e.arguments?.getString("app").orEmpty(), onBack = back, onGo = { nav.navigate(it) }) }
                 composable("notifications") { app.umbra.agent.ui.agents.NotificationReaderScreen(onBack = back) }
-                composable(Dest.Current.route) { CurrentScreen(onBack = back, onOpenSession = ::openSessionNow, onAccounts = { go(Dest.Accounts) }, onCommit = { go(Dest.Commit) }) }
+                composable(Dest.Current.route) { CurrentScreen(onBack = back, onOpenSession = ::openSessionNow, onAccounts = { go(Dest.Accounts) }, onCommit = { go(Dest.Commit) }, onComputers = { go(Dest.Nodes) }) }
                 composable(Dest.Accounts.route) { app.umbra.agent.ui.accounts.AccountsScreen(onBack = back, onGo = ::go) }
                 composable(Dest.Screens.route) { app.umbra.agent.ui.displays.ScreensScreen(onBack = back) }
                 composable(Dest.Safety.route) { app.umbra.agent.ui.hubs.SafetyHub(onBack = back, onGo = ::go) }

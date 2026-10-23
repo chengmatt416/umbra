@@ -202,7 +202,7 @@ class AgentService : Service() {
         val id = approvalNotifications.getOrPut(request.id) { NEXT_ID_BASE + approvalNotifications.size + (request.id.hashCode() and 0xFFFF) }
         val risk = request.assessment.level
         val riskText = getString(app.umbra.agent.ui.riskRes(risk))
-        val oneTap = approveGesture(risk, ApprovalSurface.NOTIFICATION) == ApproveGesture.ONE_TAP
+        val oneTap = approveGesture(request, ApprovalSurface.NOTIFICATION) == ApproveGesture.ONE_TAP
         val title = when {
             lastMinute -> getString(R.string.notif_approval_last_minute, riskText)
             risk >= RiskLevel.HIGH -> getString(R.string.notif_approval_risk, riskText)
@@ -282,7 +282,7 @@ class ApprovalActionReceiver : BroadcastReceiver() {
             AgentService.ACTION_APPROVE -> intent.getStringExtra(AgentService.EXTRA_REQUEST)?.let { id ->
                 // The shade may approve only what the shared rule allows there, whatever the intent says.
                 val request = container.approvals.pending.value.firstOrNull { it.id == id } ?: return
-                if (approveGesture(request.assessment.level, ApprovalSurface.NOTIFICATION) == ApproveGesture.ONE_TAP) container.approvals.resolve(id, ApprovalDecision.Approved())
+                if (approveGesture(request, ApprovalSurface.NOTIFICATION) == ApproveGesture.ONE_TAP) container.approvals.resolve(id, ApprovalDecision.Approved())
             }
             AgentService.ACTION_DENY -> intent.getStringExtra(AgentService.EXTRA_REQUEST)?.let { container.approvals.resolve(it, ApprovalDecision.Denied("denied from the notification")) }
             AgentService.ACTION_PAUSE, AgentService.ACTION_RESUME -> {

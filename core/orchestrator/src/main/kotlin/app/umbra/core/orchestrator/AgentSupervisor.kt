@@ -27,6 +27,7 @@ data class SessionSpec(
     val agentId: String? = null,
     /** The browser mode of a coding session (see [app.umbra.core.session.Session.browser]). */
     val browser: String? = null,
+    val usageLimit: app.umbra.core.session.AiUsageLimit? = null,
 )
 
 /** Raised when the device cannot take another running session right now (spec §30). */
@@ -119,6 +120,7 @@ class AgentSupervisor(
         spawnedBy: String? = null,
         agentId: String? = null,
         browser: String? = null,
+        usageLimit: app.umbra.core.session.AiUsageLimit? = null,
     ): Session {
         val now = deps.clock.nowMs()
         val id = SessionIds.generate(now)
@@ -140,6 +142,7 @@ class AgentSupervisor(
             spawnedBy = spawnedBy,
             agentId = agentId,
             browser = browser,
+            usageLimit = usageLimit,
         )
         return deps.store.create(session)
     }
@@ -152,7 +155,7 @@ class AgentSupervisor(
         deps.admission(projectId, runningByProject())?.let { throw CapacityException(it) }
         deps.serviceAdmission(null)?.let { throw CapacityException(it) }
         governor?.decision?.value?.let { if (!it.allowNewSessions) throw CapacityException(capacityReason()) }
-        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser)
+        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser, usageLimit = spec.usageLimit)
         try {
             send(session.id, request, images)
         } catch (e: Exception) {
@@ -180,7 +183,7 @@ class AgentSupervisor(
         if (problem == null && (images.isNotEmpty() || queued().isEmpty())) return launch(request, title, workspaceId, model, projectId, images, effort, spec)
         if (images.isNotEmpty()) throw CapacityException("$problem A request with a picture is not queued; send it again when a slot is free.")
         if (queued().size >= QUEUE_LIMIT) throw CapacityException("${problem ?: "Requests are waiting."} The queue is full ($QUEUE_LIMIT waiting); stop or wait for some.")
-        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser)
+        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser, usageLimit = spec.usageLimit)
         val waiting = deps.store.update(session.id) { it.copy(queuedAtMs = deps.clock.nowMs()) } ?: session
         wake.trySend(Unit)
         return waiting
@@ -295,6 +298,21 @@ class AgentSupervisor(
     suspend fun configureFiles(sessionId: String, block: suspend (Session) -> Unit) {
         checkTui(sessionId)
         sessionFor(sessionId).configureFiles(block)
+    }
+
+    suspend fun setUsageLimit(sessionId: String, limit: app.umbra.core.session.AiUsageLimit?) {
+        checkTui(sessionId)
+        deps.store.update(sessionId) { it.copy(usageLimit = limit) } ?: throw app.umbra.core.session.SessionNotFoundException(sessionId)
+    }
+
+    suspend fun checkAgentUsageEditing(agentId: String) {
+        deps.store.list().filter { it.agentId == agentId }.forEach { checkTui(it.id) }
+    }
+
+    /** Read an existing writer or its saved transcript; never start a process to read history. */
+    suspend fun historyMessages(sessionId: String): List<kotlinx.serialization.json.JsonObject> {
+        deps.store.get(sessionId) ?: throw app.umbra.core.session.SessionNotFoundException(sessionId)
+        return live[sessionId]?.historyMessages() ?: deps.conversations.load(sessionId).orEmpty()
     }
 
     /** The session's last answer: the text of its latest assistant message (empty when it has none). */

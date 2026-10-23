@@ -75,7 +75,7 @@ import kotlinx.coroutines.launch
  * the message field and the menu button. Nothing decorative: an empty Home is one sentence above the field.
  */
 @Composable
-fun HomeScreen(onOpenSession: (String) -> Unit, onOpenAgent: (String) -> Unit, entries: List<MenuEntry>, onAccounts: () -> Unit) {
+fun HomeScreen(onOpenSession: (String) -> Unit, onOpenAgent: (String) -> Unit, entries: List<MenuEntry>, onAccounts: () -> Unit, onComputers: () -> Unit) {
     val container = LocalContext.current.container
     val scope = rememberCoroutineScope()
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
@@ -219,6 +219,7 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onOpenAgent: (String) -> Unit, e
             onDismiss = { container.ui.homeSheet.value = null },
             onStarted = { id -> container.ui.homeSheet.value = null; onOpenSession(id) },
             onAccounts = { container.ui.homeSheet.value = null; onAccounts() },
+            onComputers = { container.ui.homeSheet.value = null; onComputers() },
         )
     }
 }

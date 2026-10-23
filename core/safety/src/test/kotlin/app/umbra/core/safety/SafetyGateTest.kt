@@ -38,6 +38,34 @@ class SafetyGateTest {
     private val benign = request(Operation.Shell("ls -la"), id = "t2")
 
     @Test
+    fun permanentCommandApprovalIsExplicitAndSurvivesANewGateAndSession() = runTest {
+        val rules = mutableListOf<AllowRule>()
+        val broker = ApprovalBroker()
+        fun gate() = SafetyGate(RiskClassifier(), { ApprovalPolicy() }, broker,
+            commandRules = { rules.toList() }, saveCommandRule = { rules += it })
+        val context = ActionContext(cwd = "/workspace/a")
+        val command = request(Operation.Shell("git push origin main"))
+        val first = async { gate().check(command, context) }
+        runCurrent()
+        broker.resolve(broker.pending.value.single().id, ApprovalDecision.Approved())
+        assertIs<SafetyGate.Outcome.Proceed>(first.await())
+        assertTrue(rules.isEmpty(), "approve once cannot create a permanent grant")
+        val second = async { gate().check(command, context) }
+        runCurrent()
+        val shown = broker.pending.value.single()
+        assertEquals(RememberScope.THIS_COMMAND_FOREVER, offeredRememberScope(shown, ApprovalSurface.FULL))
+        broker.resolve(shown.id, ApprovalDecision.Approved(RememberScope.THIS_COMMAND_FOREVER))
+        second.await()
+        assertEquals("git push", rules.single().commandPrefix)
+        assertIs<SafetyGate.Outcome.Proceed>(gate().check(command.copy(sessionId = "other"), context))
+        val different = async { gate().check(command, context.copy(cwd = "/workspace/b")) }
+        runCurrent()
+        assertTrue(broker.pending.value.isNotEmpty(), "a different working directory must ask")
+        broker.resolve(broker.pending.value.single().id, ApprovalDecision.Denied())
+        assertIs<SafetyGate.Outcome.Blocked>(different.await())
+    }
+
+    @Test
     fun benignActionsProceedWithoutAskingAnyone() = runTest {
         val f = Fixture(this)
         val outcome = f.gate.check(benign, ctx)
@@ -104,21 +132,17 @@ class SafetyGateTest {
     }
 
     @Test
-    fun rememberedApprovalAutoAllowsTheSameKindOfActionThisSession() = runTest {
+    fun shellApprovalsCannotRememberAnEntireRiskCategory() = runTest {
         val f = Fixture(this)
         val first = async { f.gate.check(risky, ctx.copy(foregroundPackage = "com.example.files")) }
         runCurrent()
-        f.broker.resolve(f.broker.pending.value.single().id, ApprovalDecision.Approved(RememberScope.THIS_CATEGORY_THIS_SESSION))
+        val approval = f.broker.pending.value.single()
+        assertEquals(listOf(RememberScope.THIS_COMMAND_FOREVER), approval.rememberOptions)
+        assertFalse(f.broker.resolve(approval.id, ApprovalDecision.Approved(RememberScope.THIS_CATEGORY_THIS_SESSION)))
+        assertTrue(f.broker.resolve(approval.id, ApprovalDecision.Approved()))
         assertIs<SafetyGate.Outcome.Proceed>(first.await())
-        assertEquals(1, f.gate.rulesFor("s1").size)
-
-        val second = f.gate.check(request(Operation.Shell("rm -rf /sdcard/Download"), id = "t3"), ctx)
-        assertIs<SafetyGate.Outcome.Proceed>(second)
-        assertTrue("remembered approval" in second.how, second.how)
-        assertEquals(listOf("requested", "approved", "auto_allowed"), f.ledger.kinds)
-
-        // Other sessions are unaffected.
-        val other = async { f.gate.check(request(Operation.Shell("rm -rf /sdcard/Download"), id = "t4", session = "s2"), ctx) }
+        assertTrue(f.gate.rulesFor("s1").isEmpty())
+        val other = async { f.gate.check(request(Operation.Shell("rm -rf /sdcard/Download"), id = "t3"), ctx) }
         runCurrent()
         assertEquals(1, f.broker.pending.value.size)
         f.broker.resolve(f.broker.pending.value.single().id, ApprovalDecision.Denied())
@@ -131,7 +155,8 @@ class SafetyGateTest {
         val reset = request(Operation.Shell("am broadcast -a android.intent.action.MASTER_CLEAR"), id = "c1")
         val first = async { f.gate.check(reset, ctx) }
         runCurrent()
-        f.broker.resolve(f.broker.pending.value.single().id, ApprovalDecision.Approved(RememberScope.THIS_CATEGORY_THIS_SESSION))
+        assertFalse(f.broker.resolve(f.broker.pending.value.single().id, ApprovalDecision.Approved(RememberScope.THIS_CATEGORY_THIS_SESSION)))
+        f.broker.resolve(f.broker.pending.value.single().id, ApprovalDecision.Approved())
         first.await()
         assertEquals(0, f.gate.rulesFor("s1").size, "CRITICAL findings are never remembered")
 

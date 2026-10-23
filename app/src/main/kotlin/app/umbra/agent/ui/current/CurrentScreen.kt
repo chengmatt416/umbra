@@ -178,7 +178,7 @@ private enum class View(@param:androidx.annotation.StringRes val label: Int) { C
  * omp's commands, model, branches, todos, subagents and goal — and the session's activity timeline.
  */
 @Composable
-fun CurrentScreen(onBack: () -> Unit, onOpenSession: (String) -> Unit, onAccounts: () -> Unit, onCommit: () -> Unit = {}) {
+fun CurrentScreen(onBack: () -> Unit, onOpenSession: (String) -> Unit, onAccounts: () -> Unit, onComputers: () -> Unit, onCommit: () -> Unit = {}) {
     val container = LocalContext.current.container
     val context = LocalContext.current
     val resources = androidx.compose.ui.platform.LocalResources.current
@@ -195,12 +195,12 @@ fun CurrentScreen(onBack: () -> Unit, onOpenSession: (String) -> Unit, onAccount
             app.umbra.agent.ui.porcelain.PEmpty(stringResource(R.string.cur_none_title), stringResource(R.string.cur_none_body), icon = PIcons.activity)
             return
         }
-        SessionView(session, context, onOpenSession, onBack, onCommit)
+        SessionView(session, context, onOpenSession, onBack, onCommit, onComputers)
     }
 }
 
 @Composable
-private fun SessionView(session: app.umbra.core.session.Session, context: Context, onOpenSession: (String) -> Unit, onBack: () -> Unit, onCommit: () -> Unit) {
+private fun SessionView(session: app.umbra.core.session.Session, context: Context, onOpenSession: (String) -> Unit, onBack: () -> Unit, onCommit: () -> Unit, onComputers: () -> Unit) {
     val container = LocalContext.current.container
     val scope = rememberCoroutineScope()
     val id = session.id
@@ -223,6 +223,9 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
     var contractDialog by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var titleOpen by remember(id) { mutableStateOf(false) }
+    var usageLimitOpen by remember(id) { mutableStateOf(false) }
+    if (usageLimitOpen) UsageLimitDialog(session.usageLimit, session.id,
+        onSave = { container.supervisor.setUsageLimit(id, it) }, onDismiss = { usageLimitOpen = false })
 
     if (directory) SessionsDirectorySheet(current = id, onOpenSession = onOpenSession, onDismiss = { directory = false })
     if (effortSheet) {
@@ -295,6 +298,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                     DropdownMenu(menu, { menu = false }) {
                         MenuItem(stringResource(R.string.cur_menu_conversation)) { menu = false; sheet = Sheet.Session }
                         MenuItem(stringResource(R.string.ses_menu_directory)) { menu = false; directory = true }
+                        MenuItem(stringResource(R.string.rn_coding_sessions), stringResource(R.string.rn_coding_sessions_body)) { menu = false; onComputers() }
                         MenuItem(stringResource(R.string.cur_menu_contract)) { menu = false; contractDialog = true }
                         MenuItem(stringResource(R.string.cur_menu_tui)) {
                             menu = false
@@ -310,6 +314,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                         if (busy) MenuItem(stringResource(R.string.cur_menu_pause), stringResource(R.string.cur_menu_pause_detail)) { menu = false; scope.launch { container.supervisor.pause(id) } }
                         if (session.state == SessionState.PAUSED) MenuItem(stringResource(R.string.cur_menu_resume)) { menu = false; scope.launch { runCatching { container.supervisor.resume(id) }.onFailure { error = it.message } } }
                         if (!session.state.isTerminal) MenuItem(stringResource(R.string.cur_menu_stop), stringResource(R.string.cur_menu_stop_detail)) { menu = false; scope.launch { container.supervisor.stop(id) } }
+                        MenuItem(stringResource(R.string.ai_usage_limit)) { menu = false; usageLimitOpen = true }
                         MenuItem(stringResource(R.string.cur_menu_run_again)) { menu = false; scope.launch { runCatching { container.supervisor.duplicate(id) }.onSuccess { onOpenSession(it.id) }.onFailure { error = it.message } } }
                         androidx.compose.material3.HorizontalDivider(color = P.line2)
                         MenuItem(stringResource(R.string.cur_menu_delete), danger = true) { menu = false; confirmDelete = true }
@@ -330,10 +335,14 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                 if (showNotRunning) Tag(stringResource(R.string.cur_not_running), Tone.Neutral)
             }
             if (!typingInTerminal) {
+                PButton(stringResource(R.string.ai_usage_limit), { usageLimitOpen = true }, style = ButtonStyle.Ghost, tiny = true)
                 ParentLink(session, onOpenSession)
                 SubagentStrip(session, onOpenSession)
             }
             if (!simple) Segmented(View.entries.map { it to stringResource(it.label) }, view, { chosenView = it }, Modifier.padding(top = 8.dp), fill = true)
+        }
+        if (session.state == SessionState.PAUSED) session.usageBlockReason?.let { reason ->
+            Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { Callout(reason, Tone.Warn) }
         }
         error?.let { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { Callout(it, Tone.Danger) } }
         info?.let { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { Callout(it, Tone.Good) } }
@@ -488,6 +497,14 @@ private fun ChatList(
                 is ChatItem.Notice -> NoticeLine(item)
                 is ChatItem.ToolResult -> Unit
             }
+        }
+        if (session.state == SessionState.COMPLETED && session.kind != app.umbra.core.session.SessionKind.AGENT) {
+            session.resultSummary?.let { summary -> item(key = "result-summary") {
+                app.umbra.agent.ui.porcelain.PCard {
+                    app.umbra.agent.ui.porcelain.Kicker(stringResource(R.string.task_result_summary))
+                    Text(summary, color = P.ink, modifier = Modifier.padding(top = 6.dp))
+                }
+            } }
         }
         if (session.state == SessionState.RUNNING) item(key = "orb-activity") {
             val orb = app.umbra.agent.ui.porcelain.thinkingOrbState(conversation)

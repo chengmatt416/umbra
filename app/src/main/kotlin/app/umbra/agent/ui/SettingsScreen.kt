@@ -108,6 +108,13 @@ fun MoreSettingsScreen(onBack: () -> Unit, onGo: (app.umbra.agent.ui.shell.Dest)
                 prefs.approvalMode, { mode -> container.settings.update { it.copy(approvalMode = mode) } },
             )
             Disclosure(stringResource(R.string.details)) { Subtle(stringResource(R.string.set_ask_detail)) }
+            if (prefs.commandApprovals.isNotEmpty()) Disclosure(stringResource(R.string.appr_saved_prefixes)) {
+                prefs.commandApprovals.forEach { rule ->
+                    PButton(stringResource(R.string.appr_revoke_prefix, rule.commandPrefix.orEmpty()), {
+                        container.settings.update { it.copy(commandApprovals = it.commandApprovals.filterNot { r -> r.id == rule.id }) }
+                    }, style = ButtonStyle.Ghost, tiny = true)
+                }
+            }
             PLink(stringResource(R.string.dest_approvals), stringResource(R.string.set_history_summary), icon = PIcons.check, divider = false, onClick = onApprovalHistory)
 
             SectionHead(stringResource(R.string.set_section_instructions), Modifier.padding(top = 12.dp))
@@ -167,6 +174,7 @@ fun MoreSettingsScreen(onBack: () -> Unit, onGo: (app.umbra.agent.ui.shell.Dest)
             SectionHead(stringResource(R.string.set_section_about), Modifier.padding(top = 20.dp))
             UpdateSection()
             Subtle(stringResource(R.string.set_license), Modifier.padding(top = 10.dp))
+            LegalSection()
             Gap(32.dp)
         }
     }

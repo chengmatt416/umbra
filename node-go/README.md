@@ -27,7 +27,7 @@ login startup and pairings, preserving job files.
 
 macOS 14+ uses ScreenCaptureKit only while a screen is connected, and requires Screen Recording permission;
 pointer/keyboard events also require Accessibility. Linux supports installed `x11vnc` on X11 and `wayvnc` on
-wlroots Wayland, launched on loopback only. GNOME installations that offer only RDP can run jobs without VNC.
+wlroots Wayland, confined to a Unix socket inside a private directory. GNOME installations that offer only RDP can run jobs without VNC.
 VNC is carried inside a separate authenticated mTLS connection, with no public VNC listener. Phone agents also
 require Owned trust and screen permission on both devices; user takeover closes agent screen connections and
 input operations use the existing phone approval broker.

@@ -40,8 +40,11 @@ class SessionTools(
 ) {
     fun forSession(sessionId: String, allowSubagents: Boolean = true): List<HostSideTool> = buildList {
         add(tool("sessions_list", LIST_DESCRIPTION, objectSchema {
-            boolean("all", "Include finished sessions too (default: only those that are working, waiting or paused, plus the last few finished).")
-        }) { args, _ -> list(sessionId, args.bool("all") == true) })
+            boolean("all", "Include finished sessions too (default: active sessions and the last few finished).")
+            string("query", "Search session titles and original requests.")
+            integer("offset", "Continue a full listing after this many sessions (default 0).")
+            integer("limit", "Full-list page size (default 50, at most 100).")
+        }) { args, _ -> list(sessionId, args.bool("all") == true, args.str("query"), (args.int("offset") ?: 0).coerceAtLeast(0), (args.int("limit") ?: 50).coerceIn(1, 100)) })
         add(tool("session_send", SEND_DESCRIPTION, objectSchema {
             string("to", "Who: a #handle, an @agent name or a session id, as sessions_list shows them.", required = true)
             string("message", "What to say. Write it so it stands on its own: the other session did not see your conversation.", required = true)
@@ -54,10 +57,13 @@ class SessionTools(
             val e = bus.reply(sessionId, args.str("message_id") ?: return@tool err("message_id is missing"), args.str("message") ?: return@tool err("message is missing"))
             HostToolPayload.text("Replied (${e.id}).")
         })
-        add(tool("session_read", "Read what another session or subagent has been doing lately (its recent messages, tool calls and results) without interrupting it.", objectSchema {
+        add(tool("session_read", "Read a session title and result summary first. Request history=true only when full persisted messages and activity are needed; page with after_seq.", objectSchema {
             string("who", "A #handle, @agent or session id.", required = true)
-            integer("lines", "How many recent lines (default 20, at most 60).")
-        }) { args, _ -> read(args.str("who") ?: return@tool err("who is missing"), (args.int("lines") ?: 20).coerceIn(1, 60)) })
+            boolean("history", "Return full redacted persisted history instead of only the title and summary (default false).")
+            integer("after_seq", "Number of whole transcript messages already read (default 0).")
+            integer("offset", "Character offset within the next message; copy next_offset from the previous page (default 0).")
+            integer("lines", "History page size (default 20, at most 100).")
+        }) { args, _ -> read(args.str("who") ?: return@tool err("who is missing"), args.bool("history") == true, (args.int("after_seq") ?: 0).toLong().coerceAtLeast(0), (args.int("lines") ?: 20).coerceIn(1, 100), (args.int("offset") ?: 0).coerceAtLeast(0)) })
 
         if (allowSubagents) {
             add(tool("subagent_start", START_DESCRIPTION, objectSchema {
@@ -96,16 +102,16 @@ class SessionTools(
 
     // ---- the tools ----
 
-    private suspend fun list(selfId: String, all: Boolean): HostToolPayload {
-        val sessions = store.list().filter { it.id != selfId }
+    private suspend fun list(selfId: String, all: Boolean, query: String?, offset: Int, limit: Int): HostToolPayload {
+        val sessions = store.list(app.umbra.core.session.SessionFilter(query = query, limit = Int.MAX_VALUE)).filter { it.id != selfId }
         val active = sessions.filter { !it.state.isTerminal || it.kind == SessionKind.AGENT }
-        val shown = if (all) sessions else active + sessions.filter { it.state.isTerminal && it.kind != SessionKind.AGENT }.take(5)
+        val shown = if (all) sessions.drop(offset).take(limit) else active + sessions.filter { it.state.isTerminal && it.kind != SessionKind.AGENT }.take(5)
         if (shown.isEmpty()) return HostToolPayload.text("No other sessions or agents.")
         val text = shown.distinctBy { it.id }.joinToString("\n") { s ->
             val kind = when (s.kind) { SessionKind.AGENT -> "agent"; SessionKind.SUBAGENT -> "subagent of " + (s.spawnedBy ?: "?"); SessionKind.CODING -> "coding" }
-            "${bus.address(s)} · $kind · ${s.state.name.lowercase()} · ${s.title.take(70)}" + (s.plan.firstOrNull { it.status == "active" }?.let { " · now: ${it.text.take(60)}" } ?: "")
+            "${bus.address(s)} · $kind · ${s.state.name.lowercase()} · ${s.title.take(70)}" + (s.resultSummary?.let { "\n  Summary: ${it.take(600)}" } ?: "") + (s.plan.firstOrNull { it.status == "active" }?.let { " · now: ${it.text.take(60)}" } ?: "")
         }
-        return HostToolPayload.text(text + "\n\nWrite to one with session_send (to: its #handle or @name).")
+        return HostToolPayload.text(text + (if (all) "\nnext_offset=${offset + shown.size}; has_more=${offset + shown.size < sessions.size}" else "") + "\n\nUse session_read for title and summary, then history=true only when needed. Write with session_send.")
     }
 
     private suspend fun send(selfId: String, args: JsonObject): HostToolPayload {
@@ -116,11 +122,23 @@ class SessionTools(
         return HostToolPayload.text("Sent to ${target?.let(bus::address) ?: to} as ${e.id}. If it answers, the reply arrives in this conversation as a message; you do not need to wait for it.")
     }
 
-    private suspend fun read(who: String, lines: Int): HostToolPayload {
+    private suspend fun read(who: String, history: Boolean, afterSeq: Long, lines: Int, offset: Int): HostToolPayload {
         val s = bus.resolve(who) ?: return err("No session or agent is called '$who'.")
-        val activity = supervisor.activity(s.id, lines)
         val head = "${bus.address(s)} · ${s.state.name.lowercase()} · ${s.title}"
-        return HostToolPayload.text(head + "\n" + (activity.joinToString("\n").ifEmpty { "(nothing yet)" }))
+        val summary = s.resultSummary ?: store.tail(s.id, 100).asReversed()
+            .firstNotNullOfOrNull { (it.event as? app.umbra.core.session.SessionEvent.AgentMessage)?.text }
+            ?.let { Redaction.text(it).take(ResultSummaries.LIMIT) } ?: "No result summary yet."
+        if (!history) return HostToolPayload.text("$head\nSummary: $summary\n\nUse session_read with history=true, after_seq=0 to read the full saved history.")
+        val transcript = supervisor.historyMessages(s.id)
+        if (transcript.isNotEmpty()) {
+            val page = SessionHistoryPages.page(transcript, afterSeq.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), offset, lines)
+            return HostToolPayload.text("$head\nSummary: $summary\n\nFull saved transcript of the current branch (images are viewed in the app). Continue with next_after_seq and next_offset; it may change while the session is working.\n$page")
+        }
+        val records = store.events(s.id, afterSeq, lines)
+        val text = records.joinToString("\n") { app.umbra.core.model.UmbraJson.encodeToString(app.umbra.core.session.EventRecord.serializer(), it) }
+        val next = records.lastOrNull()?.seq ?: afterSeq
+        val more = next < store.eventCount(s.id)
+        return HostToolPayload.text("$head\nSummary: $summary\n\nNo full transcript is cached; saved timeline follows (tool results may be shortened).\n$text\n\nnext_after_seq=$next; next_offset=0; has_more=$more")
     }
 
     private suspend fun start(selfId: String, args: JsonObject, progress: HostToolProgress): HostToolPayload {

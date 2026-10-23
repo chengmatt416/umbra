@@ -106,6 +106,8 @@ internal object Duplication {
         id = newId,
         title = title ?: (source.title + " (copy)"),
         state = SessionState.CREATED,
+        resultSummary = null,
+        usageBlockReason = null,
         createdAtMs = now,
         updatedAtMs = now,
         // The copy starts fresh: no live resources, no OMP conversation, no remembered approvals.

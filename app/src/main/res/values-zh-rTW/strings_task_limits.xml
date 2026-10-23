@@ -1,0 +1,26 @@
+<resources>
+    <string name="appr_remember_forever">永久核准此前綴</string>
+    <string name="appr_prefix_confirm">永久允許在此工作目錄執行以「%1$s」開頭的純指令。Shell 語法、直譯器輸入、Root 操作及重大風險仍須核准。可在設定撤銷。</string>
+    <string name="r_acc_signing_out">正在登出…</string>
+    <string name="appr_saved_prefixes">已儲存的指令前綴</string>
+    <string name="appr_revoke_prefix">撤銷：%1$s</string>
+    <string name="task_result_summary">工作結果摘要</string>
+    <string name="ai_usage_limit">AI 用量上限</string>
+    <string name="ai_limit_enabled">限制用量</string>
+    <string name="ai_agent_limit_body">此代理及其程式工作階段共用，重新啟動仍保留。</string>
+    <string name="ai_task_limit_body">適用於此工作與後續訊息，並同時受代理上限限制。</string>
+    <string name="ai_unit_usd">等值 API 費用（美元）</string>
+    <string name="ai_unit_usd_body">依模型目錄價格計算，訂閱帳號亦適用。無價格資料時停止。</string>
+    <string name="ai_unit_5h">五小時配額百分比</string>
+    <string name="ai_unit_week">每週配額百分比</string>
+    <string name="ai_unit_percent_body">依供應商回報配額；資料缺失或過期時停止請求。</string>
+    <string name="ai_limit_amount">用量上限</string>
+    <string name="ai_reset_never">不定期重設</string>
+    <string name="ai_reset_10m">每 10 分鐘</string>
+    <string name="ai_reset_hour">每小時</string>
+    <string name="ai_reset_day">每 24 小時</string>
+    <string name="ai_spent">本期已使用：%1$.4f</string>
+    <string name="ai_limit_none">無上限</string>
+    <string name="ai_limit_note">下次模型請求前停止，已進行的請求可能超出上限。配額變動包含帳號的其他活動。儲存時起算排程，變更單位或排程會開始新週期。設有上限的工作階段使用受管理的程式介面。</string>
+    <string name="appr_once_required">此指令須逐次核准。</string>
+</resources>

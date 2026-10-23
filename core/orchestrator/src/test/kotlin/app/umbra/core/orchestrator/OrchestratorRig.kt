@@ -55,6 +55,8 @@ class OrchestratorRig(
     admission: (String?, Map<String?, Int>) -> String? = { _, _ -> null },
     beforeWork: suspend (Session) -> Unit = {},
     securityCheck: app.umbra.core.safety.ActionSecurityCheck? = null,
+    usage: UsageBudgets? = null,
+    modelCost: app.umbra.runtime.omp.OmpModelCost? = null,
 ) : AutoCloseable {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val home: Path = Files.createDirectories(dir.resolve("home"))
@@ -110,7 +112,7 @@ class OrchestratorRig(
         providers = ProviderResolver {
             ProviderSelection(
                 profile = "test",
-                providers = listOf(OmpProvider("fake", modelUrl, auth = "none", models = listOf(OmpModel("fake-model", "Fake Model")))),
+                providers = listOf(OmpProvider("fake", modelUrl, auth = "none", models = listOf(OmpModel("fake-model", "Fake Model", cost = modelCost)))),
                 model = ModelRef("fake", "fake-model"),
             )
         },
@@ -126,6 +128,7 @@ class OrchestratorRig(
         fence = fence,
         admission = admission,
         beforeWork = beforeWork,
+        usage = usage,
         onTodos = { id, phases ->
             plans.observe(id, phases.map { p -> app.umbra.core.control.PlanPhase(p.name, p.tasks.map { app.umbra.core.control.PlanTask(it.content, it.status) }) }, "agent")
         },

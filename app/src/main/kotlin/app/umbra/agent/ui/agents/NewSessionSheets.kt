@@ -65,6 +65,7 @@ import app.umbra.agent.ui.porcelain.pc
 import app.umbra.core.orchestrator.AgentSupervisor
 import app.umbra.core.orchestrator.SessionSpec
 import app.umbra.core.session.Effort
+import app.umbra.core.session.AiUsageLimit
 import app.umbra.core.session.ModelRef
 import kotlinx.coroutines.launch
 
@@ -120,6 +121,8 @@ fun NewAgentSheet(onDismiss: () -> Unit, onCreated: (String) -> Unit, onAccounts
     var picker by remember { mutableStateOf(false) }
     var effortPicker by remember { mutableStateOf(false) }
     var intervalMenu by remember { mutableStateOf(false) }
+    var usageLimit by remember { mutableStateOf<AiUsageLimit?>(null) }
+    var usageLimitOpen by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val soul = soulEdited ?: soulOf(template, name)
@@ -183,6 +186,7 @@ fun NewAgentSheet(onDismiss: () -> Unit, onCreated: (String) -> Unit, onAccounts
                     }
                 }
             }
+            UsageLimitSetting(usageLimit) { usageLimitOpen = true }
             error?.let { Callout(it, Tone.Danger) }
             PButton(
                 stringResource(R.string.ag_create),
@@ -193,6 +197,7 @@ fun NewAgentSheet(onDismiss: () -> Unit, onCreated: (String) -> Unit, onAccounts
                             val p = container.agents.create(
                                 name = name.ifBlank { defaultName }, avatar = avatar, template = template, soul = soul,
                                 model = model, effort = effort, channels = channels, heartbeatMinutes = interval,
+                                usageLimit = usageLimit,
                             )
                             onCreated(p.id)
                         } catch (e: Exception) {
@@ -206,6 +211,8 @@ fun NewAgentSheet(onDismiss: () -> Unit, onCreated: (String) -> Unit, onAccounts
             )
         }
     }
+    if (usageLimitOpen) app.umbra.agent.ui.current.UsageLimitDialog(usageLimit, sessionId = null, agent = true,
+        onSave = { usageLimit = it }, onDismiss = { usageLimitOpen = false })
     if (picker) ModelPicker(onDismiss = { picker = false }, onConnect = { picker = false; onAccounts() }, picked = model, onPick = { model = it })
     if (effortPicker) EffortPicker(
         current = effort, supported = container.modelDirectory.model(model)?.efforts.orEmpty(), modelName = null, modelIsAuto = model == null,
@@ -243,7 +250,7 @@ internal fun Pill(text: String, on: Boolean, icon: app.umbra.agent.ui.porcelain.
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccounts: () -> Unit) {
+fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccounts: () -> Unit, onComputers: () -> Unit) {
     val container = LocalContext.current.container
     val context = LocalContext.current
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
@@ -255,6 +262,8 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
     var model by remember { mutableStateOf(if (prefs.autoModel) null else prefs.defaultModel) }
     var effort by remember { mutableStateOf(if (prefs.autoEffort || prefs.thinkingLevel == null) null else Effort(prefs.thinkingLevel!!)) }
     var browser by remember { mutableStateOf("auto") }
+    var usageLimit by remember { mutableStateOf<AiUsageLimit?>(null) }
+    var usageLimitOpen by remember { mutableStateOf(false) }
     var reportTo by remember { mutableStateOf<String?>(null) }
     var text by remember { mutableStateOf("") }
     var projectMenu by remember { mutableStateOf(false) }
@@ -275,6 +284,8 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(stringResource(R.string.ag_new_coding_title), fontSize = 20.sp, fontWeight = FontWeight.Medium, color = P.ink)
+            PButton(stringResource(R.string.rn_coding_sessions), onComputers, style = app.umbra.agent.ui.porcelain.ButtonStyle.Ghost, tiny = true, icon = PIcons.cloud)
+            Text(stringResource(R.string.rn_coding_sessions_body), fontSize = 12.sp, color = P.muted)
             Label(stringResource(R.string.ag_workspace))
             Box {
                 Dropdown(project?.let { projects[it]?.name } ?: independent) { projectMenu = true }
@@ -287,6 +298,7 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
                 ModelChip(modelName(model), mono = model != null) { picker = true }
                 EffortChip(effortText(effort)) { effortPicker = true }
             }
+            UsageLimitSetting(usageLimit) { usageLimitOpen = true }
             app.umbra.agent.ui.current.SessionFileButton(
                 preparedSession, compact = false,
                 onReference = { text = listOf(text, it).filter(String::isNotBlank).joinToString("\n") }, onError = { error = it },
@@ -329,11 +341,11 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
                                     val prepared = preparedSession
                                     val id = if (prepared == null) container.supervisor.submit(
                                         words, title = AgentSupervisor.titleOf(words), model = model ?: choice?.model, projectId = project,
-                                        effort = effort ?: choice?.effort, spec = SessionSpec(agentId = reportTo, browser = browser),
+                                        effort = effort ?: choice?.effort, spec = SessionSpec(agentId = reportTo, browser = browser, usageLimit = usageLimit),
                                     ).id else {
                                         check(container.sessionStore.update(prepared) {
                                             it.copy(request = words, title = AgentSupervisor.titleOf(words), model = model ?: choice?.model,
-                                                projectId = project, effort = effort ?: choice?.effort, agentId = reportTo, browser = browser)
+                                                projectId = project, effort = effort ?: choice?.effort, agentId = reportTo, browser = browser, usageLimit = usageLimit)
                                         } != null)
                                         container.supervisor.send(prepared, words)
                                         prepared
@@ -353,11 +365,25 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
             error?.let { Callout(it, Tone.Danger) }
         }
     }
+    if (usageLimitOpen) app.umbra.agent.ui.current.UsageLimitDialog(usageLimit, sessionId = null,
+        onSave = { usageLimit = it }, onDismiss = { usageLimitOpen = false })
     if (picker) ModelPicker(onDismiss = { picker = false }, onConnect = { picker = false; onAccounts() }, picked = model, onPick = { model = it })
     if (effortPicker) EffortPicker(
         current = effort, supported = container.modelDirectory.model(model)?.efforts.orEmpty(), modelName = model?.modelId, modelIsAuto = model == null,
         onChoose = { effort = if (it.auto) null else it }, onDismiss = { effortPicker = false },
     )
+}
+
+@Composable
+private fun UsageLimitSetting(limit: AiUsageLimit?, onClick: () -> Unit) {
+    val unit = limit?.let { stringResource(when (it.unit) {
+        app.umbra.core.session.AiUsageUnit.API_USD -> R.string.ai_unit_usd
+        app.umbra.core.session.AiUsageUnit.FIVE_HOUR_PERCENT -> R.string.ai_unit_5h
+        app.umbra.core.session.AiUsageUnit.WEEKLY_PERCENT -> R.string.ai_unit_week
+    }) }
+    PButton(stringResource(R.string.ai_usage_limit) + " · " +
+        (limit?.let { "${it.maximum} $unit" } ?: stringResource(R.string.ai_limit_none)), onClick,
+        style = app.umbra.agent.ui.porcelain.ButtonStyle.Ghost, tiny = true, icon = PIcons.gauge)
 }
 
 @Composable

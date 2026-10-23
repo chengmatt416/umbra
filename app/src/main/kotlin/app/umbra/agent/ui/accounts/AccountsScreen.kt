@@ -198,8 +198,9 @@ private fun SignIn(a: Account, onDone: () -> Unit) {
         }
         signedIn != null -> {
             Connected(signedIn.account)
+            if (state is OmpLogin.State.Failed) Callout(state.message, Tone.Danger)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PButton(stringResource(R.string.r_acc_sign_out), { signOut(container, id) }, Modifier.weight(1f), style = ButtonStyle.Ghost)
+                PButton(stringResource(if (state is OmpLogin.State.SigningOut) R.string.r_acc_signing_out else R.string.r_acc_sign_out), { signOut(container, id) }, Modifier.weight(1f), style = ButtonStyle.Ghost, enabled = state !is OmpLogin.State.SigningOut)
                 PButton(stringResource(R.string.r_acc_done), onDone, Modifier.weight(1f))
             }
         }
@@ -244,8 +245,9 @@ internal fun startSignIn(container: AppContainer, context: Context, a: Account) 
 
 private fun signOut(container: AppContainer, id: String) {
     container.scope.launch {
-        container.ompLogin.logout(id)
-        container.settings.update { p -> p.copy(providers = p.providers.filterNot { it.oauth && it.id == id }, defaultModel = p.defaultModel?.takeIf { it.provider != id }) }
+        try { container.ompLogin.logout(id) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { /* OmpLogin retains the account and publishes the failure. */ }
     }
 }
 

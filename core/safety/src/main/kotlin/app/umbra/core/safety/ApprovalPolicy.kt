@@ -2,6 +2,7 @@ package app.umbra.core.safety
 
 import app.umbra.core.model.Clock
 import app.umbra.core.model.action.ActionRequest
+import app.umbra.core.model.action.Privilege
 import app.umbra.core.model.action.Operation
 import kotlinx.serialization.Serializable
 
@@ -38,15 +39,22 @@ data class AllowRule(
     /** Restrict to shell commands starting with this text. */
     val commandPrefix: String? = null,
     val expiresAtMs: Long? = null,
+    val workingDirectory: String? = null,
+    val contextDirectory: String? = null,
+    val literalCommand: Boolean = false,
 ) {
-    fun matches(request: ActionRequest, foregroundPackage: String?, now: Long): Boolean {
+    fun matches(request: ActionRequest, foregroundPackage: String?, now: Long, contextDirectory: String? = null): Boolean {
         if (expiresAtMs != null && now >= expiresAtMs) return false
-        if (request.sessionId != null && request.sessionId != sessionId) return false
+        if (sessionId != "*" && request.sessionId != sessionId) return false
         if (app != null && app != foregroundPackage) return false
         if (operation != null && operation != request.operation.name) return false
         if (commandPrefix != null) {
             val command = (request.operation as? Operation.Shell)?.command ?: return false
-            if (!command.trimStart().startsWith(commandPrefix)) return false
+            if (!CommandPrefixes.matches(command, commandPrefix)) return false
+            if (literalCommand) {
+                val shell = request.operation as Operation.Shell
+                if (CommandPrefixes.offered(shell) == null || shell.cwd != workingDirectory || contextDirectory != this.contextDirectory || request.requires == Privilege.ROOT) return false
+            }
         }
         return true
     }
@@ -73,6 +81,7 @@ class ApprovalPolicy(
         assessment: RiskAssessment,
         rules: List<AllowRule> = emptyList(),
         foregroundPackage: String? = null,
+        workingDirectory: String? = null,
     ): PolicyDecision {
         if (assessment.isSelfProtectionViolation) {
             return PolicyDecision.Deny(assessment, "This action targets the agent's own app, approvals or data and is never allowed.")
@@ -86,7 +95,7 @@ class ApprovalPolicy(
         if (needing.isEmpty()) return PolicyDecision.Allow
 
         val now = clock.nowMs()
-        val applicable = rules.filter { it.matches(request, foregroundPackage, now) }
+        val applicable = rules.filter { it.matches(request, foregroundPackage, now, workingDirectory) }
         val covering = needing.map { f -> applicable.firstOrNull { it.covers(f) } }
         if (covering.all { it != null }) return PolicyDecision.AllowByRule(covering.first()!!)
 

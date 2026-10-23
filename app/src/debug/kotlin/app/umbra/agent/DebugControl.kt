@@ -212,6 +212,32 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             val ws = container.workspaces.create(str(args, "name"))
             buildJsonObject { put("id", ws.id); put("host_path", File(container.guest.layout.workspaces, "projects/${ws.id}").path) }
         }
+        "test.task.fixture" -> {
+            val session = container.supervisor.create("Synthetic task controls verification", title = "Task controls QA")
+            val done = container.sessionStore.update(session.id) { it.copy(state = app.umbra.core.session.SessionState.COMPLETED, resultSummary = "Synthetic task result: implementation and tests passed.") }!!
+            container.sessionStore.append(session.id, app.umbra.core.session.SessionEvent.AgentMessage(done.resultSummary!!))
+            sessionJson(done)
+        }
+        "test.command.review" -> {
+            val session = container.sessionStore.get(str(args, "id")) ?: error("No fixture session")
+            check(session.title == "Task controls QA")
+            val shell = (args["command"] as? JsonPrimitive)?.content ?: "git status --short"
+            container.scope.launch {
+                container.safetyGate.check(
+                    app.umbra.core.model.action.ActionRequest(id = "debug-prefix-${System.nanoTime()}", sessionId = session.id, operation = app.umbra.core.model.action.Operation.Shell(shell)),
+                    app.umbra.core.safety.ActionContext(cwd = "/workspace/task-controls-qa"),
+                    additionalAssessment = app.umbra.core.safety.RiskAssessment(listOf(app.umbra.core.safety.RiskFinding(app.umbra.core.safety.RiskCategory.NETWORK_CHANGE, app.umbra.core.safety.RiskLevel.HIGH, "Synthetic approval fixture; no command is executed."))),
+                )
+            }
+            buildJsonObject { put("ok", true) }
+        }
+        "test.command.grants" -> JsonArray(container.settings.value.commandApprovals.filter { it.contextDirectory == "/workspace/task-controls-qa" }.map { rule ->
+            buildJsonObject { put("id", rule.id); put("prefix", rule.commandPrefix.orEmpty()) }
+        })
+        "test.command.clear" -> {
+            container.settings.update { it.copy(commandApprovals = it.commandApprovals.filterNot { rule -> rule.contextDirectory == "/workspace/task-controls-qa" }) }
+            buildJsonObject { put("ok", true) }
+        }
         "session.draft" -> sessionJson(container.supervisor.create(str(args, "request")))
         "session.files.list" -> UmbraJson.encodeToJsonElement(ListSerializer(app.umbra.agent.data.SessionFile.serializer()), container.sessionFiles.items.value)
         "session.files.attach", "session.files.mount" -> {
@@ -310,5 +336,8 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
         put("id", s.id); put("title", s.title); put("state", s.state.name); put("kind", s.kind.name); put("activity", s.activity.orEmpty()); put("error", s.lastError ?: ""); put("workspace", s.workspaceId ?: "")
         put("plan", s.plan.size); put("omp_session_file", s.ompSessionFile ?: "")
         put("queued", s.queuedAtMs != null); put("project", s.projectId ?: "")
+        put("result_summary", s.resultSummary.orEmpty())
+        put("usage_limit", s.usageLimit?.let { UmbraJson.encodeToJsonElement(app.umbra.core.session.AiUsageLimit.serializer(), it) } ?: kotlinx.serialization.json.JsonNull)
+        put("usage_block_reason", s.usageBlockReason.orEmpty())
     }
 }

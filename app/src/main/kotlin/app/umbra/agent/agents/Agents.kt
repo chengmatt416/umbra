@@ -44,6 +44,7 @@ data class AgentProfile(
     val autoReply: List<String> = emptyList(),
     /** When the user last read its conversation: newer agent messages count as unread. */
     val lastReadMs: Long = 0,
+    val usageLimit: app.umbra.core.session.AiUsageLimit? = null,
 ) {
     companion object {
         const val DEFAULT_HEARTBEAT_MIN = 10

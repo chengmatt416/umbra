@@ -1,6 +1,7 @@
 // Serves release files from the R2 bucket (binding RELEASES) on /download/<file>, with Range support so that
 // phones can resume a 600+ MB download. /download/latest redirects to the current release.
-const ALLOWED = /^umbra-[0-9][\w.\-]*\.(apk|apk\.sha256)$/;
+const APK = /^umbra-[0-9][\w.\-]*\.(apk|apk\.sha256)$/;
+const NODE = /^umbra-node-\d+\.\d+\.\d+-(?:darwin-universal|macos-universal\.dmg|linux-(?:amd64|arm64)(?:\.tar\.gz|\.AppImage)?|SHA256SUMS)(?:\.minisig)?$/;
 
 export async function onRequest({ request, env, params }) {
   if (request.method !== 'GET' && request.method !== 'HEAD') return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
@@ -8,7 +9,7 @@ export async function onRequest({ request, env, params }) {
   if (name === '' || name === 'latest') {
     return Response.redirect(new URL(`/download/${env.LATEST_APK}`, request.url).toString(), 302);
   }
-  if (!ALLOWED.test(name)) return new Response('Not found', { status: 404 });
+  if (!APK.test(name) && !NODE.test(name)) return new Response('Not found', { status: 404 });
 
   const range = request.headers.get('range');
   const object = request.method === 'HEAD'
@@ -24,8 +25,11 @@ export async function onRequest({ request, env, params }) {
   if (name.endsWith('.apk')) {
     headers.set('content-type', 'application/vnd.android.package-archive');
     headers.set('content-disposition', `attachment; filename="${name}"`);
-  } else {
+  } else if (name.endsWith('.sha256') || name.endsWith('.minisig') || name.endsWith('-SHA256SUMS')) {
     headers.set('content-type', 'text/plain; charset=utf-8');
+  } else {
+    headers.set('content-type', name.endsWith('.dmg') ? 'application/x-apple-diskimage' : name.endsWith('.tar.gz') ? 'application/gzip' : 'application/octet-stream');
+    headers.set('content-disposition', `attachment; filename="${name}"`);
   }
   let status = 200;
   if (range && object.range && request.method === 'GET') {

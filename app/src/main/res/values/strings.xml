@@ -94,6 +94,7 @@
     <string name="ah_kind_timed_out">No answer, not done</string>
     <string name="ah_kind_cancelled">Cancelled</string>
     <string name="ah_kind_requested">Asked</string>
+    <string name="rc_prompt_injection">Possible instructions injected through untrusted content</string>
     <string name="risk_none">No risk</string>
     <string name="risk_low">Low risk</string>
     <string name="risk_medium">Medium risk</string>
@@ -371,7 +372,7 @@
     <string name="set_helper_failed">Could not start it with root. Use the adb command below.</string>
     <string name="set_helper_adb">Without root, run this once over adb after each reboot:</string>
     <string name="set_laya">Fast decisions (Laya)</string>
-    <string name="set_laya_body">A small model that answers quick either/or questions, so the main model is used for real thinking. Optional.</string>
+    <string name="set_laya_body">An optional local model for quick decisions and action security checks. When enabled, it stays loaded between tasks and restarts if it stops. Stop disables automatic restart.</string>
     <string name="unverified">Not verified on a phone yet</string>
     <string name="unverified_detail">This path works on the development emulator but has not been tried on a real phone. If it fails, the problem may not be on your side.</string>
     <string name="laya_needs_linux">Needs the Linux environment first.</string>
@@ -387,7 +388,7 @@
     <string name="laya_stop">Stop</string>
     <string name="set_section_about">About</string>
     <string name="set_version">Umbra %1$s</string>
-    <string name="set_license">Free software under the MIT License.</string>
+    <string name="set_license">Umbra code: MIT License. Bundled components have their own licenses.</string>
     <string name="set_language">Language</string>
     <string name="set_language_body">Follows the phone. Choose another in Android’s app settings.</string>
     <string name="em_eyebrow">Execution safety controller</string>

@@ -1,0 +1,23 @@
+// Export resolved runtime artifacts for scripts/third-party-notices.py. Paths stay in ignored build/.
+import groovy.json.JsonOutput
+
+gradle.projectsEvaluated {
+    if (rootProject.findProject(':app') == null) return
+    [':app': 'releaseRuntimeClasspath', ':node-runner': 'runtimeClasspath'].each { path, config ->
+        def p = rootProject.project(path)
+        p.tasks.register('thirdPartyArtifacts') {
+            doLast {
+                def view = p.configurations.getByName(config).incoming.artifactView {
+                    componentFilter { it instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier }
+                }
+                def rows = view.artifacts.artifacts.collect { a ->
+                    def id = a.id.componentIdentifier
+                    [group: id.group, name: id.module, version: id.version, artifact: a.file.absolutePath]
+                }.sort { a, b -> "${a.group}:${a.name}" <=> "${b.group}:${b.name}" }
+                def out = new File(p.layout.buildDirectory.get().asFile, 'legal/artifacts.json')
+                out.parentFile.mkdirs()
+                out.text = JsonOutput.prettyPrint(JsonOutput.toJson(rows)) + '\n'
+            }
+        }
+    }
+}

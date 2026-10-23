@@ -2,6 +2,12 @@
 
 Static, bilingual (English `/en/`, 繁體中文 `/zh-tw/`) landing page on **Cloudflare Pages**; the APK is served from **Cloudflare R2**.
 
+The build also publishes `/privacy/`, `/policy/` and `/licenses/` from the repository's legal documents,
+with original license/notice files under `/legal/`. Both language footers link to these English documents.
+Before announcing binary downloads, complete the outstanding requirements in
+[`docs/RELEASE_LEGAL_REVIEW.md`](../docs/RELEASE_LEGAL_REVIEW.md), including matching source distribution;
+publishing the policy pages alone does not clear the APK's bundled components.
+
 ```
 src/content.mjs   all copy, both languages (edit here)
 src/site.css, src/story.js   styling; the scroll story (the phone plays the clip of the step in view)

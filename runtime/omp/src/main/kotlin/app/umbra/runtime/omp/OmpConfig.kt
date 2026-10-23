@@ -100,6 +100,10 @@ data class OmpSettings(
     }
 }
 
+data class OmpModelCost(val input: Double, val output: Double, val cacheRead: Double = 0.0, val cacheWrite: Double = 0.0) {
+    init { require(listOf(input, output, cacheRead, cacheWrite).all { it.isFinite() && it >= 0 }) }
+}
+
 data class OmpModel(
     val id: String,
     val name: String? = null,
@@ -107,6 +111,7 @@ data class OmpModel(
     val maxTokens: Int? = null,
     val reasoning: Boolean? = null,
     val inputImages: Boolean? = null,
+    val cost: OmpModelCost? = null,
 )
 
 /** One entry of `models.yml` (docs/models.md). */
@@ -147,6 +152,7 @@ object OmpModelsFile {
                                 buildMap<String, Any?> {
                                     put("id", m.id)
                                     m.name?.let { put("name", it) }
+                                    m.cost?.let { put("cost", mapOf("input" to it.input, "output" to it.output, "cacheRead" to it.cacheRead, "cacheWrite" to it.cacheWrite)) }
                                     m.contextWindow?.let { put("contextWindow", it) }
                                     m.maxTokens?.let { put("maxTokens", it) }
                                     m.reasoning?.let { put("reasoning", it) }

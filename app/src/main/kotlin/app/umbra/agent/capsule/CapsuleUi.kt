@@ -386,7 +386,7 @@ private fun CapsuleCard(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     DarkButton(stringResource(R.string.appr_deny), null) { container.approvals.resolve(request.id, ApprovalDecision.Denied("denied from the capsule")) }
-                    when (approveGesture(request.assessment.level, ApprovalSurface.CAPSULE)) {
+                    when (approveGesture(request, ApprovalSurface.CAPSULE)) {
                         ApproveGesture.ONE_TAP -> DarkButton(stringResource(R.string.appr_approve_once), PIcons.check, primary = true) { container.approvals.resolve(request.id, ApprovalDecision.Approved()) }
                         else -> DarkButton(stringResource(R.string.appr_review_inbox), null, primary = true) { capsule.open(null, request.sessionId) }
                     }

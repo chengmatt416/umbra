@@ -79,8 +79,22 @@ class Model(BaseHTTPRequestHandler):
 
 
 def snapshot(name):
-    adb('shell', 'uiautomator dump /sdcard/umbra-agent-test.xml')
-    xml = adb('exec-out', 'cat', '/sdcard/umbra-agent-test.xml')
+    for _ in range(5):
+        adb('shell', 'uiautomator dump /sdcard/umbra-agent-test.xml', check=False)
+        xml = adb('exec-out', 'cat', '/sdcard/umbra-agent-test.xml', check=False)
+        try:
+            root = ET.fromstring(xml)
+        except ET.ParseError:
+            time.sleep(.5)
+            continue
+        denied = next((n for n in root.iter('node') if n.get('resource-id') == 'com.android.systemui:id/log_access_dialog_deny_button'), None)
+        if denied is not None:
+            x1, y1, x2, y2 = map(int, re.findall(r'\d+', denied.get('bounds')))
+            adb('shell', 'input', 'tap', str((x1 + x2) // 2), str((y1 + y2) // 2))
+            continue
+        break
+    else:
+        raise AssertionError('Android UI hierarchy is unavailable')
     (OUT / (name + '.xml')).write_text(xml)
     from umbractl import ADB
     png = subprocess.run([ADB, 'exec-out', 'screencap', '-p'], check=True, capture_output=True).stdout

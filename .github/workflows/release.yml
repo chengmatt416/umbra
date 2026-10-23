@@ -17,6 +17,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: runtime-build/rootfs/build.sh ${{ github.ref_name }}
+      - name: Collect the distributed runtime's original notices
+        run: |
+          python3 scripts/third-party-notices.py --rootfs build/rootfs/umbra-rootfs-${{ github.ref_name }}-arm64.tar.xz --packs build/rootfs/umbra-packs-${{ github.ref_name }}-arm64.tar --output build/rootfs/legal
+          tar -czf build/rootfs/umbra-runtime-notices-${{ github.ref_name }}.tar.gz -C build/rootfs/legal .
       - uses: actions/upload-artifact@v4
         with:
           name: rootfs
@@ -24,6 +28,7 @@ jobs:
             build/rootfs/umbra-rootfs-*
             build/rootfs/umbra-packs-*
             build/rootfs/manifest.json
+            build/rootfs/umbra-runtime-notices-*.tar.gz
 
   apk:
     needs: rootfs
@@ -44,6 +49,10 @@ jobs:
           name: rootfs
           path: build/rootfs
       - run: runtime-build/proot/fetch.sh
+      - name: Refresh JVM dependency notices for this build
+        run: |
+          ./gradlew --no-configuration-cache -I scripts/third-party.init.gradle :app:thirdPartyArtifacts :node-runner:thirdPartyArtifacts
+          python3 scripts/third-party-notices.py --gradle app/build/legal/artifacts.json --gradle node-runner/build/legal/artifacts.json --output third_party/gradle
       - name: Decode the signing key
         env:
           KEYSTORE_B64: ${{ secrets.UMBRA_KEYSTORE_B64 }}
@@ -79,3 +88,4 @@ jobs:
             umbra-*.apk.sha256
             umbra-rootfs-*.tar.xz
             umbra-rootfs-*.tar.xz.sha256
+            umbra-runtime-notices-*.tar.gz

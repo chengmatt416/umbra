@@ -46,7 +46,13 @@ fun offeredRememberScope(request: ApprovalRequest, surface: ApprovalSurface): Re
 }
 
 private val NARROWEST_FIRST = listOf(
+    RememberScope.THIS_COMMAND_FOREVER,
     RememberScope.THIS_COMMAND_THIS_SESSION,
     RememberScope.THIS_APP_THIS_SESSION,
     RememberScope.THIS_CATEGORY_THIS_SESSION,
 )
+
+/** Commands need the full payload and both approval choices before the owner answers. */
+fun approveGesture(request: ApprovalRequest, surface: ApprovalSurface): ApproveGesture =
+    if (request.operation == "shell" && surface != ApprovalSurface.FULL) ApproveGesture.OPEN_INBOX
+    else approveGesture(request.assessment.level, surface)

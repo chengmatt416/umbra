@@ -118,6 +118,12 @@ fun AgentProfileScreen(agentId: String, onBack: () -> Unit, onGo: (String) -> Un
     val rules = polled(agentId, emptyList<AgentRule>()) { container.agents.store.rules(agentId) }
     val bot = polled(agentId, null as String?) { container.telegram.linkedName(agentId) }
     var picker by remember { mutableStateOf(false) }
+    var usageLimitOpen by remember { mutableStateOf(false) }
+    if (usageLimitOpen) app.umbra.agent.ui.current.UsageLimitDialog(p.usageLimit, p.sessionId, agent = true,
+        onSave = { limit ->
+            container.supervisor.checkAgentUsageEditing(agentId)
+            container.agents.store.update(agentId) { it.copy(usageLimit = limit) }
+        }, onDismiss = { usageLimitOpen = false })
     var effortPicker by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -155,6 +161,7 @@ fun AgentProfileScreen(agentId: String, onBack: () -> Unit, onGo: (String) -> Un
                 NavRow(PIcons.clock, stringResource(R.string.ag_timers), stringResource(R.string.ag_timers_sub, timers.size, rules.size)) { onGo("agent/$agentId/timers") }
                 NavRow(PIcons.arrowUp, stringResource(R.string.ag_telegram), bot?.let { stringResource(R.string.ag_telegram_linked, it) } ?: stringResource(R.string.ag_telegram_not)) { onGo("agent/$agentId/telegram") }
                 NavRow(PIcons.gauge, stringResource(R.string.ag_model_effort), modelName(p.model) + " · " + effortText(p.effort)) { picker = true }
+                NavRow(PIcons.gauge, stringResource(R.string.ai_usage_limit), p.usageLimit?.maximum?.toString() ?: stringResource(R.string.ai_limit_none)) { usageLimitOpen = true }
                 NavRow(PIcons.zap, stringResource(R.string.ag_wake), intervalText(if (prefs.uiMode == UiMode.SIMPLE) AgentProfile.DEFAULT_HEARTBEAT_MIN else p.heartbeatMinutes)) { onGo("agent/$agentId/wake") }
                 val isDefault = container.agents.defaultAgent()?.id == agentId
                 SwitchRow(PIcons.target, stringResource(R.string.ag_default), stringResource(R.string.ag_default_sub), isDefault) { on -> if (on) container.agents.setDefault(agentId) }

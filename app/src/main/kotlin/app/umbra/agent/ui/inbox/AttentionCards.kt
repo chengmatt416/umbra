@@ -2,6 +2,9 @@ package app.umbra.agent.ui.inbox
 
 import app.umbra.agent.ui.porcelain.pcHue
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -97,6 +100,7 @@ fun ApprovalCountdown(request: ApprovalRequest, modifier: Modifier = Modifier, d
 
 @StringRes
 fun rememberLabel(scope: RememberScope) = when (scope) {
+    RememberScope.THIS_COMMAND_FOREVER -> R.string.appr_remember_forever
     RememberScope.THIS_COMMAND_THIS_SESSION -> R.string.appr_remember_command
     RememberScope.THIS_APP_THIS_SESSION -> R.string.appr_remember_app
     RememberScope.THIS_CATEGORY_THIS_SESSION -> R.string.appr_remember_category
@@ -113,6 +117,7 @@ fun ApprovalPanel(request: ApprovalRequest, sessionTitle: String?, onDecision: (
     val gesture = approveGesture(level, ApprovalSurface.FULL)
     val offered = offeredRememberScope(request, ApprovalSurface.FULL)
     var confirming by remember(request.id) { mutableStateOf(false) }
+    var confirmPrefix by remember(request.id) { mutableStateOf(false) }
     PCard(modifier, style = CardStyle.Soft) {
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.weight(1f)) {
@@ -123,6 +128,9 @@ fun ApprovalPanel(request: ApprovalRequest, sessionTitle: String?, onDecision: (
                 )
             }
             Tag(stringResource(riskRes(level)), riskTone(level))
+        }
+        app.umbra.agent.data.approvalExecutionDetails(request).takeIf { it.isNotEmpty() }?.let { full ->
+            Text(full, fontFamily = P.mono, fontSize = 13.sp, lineHeight = 19.sp, color = P.ink)
         }
         request.assessment.findings.forEach { Subtle("• ${stringResource(riskCategoryRes(it.category))}: ${it.reason}", Modifier.padding(top = 4.dp)) }
         request.details["why"]?.let { Subtle(stringResource(R.string.appr_why, it), Modifier.padding(top = 4.dp)) }
@@ -138,9 +146,22 @@ fun ApprovalPanel(request: ApprovalRequest, sessionTitle: String?, onDecision: (
             )
         }
         if (offered != null) {
-            PButton(stringResource(rememberLabel(offered)), { onDecision(ApprovalDecision.Approved(offered)) }, Modifier.fillMaxWidth().padding(top = 8.dp), style = ButtonStyle.Ghost, tiny = true)
+            PButton(stringResource(rememberLabel(offered)), { if (offered == RememberScope.THIS_COMMAND_FOREVER) confirmPrefix = true else onDecision(ApprovalDecision.Approved(offered)) }, Modifier.fillMaxWidth().padding(top = 8.dp), style = ButtonStyle.Ghost, tiny = true)
+        }
+        if (offered == null && request.operation == "shell") {
+            PButton(stringResource(R.string.appr_remember_forever), {}, Modifier.fillMaxWidth().padding(top = 8.dp), style = ButtonStyle.Ghost, tiny = true, enabled = false)
+            Subtle(stringResource(R.string.appr_once_required))
         }
         Subtle(stringResource(R.string.appr_once_note), Modifier.padding(top = 10.dp))
+    }
+    if (confirmPrefix) {
+        PConfirm(
+            title = stringResource(R.string.appr_remember_forever),
+            body = stringResource(R.string.appr_prefix_confirm, request.details["command_prefix"].orEmpty()),
+            confirmLabel = stringResource(R.string.appr_remember_forever),
+            onDismiss = { confirmPrefix = false },
+            onConfirm = { confirmPrefix = false; onDecision(ApprovalDecision.Approved(RememberScope.THIS_COMMAND_FOREVER)) },
+        )
     }
     if (confirming) {
         PConfirm(
@@ -150,11 +171,14 @@ fun ApprovalPanel(request: ApprovalRequest, sessionTitle: String?, onDecision: (
             onDismiss = { confirming = false },
             onConfirm = { confirming = false; onDecision(ApprovalDecision.Approved()) },
             extra = {
-                Text(
-                    request.description, Modifier.fillMaxWidth().padding(top = 2.dp), fontSize = 13.sp, lineHeight = 19.sp, color = P.ink,
-                    fontFamily = if (request.toolName == "shell" || request.toolName == "bash") P.mono else null, maxLines = 8,
-                )
-                request.assessment.findings.filter { it.level >= RiskLevel.HIGH }.forEach { Subtle("• ${stringResource(riskCategoryRes(it.category))}: ${it.reason}") }
+                Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                    Text(
+                        request.description, Modifier.fillMaxWidth().padding(top = 2.dp), fontSize = 13.sp, lineHeight = 19.sp, color = P.ink,
+                        fontFamily = if (request.toolName == "shell" || request.toolName == "bash") P.mono else null,
+                    )
+                    Text(app.umbra.agent.data.approvalExecutionDetails(request), color = P.ink, fontFamily = P.mono)
+                    request.assessment.findings.filter { it.level >= RiskLevel.HIGH }.forEach { Subtle("• ${stringResource(riskCategoryRes(it.category))}: ${it.reason}") }
+                }
             },
         )
     }

@@ -268,6 +268,8 @@ class AppContainer(val context: Context) {
     val safetyGate = SafetyGate(
         RiskClassifier(), { ApprovalPolicy(approvalMode) }, approvals,
         securityCheck = app.umbra.core.safety.LayaActionSecurityCheck(laya.engine),
+        commandRules = { settings.value.commandApprovals },
+        saveCommandRule = { rule -> settings.update { it.copy(commandApprovals = it.commandApprovals.filterNot { old -> old.commandPrefix == rule.commandPrefix && old.workingDirectory == rule.workingDirectory } + rule) } },
     )
     val journal = ActionJournal()
     val leases = DisplayLeaseManager(onBlocked = { session, display, holder ->
@@ -395,6 +397,26 @@ class AppContainer(val context: Context) {
     /** omp's state directory for a profile, written by the app directly (for probes outside a session). */
     fun guestAgentFiles(profile: String) = environment.agentFiles(profile)
 
+    val usageBudgets by lazy {
+        app.umbra.core.orchestrator.UsageBudgets(
+            File(context.filesDir, "ai-usage.json").toPath(),
+            agentLimit = { id -> agents.store.get(id)?.usageLimit },
+            sessionLookup = { sessionStore.get(it) },
+            quota = { provider ->
+                check(provider.matches(Regex("[A-Za-z0-9._-]+"))) { "Invalid provider" }
+                val usageEnv = mapOf("PI_CODING_AGENT_DIR" to guestAgentFiles("default").ompPath, "NO_COLOR" to "1")
+                check(guest.runtime.exec(listOf("omp", "usage", "invalidate", "--provider", provider, "--no-extensions"), env = usageEnv, cwd = "/home/agent", timeoutMs = 5_000).ok) { "Provider usage refresh failed" }
+                val result = guest.runtime.exec(
+                    listOf("omp", "usage", "--json", "--no-extensions", "--provider", provider),
+                    env = usageEnv,
+                    cwd = "/home/agent", timeoutMs = 15_000,
+                )
+                check(result.ok && !result.truncated) { "Provider usage unavailable" }
+                app.umbra.core.orchestrator.ProviderQuota.parse(result.stdout, System.currentTimeMillis())
+            },
+        )
+    }
+
     val supervisor = AgentSupervisor(
         deps = SessionDeps(
             store = sessionStore,
@@ -432,6 +454,7 @@ class AppContainer(val context: Context) {
             // A deleted task's terminals (its shells and the omp TUI) end with it instead of running on unseen.
             onDeleted = { id -> terminals.closeSession(id) },
             beforeWork = { session -> sessionFiles.checkpointSession(session) },
+            usage = usageBudgets,
             // An agent's conversation is told its soul and memory each time its agent starts.
             sessionPrompt = { s ->
                 val files = sessionFiles.prompt(s)
@@ -535,14 +558,10 @@ class AppContainer(val context: Context) {
             guest.refresh()
             laya.refresh()
             launch {
-                // Laya, when wanted, follows the tasks: installed once (kept in the agent's home, which updates keep),
-                // started when a task runs.
+                // Keep the opted-in model warm between tasks; probe cheaply and recover with backoff.
                 while (true) {
-                    if (settings.value.layaWanted) {
-                        if (laya.state.value == LayaSidecar.State.NOT_INSTALLED) laya.download()
-                        else if (sessionStore.list().any { it.state == SessionState.RUNNING }) laya.startForTask()
-                    }
-                    kotlinx.coroutines.delay(5_000)
+                    laya.maintain()
+                    kotlinx.coroutines.delay(30_000)
                 }
             }
             launch { keepHelperUp() }

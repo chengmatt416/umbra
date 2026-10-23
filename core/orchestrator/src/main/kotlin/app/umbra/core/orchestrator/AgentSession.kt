@@ -105,6 +105,7 @@ class SessionDeps(
     val onDeleted: suspend (sessionId: String) -> Unit = {},
     /** Protect user-mounted originals before an idle session can start another turn or shell command. */
     val beforeWork: suspend (Session) -> Unit = {},
+    val usage: UsageBudgets? = null,
 )
 
 /** How hard a session tries to recover on its own before giving up and telling the user. */
@@ -230,7 +231,7 @@ class AgentSession internal constructor(
             lastUsedMs = deps.clock.nowMs()
             // Marked before the state moves to running, so a late "settled" of the previous turn cannot finish it.
             val idle = !turnActive
-            if (idle) deps.store.get(sessionId)?.let { deps.beforeWork(it) }
+            if (idle) deps.store.get(sessionId)?.let { deps.usage?.reason(it)?.let { reason -> error(reason) }; deps.beforeWork(it) }
             if (idle) pendingPromptId = SENDING
             try {
                 prepareState()
@@ -278,6 +279,7 @@ class AgentSession internal constructor(
         lifecycle.withLock {
             val session = deps.store.get(sessionId) ?: return
             if (session.state != SessionState.PAUSED) return
+            deps.usage?.reason(session)?.let { error(it) }
             deps.beforeWork(session)
             deps.service.apply(sessionId, SessionCommand.RESUME)
             gate.resume()
@@ -356,6 +358,7 @@ class AgentSession internal constructor(
         if (selection.secrets.isNotEmpty()) runCatching { deps.exposed(sessionId, selection.secrets.keys, "the agent's omp process (its model calls)") }
         val files = env.agentFiles(selection.profile)
         files.write(SYSTEM_PROMPT_FILE, systemPrompt(session))
+        if (deps.usage != null) files.write("umbra-usage-$sessionId.ts", UsageBudgetExtension.source)
 
         // The session's own folders (files, artifacts, logs) exist before anything refers to them.
         runCatching { deps.workspaces.sessionDirs(sessionId) }
@@ -416,6 +419,7 @@ class AgentSession internal constructor(
         extraArgs = buildList {
             addAll(listOf(if (session.kind == app.umbra.core.session.SessionKind.AGENT) "--system-prompt" else "--append-system-prompt", "${files.ompPath.trimEnd('/')}/$SYSTEM_PROMPT_FILE"))
             if (session.kind == app.umbra.core.session.SessionKind.AGENT) addAll(listOf("--tools", "read,ask,todo"))
+            if (deps.usage != null) addAll(listOf("-e", "${files.ompPath.trimEnd('/')}/umbra-usage-$sessionId.ts"))
             // The session's own effort (chosen for it, or by Auto) wins over the user's default.
             (session.effort?.level ?: selection.thinkingLevel)?.let { addAll(listOf("--thinking", it)) }
         },
@@ -428,6 +432,7 @@ class AgentSession internal constructor(
      */
     suspend fun tuiLaunch(): TuiLaunch {
         val session = deps.store.get(sessionId) ?: error("no such session: $sessionId")
+        check(deps.usage?.configured(session) != true) { "Usage-limited sessions run in the managed coding view. Remove the limit before opening the omp TUI." }
         val env = deps.environment
         env.prepare()
         env.problem()?.let { throw AgentStartException(it) }
@@ -435,6 +440,7 @@ class AgentSession internal constructor(
         if (selection.secrets.isNotEmpty()) runCatching { deps.exposed(sessionId, selection.secrets.keys, "omp's terminal UI in a terminal") }
         val files = env.agentFiles(selection.profile)
         files.write(SYSTEM_PROMPT_FILE, systemPrompt(session))
+        if (deps.usage != null) files.write("umbra-usage-$sessionId.ts", UsageBudgetExtension.source)
         if (selection.providers.isNotEmpty()) files.write(OmpProcess.MODELS_FILE, app.umbra.runtime.omp.OmpModelsFile.toYaml(selection.providers))
         files.write(OmpProcess.OVERLAY_FILE, ompSettings(session, env.browserAvailable()).toYaml())
         val cwd = workingDirectory(session)
@@ -450,13 +456,27 @@ class AgentSession internal constructor(
 
     private suspend fun startClient(started: OmpProcess.Started, session: Session, env: AgentEnvironment) {
         val client = started.client
-        client.uiHandler = OmpApprovalBridge(
+        val approvals = OmpApprovalBridge(
             sessionId = sessionId,
             gate = deps.gate,
             context = { actionContext(session) },
             questions = deps.questions,
             fence = deps.fence,
         )
+        client.uiHandler = app.umbra.runtime.omp.UiRequestHandler { request ->
+            if (request is UiRequest.Confirm && request.title == UsageBudgetExtension.TITLE && deps.usage != null) {
+                val current = deps.store.get(sessionId)
+                val report = app.umbra.core.model.UmbraJson.parseToJsonElement(request.message) as? kotlinx.serialization.json.JsonObject
+                val reason = try {
+                    if (current == null || report == null) "AI usage unavailable; request stopped."
+                    else deps.usage.admit(current, report)
+                } catch (e: CancellationException) { throw e }
+                catch (_: Exception) { "AI usage could not be verified; request stopped. Retry when usage is available." }
+                if (reason != null) recorder.notice("warning", reason, "usage-budget")
+                if (report?.str("phase") == "request") deps.store.update(sessionId) { it.copy(usageBlockReason = reason) }
+                UiResponse.Confirmed(reason == null)
+            } else approvals.handle(request)
+        }
         // Collect before the handshake: events emitted while nobody collects are not replayed.
         scope.launch(start = CoroutineStart.UNDISPATCHED) { client.events.collect { handle(client, it) } }
         try {
@@ -513,6 +533,11 @@ class AgentSession internal constructor(
             cwd = workingDirectory(session),
             workspaceRoots = roots,
             tempRoots = ActionContext.DEFAULT_TEMP_ROOTS,
+            untrustedContent = conversationFlow.value.items.asReversed().filterIsInstance<ChatItem.ToolResult>()
+                .take(3).joinToString("\n") {
+                    val sample = if (it.text.length <= 200) it.text else it.text.take(100) + "\n[truncated]\n" + it.text.takeLast(100)
+                    "${it.toolName.take(60)}: ${Redaction.text(sample)}"
+                },
         )
     }
 
@@ -586,6 +611,16 @@ class AgentSession internal constructor(
                 "thinking_delta" -> (event.raw["assistantMessageEvent"] as? kotlinx.serialization.json.JsonObject)?.str("delta")
                     ?.let { mutableLive.tryEmit(LiveUpdate.ThinkingDelta(event.messageId, it)) }
                 else -> Unit
+            }
+            is OmpEvent.Ui -> {
+                if (event.notification.message == UsageBudgetExtension.BLOCKED) {
+                    gate.pause()
+                    deps.store.update(sessionId) { it.copy(usageBlockReason = it.usageBlockReason ?: "AI usage could not be verified; the task was paused.") }
+                    deps.approvals.cancelSession(sessionId)
+                    deps.questions.cancelSession(sessionId)
+                    try { deps.service.apply(sessionId, SessionCommand.PAUSE, "AI usage limit reached or usage unavailable. Review this task's usage limit.") }
+                    catch (_: IllegalTransitionException) { }
+                } else recorder.omp(event)
             }
             is OmpEvent.ToolUpdate -> mutableLive.tryEmit(LiveUpdate.ToolProgress(event.toolCallId, event.toolName))
             // Prompt results and `session_settled` arrive on this one ordered stream, so a failed turn is recorded before the session can be called settled.
@@ -663,6 +698,8 @@ class AgentSession internal constructor(
         // result and `session_settled`), and a follow-up sent between the two must not be marked finished.
         val state = deps.store.get(sessionId)?.state
         if (state == SessionState.RUNNING && !turnActive && pendingPromptId == null) {
+            val summary = ResultSummaries.from(conversationFlow.value) ?: "The session ended without a final response. Review its history for tool results."
+            deps.store.update(sessionId) { it.copy(resultSummary = summary) }
             try { deps.service.apply(sessionId, SessionCommand.COMPLETE, "the agent finished") } catch (_: IllegalTransitionException) { }
             finished()
             scheduleIdleRelease()
@@ -762,6 +799,14 @@ class AgentSession internal constructor(
     /** Something changed the transcript itself (branch, fork, switch, new session, compaction): read it again. */
     suspend fun reloadConversation() {
         process?.client?.takeIf { !it.isClosed }?.let { refreshConversation(it, commands = true, save = true) }
+    }
+
+    suspend fun historyMessages(): List<kotlinx.serialization.json.JsonObject> {
+        val client = process?.client?.takeIf { !it.isClosed }
+        if (client != null) {
+            try { return client.messages() } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        }
+        return deps.conversations.load(sessionId).orEmpty()
     }
 
     private suspend fun refreshConversation(client: app.umbra.runtime.omp.OmpClient, commands: Boolean = false, save: Boolean = false) {

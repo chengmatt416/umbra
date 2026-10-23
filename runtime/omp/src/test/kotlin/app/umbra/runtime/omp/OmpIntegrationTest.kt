@@ -267,7 +267,7 @@ class OmpIntegrationTest {
             assertEquals(PromptStatus.COMPLETED, result.status, "prompt result: $result")
 
             val select = dialogs.filterIsInstance<UiRequest.Select>().single()
-            assertEquals(listOf("Approve", "Deny"), select.options)
+            assertTrue(select.options.containsAll(listOf("Approve", "Deny")), select.options.toString())
             assertTrue("Allow tool: bash" in select.title, select.title)
             assertTrue("touch marker-denied" in select.title, "the command must be visible for classification: ${select.title}")
             assertFalse(marker.exists(), "a denied command must not run")

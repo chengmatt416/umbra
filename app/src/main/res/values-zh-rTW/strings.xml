@@ -361,7 +361,8 @@
     <string name="set_helper_failed">無法用 root 啟動，請使用下面的 adb 指令。</string>
     <string name="set_helper_adb">沒有 root 時，每次重新開機後透過 adb 執行一次：</string>
     <string name="set_laya">快速判斷（Laya）</string>
-    <string name="set_laya_body">一個回答簡單二選一問題的小模型，讓主模型專心處理真正需要思考的事。可選。</string>
+    <string name="rc_prompt_injection">不可信內容中可能含有注入指令</string>
+    <string name="set_laya_body">選用的本機模型，用於快速決策與操作安全檢查。啟用後會在任務之間保持載入，並在停止運作後自動重新啟動。按下「停止」會關閉自動啟動。</string>
     <string name="unverified">尚未在實機驗證</string>
     <string name="unverified_detail">這條路徑在開發用模擬器上可用，但還沒在實機上試過。如果失敗，問題不一定出在你這邊。</string>
     <string name="laya_needs_linux">需要先安裝 Linux 環境。</string>
@@ -377,7 +378,7 @@
     <string name="laya_stop">停止</string>
     <string name="set_section_about">關於</string>
     <string name="set_version">Umbra %1$s</string>
-    <string name="set_license">以 MIT 授權釋出的自由軟體。</string>
+    <string name="set_license">Umbra 程式碼採 MIT 授權；內附元件各依其原授權條款。</string>
     <string name="set_language">語言</string>
     <string name="set_language_body">跟隨手機設定。可在 Android 的 App 設定中選擇其他語言。</string>
     <string name="em_eyebrow">執行安全控制</string>

@@ -19,6 +19,7 @@ enum class ApprovalSource { HOST_TOOL, OMP }
 /** What a "remember" approval covers. */
 @Serializable
 enum class RememberScope {
+    THIS_COMMAND_FOREVER,
     /** The same risk categories, in the same foreground app, for the rest of the session. */
     THIS_APP_THIS_SESSION,
 
@@ -116,7 +117,11 @@ class ApprovalBroker(
     }
 
     /** Called by the UI. Returns false if the request is gone (already decided, timed out or cancelled). */
-    fun resolve(id: String, decision: ApprovalDecision): Boolean = waiters[id]?.complete(decision) ?: false
+    fun resolve(id: String, decision: ApprovalDecision): Boolean {
+        val request = requests[id] ?: return false
+        if (decision is ApprovalDecision.Approved && decision.remember != null && decision.remember !in request.rememberOptions) return false
+        return waiters[id]?.complete(decision) ?: false
+    }
 
     fun cancelSession(sessionId: String) {
         requests.values.filter { it.sessionId == sessionId }.forEach { waiters[it.id]?.complete(ApprovalDecision.Cancelled) }

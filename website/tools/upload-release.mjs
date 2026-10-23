@@ -15,6 +15,7 @@ const [file, name] = process.argv.slice(2);
 if (!file || !name) { console.error('usage: upload-release.mjs <file> <object name>'); process.exit(2); }
 const dir = join(here, 'r2-uploader');
 const token = randomBytes(24).toString('hex');
+const workerName = `umbra-r2-uploader-${Date.now().toString(36)}-${randomBytes(4).toString('hex')}`;
 const size = statSync(file).size;
 const PART = 50 * 1024 * 1024;
 const metaFile = join(dirname(file), 'output-metadata.json');
@@ -38,11 +39,11 @@ const call = async (path, init = {}) => {
   }
 };
 try {
-  const out = execFileSync('npx', ['wrangler', 'deploy'], { cwd: dir, encoding: 'utf8' });
+  const out = execFileSync('npx', ['--no-install', 'wrangler', 'deploy', '--name', workerName], { cwd: dir, encoding: 'utf8' });
   base = out.match(/https:\/\/[^\s]+workers\.dev/)?.[0];
   if (!base) throw new Error('no workers.dev url in: ' + out);
   // Keep the upload credential out of process arguments and Wrangler's deployment output.
-  execFileSync('npx', ['wrangler', 'secret', 'bulk'], { cwd: dir, input: JSON.stringify({ TOKEN: token }), stdio: ['pipe', 'inherit', 'inherit'] });
+  execFileSync('npx', ['--no-install', 'wrangler', 'secret', 'bulk', '--name', workerName], { cwd: dir, input: JSON.stringify({ TOKEN: token }), stdio: ['pipe', 'inherit', 'inherit'] });
   console.log('uploader at', base);
   // Worker may take a few seconds to be reachable.
   for (let i = 0; i < 20; i++) { try { await fetch(base, { headers: { 'x-token': token } }); break; } catch { await new Promise((s) => setTimeout(s, 1500)); } }
@@ -65,5 +66,6 @@ try {
   writeFileSync(join(here, '..', 'src', 'apk.json'), JSON.stringify({ file: name, size: mib, sha256: digest, bytes: size, ...(meta.versionCode ? { version: meta.versionName, versionCode: meta.versionCode } : {}) }, null, 2));
   console.log('uploaded', name, mib);
 } finally {
-  spawnSync('npx', ['wrangler', 'delete', '--force'], { cwd: dir, stdio: 'inherit' });
+  const cleanup = spawnSync('npx', ['--no-install', 'wrangler', 'delete', '--name', workerName, '--force'], { cwd: dir, stdio: 'inherit' });
+  if (cleanup.status !== 0) throw new Error(`Temporary uploader cleanup failed: ${workerName}`);
 }

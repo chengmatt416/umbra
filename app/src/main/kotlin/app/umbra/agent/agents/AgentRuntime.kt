@@ -171,11 +171,12 @@ class AgentRuntime(private val container: AppContainer) {
         effort: Effort? = null,
         channels: List<String> = listOf("notifications"),
         heartbeatMinutes: Int = AgentProfile.DEFAULT_HEARTBEAT_MIN,
+        usageLimit: app.umbra.core.session.AiUsageLimit? = null,
     ): AgentProfile {
         val now = System.currentTimeMillis()
         val id = "ag" + now.toString(36) + (1..4).map { "abcdefghijkmnpqrstuvwxyz23456789".random() }.joinToString("")
         val clean = name.trim().ifEmpty { context.getString(R.string.ag_default_name) }
-        var profile = AgentProfile(id, clean, avatar, template, model, effort, heartbeatMinutes, createdAtMs = now, channels = channels)
+        var profile = AgentProfile(id, clean, avatar, template, model, effort, heartbeatMinutes, createdAtMs = now, channels = channels, usageLimit = usageLimit)
         store.save(profile)
         store.setSoul(id, soul.ifBlank { Templates.soul(template, clean) })
         if (store.memory(id).entries().isEmpty()) store.memory(id).setRaw(Memory.HEADER + "\n")

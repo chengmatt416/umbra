@@ -88,6 +88,8 @@ class TelegramBot(private val container: AppContainer) {
     private var watchers: Job? = null
     /** Approvals already shown in the chat (request id -> message id). */
     private val shown = ConcurrentHashMap<String, Long>()
+    private val prefixConfirmations = ConcurrentHashMap.newKeySet<String>()
+    private val criticalConfirmations = ConcurrentHashMap.newKeySet<String>()
     /** The agent waiting for the user's words after "Edit" on an approval. */
     @Volatile private var editing: String? = null
 
@@ -310,8 +312,35 @@ class TelegramBot(private val container: AppContainer) {
                 val requestId = parts.getOrNull(1) ?: return
                 val request = container.approvals.pending.value.firstOrNull { it.id == requestId }
                 if (request == null) { answer(id, container.context.getString(R.string.tg_approval_gone)); return }
-                val outcome = when (parts.getOrNull(2)) {
-                    "y" -> { container.approvals.resolve(requestId, ApprovalDecision.Approved()); container.context.getString(R.string.tg_approved) }
+                val action = parts.getOrNull(2)
+                val prefixScope = app.umbra.core.safety.RememberScope.THIS_COMMAND_FOREVER
+                val isCritical = request.assessment.level >= app.umbra.core.safety.RiskLevel.CRITICAL
+                if (action == "p" || (action == "y" && isCritical)) {
+                    val prefix = action == "p"
+                    if (prefix && (prefixScope !in request.rememberOptions || isCritical)) { answer(id, container.context.getString(R.string.tg_approval_gone)); return }
+                    if (chatId == null) return
+                    val text = if (prefix) container.context.getString(R.string.appr_prefix_confirm, request.details["command_prefix"].orEmpty())
+                        else container.context.getString(R.string.appr_critical_body)
+                    val keyboard = buildJsonObject { putJsonArray("inline_keyboard") { add(buildJsonArray {
+                        add(button(container.context.getString(if (prefix) R.string.appr_remember_forever else R.string.appr_critical_confirm), "ap:$requestId:${if (prefix) "f" else "c"}"))
+                        add(button(container.context.getString(R.string.appr_deny), "ap:$requestId:n"))
+                    }) } }
+                    send(chatId, text, keyboard)
+                    if (prefix) prefixConfirmations.add(requestId) else criticalConfirmations.add(requestId)
+                    answer(id, null)
+                    return
+                }
+                val outcome = when (action) {
+                    "y", "c", "f" -> {
+                        val permitted = when (action) {
+                            "f" -> prefixConfirmations.remove(requestId) && prefixScope in request.rememberOptions && !isCritical
+                            "c" -> criticalConfirmations.remove(requestId)
+                            else -> !isCritical
+                        }
+                        val decision = ApprovalDecision.Approved(if (action == "f") prefixScope else null)
+                        if (permitted && container.approvals.resolve(requestId, decision)) container.context.getString(R.string.tg_approved)
+                        else container.context.getString(R.string.tg_approval_gone)
+                    }
                     "e" -> {
                         container.approvals.resolve(requestId, ApprovalDecision.Denied("the user wants to change it; their words follow"))
                         editing = container.agents.store.bySession(request.sessionId)?.id ?: currentAgent()?.id
@@ -321,7 +350,8 @@ class TelegramBot(private val container: AppContainer) {
                 }
                 answer(id, outcome)
                 if (chatId != null && messageId != null) runCatching {
-                    call("editMessageText", buildJsonObject { put("chat_id", chatId); put("message_id", messageId); put("text", request.description.take(3500) + "\n\n" + outcome) })
+                    call("editMessageReplyMarkup", buildJsonObject { put("chat_id", chatId); put("message_id", messageId); put("reply_markup", buildJsonObject { putJsonArray("inline_keyboard") {} }) })
+                    send(chatId, outcome)
                 }
             }
             else -> answer(id, null)
@@ -341,16 +371,22 @@ class TelegramBot(private val container: AppContainer) {
                 val keyboard = buildJsonObject {
                     putJsonArray("inline_keyboard") {
                         add(buildJsonArray {
-                            add(button(container.context.getString(R.string.ag_send), "ap:${request.id}:y"))
+                            add(button(container.context.getString(R.string.appr_approve_once), "ap:${request.id}:y"))
                             add(button(container.context.getString(R.string.ag_edit), "ap:${request.id}:e"))
                             add(button(container.context.getString(R.string.ag_dont), "ap:${request.id}:n"))
                         })
+                        if (app.umbra.core.safety.RememberScope.THIS_COMMAND_FOREVER in request.rememberOptions && request.assessment.level < app.umbra.core.safety.RiskLevel.CRITICAL) {
+                            add(buildJsonArray { add(button(container.context.getString(R.string.appr_remember_forever), "ap:${request.id}:p")) })
+                        }
                     }
                 }
                 val who = container.agents.store.bySession(request.sessionId)?.name ?: container.sessionStore.get(request.sessionId)?.agentId?.let { container.agents.store.get(it)?.name }
-                runCatching { send(chatId, listOfNotNull(who, request.description).joinToString(": ").take(3800), keyboard) }
+                runCatching { send(chatId, listOfNotNull(who, request.description, app.umbra.agent.data.approvalExecutionDetails(request).takeIf { it.isNotBlank() }).joinToString("\n\n"), keyboard) }
             }
-            shown.keys.retainAll(list.map { it.id }.toSet())
+            val pendingIds = list.map { it.id }.toSet()
+            shown.keys.retainAll(pendingIds)
+            prefixConfirmations.retainAll(pendingIds)
+            criticalConfirmations.retainAll(pendingIds)
         }
     }
 
@@ -390,11 +426,12 @@ class TelegramBot(private val container: AppContainer) {
 
     suspend fun send(chatId: Long, text: String, markup: JsonObject? = null) {
         // Telegram takes 4096 characters a message.
-        text.chunked(4000).forEachIndexed { i, part ->
+        val parts = telegramMessageParts(text)
+        parts.forEachIndexed { i, part ->
             call("sendMessage", buildJsonObject {
                 put("chat_id", chatId)
                 put("text", part)
-                if (markup != null && i == text.chunked(4000).lastIndex) put("reply_markup", markup)
+                if (markup != null && i == parts.lastIndex) put("reply_markup", markup)
             })
         }
     }

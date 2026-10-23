@@ -1,4 +1,6 @@
 <resources>
+    <string name="rn_coding_sessions">Computer coding sessions</string>
+    <string name="rn_coding_sessions_body">View or control Claude Code, Codex or omp through a paired computer’s screen. Enable screen access on that computer first.</string>
     <string name="rn_title">Nodes</string>
     <string name="rn_empty">Your computers, connected</string>
     <string name="rn_empty_body">Run jobs on a Mac or Linux computer you own. Add a node using the QR in its setup wizard.</string>

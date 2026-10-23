@@ -1,0 +1,56 @@
+{
+  "version": "0.4.4",
+  "publicKey": "RWQM+bFfgzUZ9lFb10IqXsWt49UynUH9wtOKZGeXXJON4M4OjRTKJ60D",
+  "files": {
+    "umbra-node-0.4.4-darwin-universal": {
+      "bytes": 23223008,
+      "sha256": "84a94cf01ac8acddf9b3b5b3e32b6f46ee4a520ac6994a992645e1e6bb74d6da",
+      "url": "/download/umbra-node-0.4.4-darwin-universal",
+      "signature": "/download/umbra-node-0.4.4-darwin-universal.minisig"
+    },
+    "umbra-node-0.4.4-macos-universal.dmg": {
+      "bytes": 10347807,
+      "sha256": "88da8b6de530349f8751691c28251dcc2937177fffbb74534bccd9bc090c4413",
+      "url": "/download/umbra-node-0.4.4-macos-universal.dmg",
+      "signature": "/download/umbra-node-0.4.4-macos-universal.dmg.minisig"
+    },
+    "umbra-node-0.4.4-linux-amd64": {
+      "bytes": 8671394,
+      "sha256": "7cd9988f984da423d81e478d1a8e3a9913119f7678301b5bce1447008981d4fe",
+      "url": "/download/umbra-node-0.4.4-linux-amd64",
+      "signature": "/download/umbra-node-0.4.4-linux-amd64.minisig"
+    },
+    "umbra-node-0.4.4-linux-amd64.tar.gz": {
+      "bytes": 3523756,
+      "sha256": "b192d51aed06795af049e24637e8edeb96fbfaea6557a771877417a369856a51",
+      "url": "/download/umbra-node-0.4.4-linux-amd64.tar.gz",
+      "signature": "/download/umbra-node-0.4.4-linux-amd64.tar.gz.minisig"
+    },
+    "umbra-node-0.4.4-linux-amd64.AppImage": {
+      "bytes": 77769208,
+      "sha256": "3a5845c0d0f6abad923958f94d78e4de8b0d0ae4150f20d419591bfe6d71ff81",
+      "url": "/download/umbra-node-0.4.4-linux-amd64.AppImage",
+      "signature": "/download/umbra-node-0.4.4-linux-amd64.AppImage.minisig"
+    },
+    "umbra-node-0.4.4-linux-arm64": {
+      "bytes": 7995554,
+      "sha256": "15ef94d9e0d8892fb567eded87a8739c1bb1d6b9c69464c384f6fde560eab1cb",
+      "url": "/download/umbra-node-0.4.4-linux-arm64",
+      "signature": "/download/umbra-node-0.4.4-linux-arm64.minisig"
+    },
+    "umbra-node-0.4.4-linux-arm64.tar.gz": {
+      "bytes": 3165928,
+      "sha256": "7f873e784f62896d0a868783c9f6762a81af9d41bb3bdc67688ff798a61cf304",
+      "url": "/download/umbra-node-0.4.4-linux-arm64.tar.gz",
+      "signature": "/download/umbra-node-0.4.4-linux-arm64.tar.gz.minisig"
+    },
+    "umbra-node-0.4.4-linux-arm64.AppImage": {
+      "bytes": 75541000,
+      "sha256": "21ba72fb2fb05939e261a2ce39c0b97205d0fe56fa8da9d1e191f3466f0ac155",
+      "url": "/download/umbra-node-0.4.4-linux-arm64.AppImage",
+      "signature": "/download/umbra-node-0.4.4-linux-arm64.AppImage.minisig"
+    }
+  },
+  "checksums": "/download/umbra-node-0.4.4-SHA256SUMS",
+  "checksumsSignature": "/download/umbra-node-0.4.4-SHA256SUMS.minisig"
+}

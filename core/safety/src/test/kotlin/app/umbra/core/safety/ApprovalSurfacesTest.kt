@@ -21,6 +21,14 @@ class ApprovalSurfacesTest {
     )
 
     @Test
+    fun commandReviewAlwaysOpensAFullSurface() {
+        val request = approval(RiskLevel.MEDIUM, RememberScope.THIS_COMMAND_FOREVER).copy(operation = "shell")
+        assertEquals(ApproveGesture.OPEN_INBOX, approveGesture(request, CAPSULE))
+        assertEquals(ApproveGesture.OPEN_INBOX, approveGesture(request, NOTIFICATION))
+        assertEquals(ApproveGesture.ONE_TAP, approveGesture(request, FULL))
+    }
+
+    @Test
     fun theShadeNeverApprovesHighRisk() {
         assertEquals(ONE_TAP, approveGesture(RiskLevel.LOW, NOTIFICATION))
         assertEquals(ONE_TAP, approveGesture(RiskLevel.MEDIUM, NOTIFICATION))

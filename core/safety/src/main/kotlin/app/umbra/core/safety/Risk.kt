@@ -32,6 +32,7 @@ enum class RiskCategory(val inSpec: Boolean, val title: String) {
     NETWORK_CHANGE(false, "Changes network configuration"),
     PLACES_CALL(false, "Places a phone call"),
     DYNAMIC_COMMAND(false, "Runs a command that cannot be statically analysed"),
+    PROMPT_INJECTION(true, "Possible instructions injected through untrusted content"),
 
     /** Targets the agent's own app, approvals, or ledger. Always denied, never asked. */
     SELF_PROTECTION(false, "Targets the agent's own safety system"),
@@ -88,6 +89,8 @@ data class ActionContext(
     val protectedPaths: List<String> = emptyList(),
     /** Trusted adapter's description of an operation that has no phone UI target (for example a remote tool). */
     val actionDescription: String? = null,
+    /** A bounded sample of recent tool output, treated as data rather than user authority. */
+    val untrustedContent: String? = null,
 ) {
     companion object {
         val DEFAULT_STAGING_ROOTS = listOf("/data/local/tmp/umbra")

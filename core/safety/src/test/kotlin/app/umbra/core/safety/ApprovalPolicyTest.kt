@@ -114,9 +114,11 @@ class ApprovalPolicyTest {
     fun commandPrefixRulesOnlyMatchThatShellCommand() {
         val rule = AllowRule("r1", "s1", setOf(SENSITIVE_DATA_EXPOSURE), operation = "shell", commandPrefix = "cat /data/data/com.example.crashy")
         val high = a(f(SENSITIVE_DATA_EXPOSURE, HIGH))
-        val match = request(Operation.Shell("cat /data/data/com.example.crashy/files/log"))
+        val match = request(Operation.Shell("cat /data/data/com.example.crashy"))
+        val partialWord = request(Operation.Shell("cat /data/data/com.example.crashy/files/log"))
         val other = request(Operation.Shell("cat /data/data/com.whatsapp/x"))
         assertIs<PolicyDecision.AllowByRule>(policy(ApprovalMode.BALANCED).decide(match, high, listOf(rule)))
+        assertIs<PolicyDecision.Ask>(policy(ApprovalMode.BALANCED).decide(partialWord, high, listOf(rule)))
         assertIs<PolicyDecision.Ask>(policy(ApprovalMode.BALANCED).decide(other, high, listOf(rule)))
     }
 
