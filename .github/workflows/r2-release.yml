@@ -1,0 +1,39 @@
+name: Publish APK from R2
+
+on:
+  schedule:
+    - cron: '2-59/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Optional version (for example 0.6.1); blank checks every completed APK since 0.6.1'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: r2-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Test release synchronization
+        run: node --test scripts/publish-r2-release.test.mjs website/tools/r2-release-feed/worker.test.mjs
+      - name: Verify and publish completed R2 APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TARGET: ${{ github.sha }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          R2_RELEASE_FEED_URL: ${{ vars.R2_RELEASE_FEED_URL }}
+          R2_MIN_VERSION: '0.6.1'
+        run: node scripts/publish-r2-release.mjs

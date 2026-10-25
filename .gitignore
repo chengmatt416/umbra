@@ -40,6 +40,8 @@ reports/
 /website/node_modules/
 /website/.wrangler/
 /website/tools/r2-uploader/.wrangler/
+/.wrangler/
+/website/tools/r2-release-feed/.wrangler/
 
 # onetake / brag toolchains and renders (third-party skills are fetched, not committed; see marketing/README.md)
 /marketing/.venv/

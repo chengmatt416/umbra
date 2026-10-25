@@ -41,6 +41,39 @@ Releases must be signed with the same key forever (Android refuses updates signe
 Bump `versionCode` in `app/build.gradle.kts` for every release: installed apps update themselves from `dist/update.json`
 (written by `build.mjs` only when `src/apk.json` describes `umbra-<version>.apk`), and only a higher `versionCode` is an update.
 
+### Automatic GitHub releases from R2
+
+`.github/workflows/r2-release.yml` checks the R2 bucket every five minutes (GitHub schedules can be delayed).
+Starting with 0.6.1, every completed `umbra-X.Y.Z.apk` / `umbra-X.Y.Z.apk.sha256` pair becomes a `vX.Y.Z`
+GitHub release. Uploading with `tools/upload-release.mjs` already writes both objects. No site deployment or
+Android rebuild is needed. Other bucket objects and older APKs are ignored. Commit the matching source to
+`main` before uploading; newly created release tags target the workflow's source commit.
+
+The read-only `tools/r2-release-feed/` Worker lists only those APK/checksum pairs and streams those files.
+It never exposes usage-count records or accepts writes, and holds no GitHub or Cloudflare API credentials.
+GitHub Actions uses its built-in `GITHUB_TOKEN` with `contents: write`. The workflow pins downloads to R2
+ETags, verifies the complete APK size and SHA-256, uploads both assets to a draft, then publishes it.
+Interrupted draft uploads resume on the next run. Published versions are immutable: a changed APK requires
+a new version. Existing matching releases are skipped, without downloading the APK again.
+
+Deployment/setup (the production Worker and repository variable are already configured):
+
+```bash
+# From the repository root:
+wrangler deploy --config website/tools/r2-release-feed/wrangler.jsonc
+gh variable set R2_RELEASE_FEED_URL --repo chengmatt416/umbra --body https://<deployed-worker>.workers.dev
+gh workflow run r2-release.yml --repo chengmatt416/umbra -f version=0.6.1
+```
+
+The workflow must exist on the default branch (`main`) for scheduled runs. The optional manual `version`
+input limits a run to one completed pair; leaving it blank checks all versions since 0.6.1. The existing
+tag-triggered `release.yml` remains available for full rebuilds; R2 synchronization does not push tags with
+a personal token or trigger that build. Test the sync and Worker with:
+
+```bash
+node --test scripts/publish-r2-release.test.mjs website/tools/r2-release-feed/worker.test.mjs
+```
+
 To test an update end to end without touching the live site: build a later version (`-Pumbra.versionCode=… -Pumbra.versionName=…`,
 `-Pumbra.bundleLinux=false` keeps it small), upload it under a test name, deploy a preview (`--branch ota-test`) whose
 `update.json` points at it, and on the phone `adb shell setprop debug.umbra.update_url https://ota-test.umbra-agent.pages.dev/update.json`.
