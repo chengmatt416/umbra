@@ -8,14 +8,21 @@ plugins {
     id("umbra.serialization")
 }
 
+val requireReleaseSigning = providers.gradleProperty("umbra.requireReleaseSigning").map { it.toBooleanStrict() }.orElse(false)
+if (requireReleaseSigning.get()) {
+    val missing = listOf("UMBRA_KEYSTORE", "UMBRA_KEYSTORE_PASSWORD", "UMBRA_KEY_PASSWORD").filter { System.getenv(it).isNullOrBlank() }
+    check(missing.isEmpty()) { "Production signing is required. Configure: ${missing.joinToString()}" }
+    check(file(System.getenv("UMBRA_KEYSTORE")).isFile) { "The configured production signing keystore is unavailable" }
+}
+
 android {
     namespace = "app.umbra.agent"
 
     defaultConfig {
         applicationId = "app.umbra.agent"
         // `-Pumbra.versionCode=… -Pumbra.versionName=…` override them, for testing the updater with a later build.
-        versionCode = providers.gradleProperty("umbra.versionCode").orNull?.toInt() ?: 12
-        versionName = providers.gradleProperty("umbra.versionName").orNull ?: "0.4.5"
+        versionCode = providers.gradleProperty("umbra.versionCode").orNull?.toInt() ?: 15
+        versionName = providers.gradleProperty("umbra.versionName").orNull ?: "0.6.1"
     }
 
     // Releases are signed with the key in UMBRA_KEYSTORE (see .github/workflows/release.yml); without it the
@@ -188,6 +195,8 @@ extensions.configure<ApplicationAndroidComponentsExtension> {
 }
 
 dependencies {
+    implementation(libs.jsoup)
+    implementation(libs.re2j)
     implementation(project(":core:model"))
     implementation(project(":core:safety"))
     implementation(project(":core:decision"))
@@ -214,6 +223,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    testImplementation(libs.okhttp.mockwebserver)
     implementation(libs.zxing.core)
     implementation("com.caverock:androidsvg-aar:1.4")
     implementation(libs.kyant.backdrop)

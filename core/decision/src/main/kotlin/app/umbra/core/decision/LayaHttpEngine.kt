@@ -42,6 +42,8 @@ class LayaHttpEngine(
     /** Laya reads ~512-1024 tokens; keep the state well inside that. */
     private val maxStateChars: Int = 3_000,
     private val json: Json = UmbraJson,
+    /** The sidecar's `LAYA_API_KEY`, sent as a bearer token so no other local process can use or probe it. */
+    private val apiKey: () -> String? = { null },
 ) : DecisionEngine {
     override val name: String = "laya"
 
@@ -49,8 +51,15 @@ class LayaHttpEngine(
 
     override suspend fun isAvailable(): Boolean =
         try {
-            // Any answer below 500 means a server is there: the README does not promise a /health route, and a 404 or 401 still proves it is up.
-            client.newCall(Request.Builder().url(base.newBuilder().addPathSegments("health").build()).get().build()).await().use { it.code < 500 }
+            // laya-serve answers GET /health with {"status":"ok"}; with a key set, only an authorized caller also gets
+            // the checkpoint detail. A 401/404 or another server on the port is not Laya (security review G21).
+            val key = apiKey()
+            client.newCall(authorized(Request.Builder().url(base.newBuilder().addPathSegments("health").build()).get(), key).build()).await().use { response ->
+                if (!response.isSuccessful) return@use false
+                val health = withContext(Dispatchers.IO) { response.body.string() }.take(64_000)
+                val obj = runCatching { json.parseToJsonElement(health) as? JsonObject }.getOrNull() ?: return@use false
+                (obj["status"] as? JsonPrimitive)?.contentOrNull == "ok" && (key == null || obj.containsKey("loaded"))
+            }
         } catch (e: IOException) {
             false
         } catch (e: IllegalStateException) {
@@ -60,7 +69,7 @@ class LayaHttpEngine(
     override suspend fun decide(request: DecisionRequest): DecisionResponse {
         val started = System.nanoTime()
         val body = json.encodeToString(JsonObject.serializer(), wireRequest(request)).toRequestBody(JSON)
-        val http = Request.Builder().url(base.newBuilder().addPathSegments("v1/systemone").build()).post(body).build()
+        val http = authorized(Request.Builder().url(base.newBuilder().addPathSegments("v1/systemone").build()).post(body), apiKey()).build()
         val text = try {
             client.newCall(http).await().use { response ->
                 val payload = withContext(Dispatchers.IO) { response.body.string() }
@@ -82,6 +91,9 @@ class LayaHttpEngine(
         val answers = parseAnswers(parsed, request)
         return DecisionResponse(answers, name, (System.nanoTime() - started) / 1_000_000)
     }
+
+    private fun authorized(builder: Request.Builder, key: String?): Request.Builder =
+        if (key == null) builder else builder.header("Authorization", "Bearer $key")
 
     // ---- request ----
 

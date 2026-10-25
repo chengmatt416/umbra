@@ -113,6 +113,7 @@ import app.umbra.agent.ui.porcelain.PIcons
 import app.umbra.agent.ui.porcelain.hasCjk
 import app.umbra.agent.ui.sessions.SessionsScreen
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 
 /** A place in the app. [group] files the original pages under the Developer hub (Dev mode). */
 enum class Dest(val route: String, @param:StringRes val title: Int, val icon: IconSpec, @param:StringRes val group: Int? = null) {
@@ -165,6 +166,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
     val context = LocalContext.current
     val nav = rememberNavController()
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
+    val onboarding = !prefs.onboarded && prefs.providers.isEmpty()
 
     fun go(dest: Dest) {
         // The old Inbox is the "needs you" filter of Home.
@@ -186,15 +188,25 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
     }
 
     var stopAll by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
-    LaunchedEffect(openSession, openPage) {
+    LaunchedEffect(openSession, openPage, onboarding) {
+        if (openSession == null && openPage == app.umbra.agent.AgentService.PAGE_STOP_ALL) {
+            stopAll = true
+            onOpened()
+            return@LaunchedEffect
+        }
+        if (onboarding || openSession == null && openPage == null) return@LaunchedEffect
+        nav.currentBackStackEntryFlow.first()
         if (openSession != null) {
             openSessionNow(openSession)
             onOpened()
         } else if (openPage != null) {
-            if (openPage == app.umbra.agent.AgentService.PAGE_STOP_ALL) stopAll = true
-            else if (openPage.startsWith("agent/")) nav.navigate(openPage) { launchSingleTop = true }
+            if (openPage.startsWith("agent/")) {
+                try { nav.navigate(openPage) { launchSingleTop = true } }
+                catch (_: IllegalArgumentException) { go(Dest.Home) }
+            }
             else if (openPage.startsWith("messages/") && app.umbra.agent.agents.Channels.app(openPage.removePrefix("messages/")) != null) nav.navigate(openPage) { launchSingleTop = true }
             else if (openPage.matches(Regex("workspace/[A-Za-z0-9][A-Za-z0-9._-]{0,79}"))) nav.navigate(openPage) { launchSingleTop = true }
+            else if (openPage == "proactive-agents") nav.navigate(openPage) { launchSingleTop = true }
             else if (openPage == "new-coding" || openPage == "new-agent") {
                 container.ui.homeSheet.value = openPage.removePrefix("new-")
                 nav.navigate(Dest.Home.route) { popUpTo(Dest.Home.route) { inclusive = false }; launchSingleTop = true }
@@ -255,9 +267,8 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
     LiquidLightSource(active = (liquid || appleGlass) && Theme.current.motion && androidx.compose.runtime.remember(Theme.current) { app.umbra.agent.ui.porcelain.motionAllowed(view.context) })
     // dialogs and sheets are glass in the app's own window: the whole app is recorded live for them to refract
     val appGlass = rememberLayerBackdrop()
-    val styled = !Theme.current.porcelain
+    val styled = !Theme.current.plain
     // Someone who used the app before this design has providers already; first-run setup is for a new install.
-    val onboarding = !prefs.onboarded && prefs.providers.isEmpty()
     Box(Modifier.fillMaxSize()) {
     Box(Modifier.fillMaxSize().then(if (styled) Modifier.layerBackdrop(appGlass) else Modifier)) {
     PageBackdrop(if (liquid) Modifier.layerBackdrop(pageGlass) else Modifier)
@@ -268,10 +279,11 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
           androidx.compose.runtime.CompositionLocalProvider(LocalOpenEmergency provides openEmergency, LocalChromeBottom provides 0.dp) {
             NavHost(
                 nav, startDestination = Dest.Home.route,
-                // Liquid pages surface like a drop rising to meet the glass; Apple pushes in from the right on a
+                // Ink pushes along a shared horizontal axis (a short spring slide with a cross-fade); Liquid pages surface like a drop rising to meet the glass; Apple pushes in from the right on a
                 // critically damped spring; Porcelain keeps its cross-fade.
                 enterTransition = {
                     when {
+                        Theme.mono -> slideInHorizontally(app.umbra.agent.ui.porcelain.Motion.page) { it / 7 } + fadeIn(tween(220, delayMillis = 30))
                         Theme.apple -> slideInHorizontally(appleSlide) { it }
                         Theme.liquid -> fadeIn(tween(240)) + scaleIn(spring(dampingRatio = 0.72f, stiffness = 420f), initialScale = 0.94f)
                         else -> fadeIn(tween(260))
@@ -279,6 +291,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 },
                 exitTransition = {
                     when {
+                        Theme.mono -> slideOutHorizontally(app.umbra.agent.ui.porcelain.Motion.page) { -it / 14 } + fadeOut(tween(150))
                         Theme.apple -> slideOutHorizontally(appleSlide) { -it / 3 } + fadeOut(tween(380), targetAlpha = 0.6f)
                         Theme.liquid -> fadeOut(tween(160)) + scaleOut(tween(220), targetScale = 1.03f)
                         else -> fadeOut(tween(200))
@@ -286,6 +299,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 },
                 popEnterTransition = {
                     when {
+                        Theme.mono -> slideInHorizontally(app.umbra.agent.ui.porcelain.Motion.page) { -it / 14 } + fadeIn(tween(220, delayMillis = 30))
                         Theme.apple -> slideInHorizontally(appleSlide) { -it / 3 } + fadeIn(tween(380), initialAlpha = 0.6f)
                         Theme.liquid -> fadeIn(tween(240)) + scaleIn(spring(dampingRatio = 0.72f, stiffness = 420f), initialScale = 1.04f)
                         else -> fadeIn(tween(260))
@@ -293,6 +307,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 },
                 popExitTransition = {
                     when {
+                        Theme.mono -> slideOutHorizontally(app.umbra.agent.ui.porcelain.Motion.page) { it / 7 } + fadeOut(tween(150))
                         Theme.apple -> slideOutHorizontally(appleSlide) { it }
                         Theme.liquid -> fadeOut(tween(160)) + scaleOut(tween(220), targetScale = 0.94f)
                         else -> fadeOut(tween(200))
@@ -300,11 +315,12 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 },
             ) {
                 val back: () -> Unit = { if (!nav.popBackStack()) go(Dest.Home) }
-                composable(Dest.Home.route) { HomeScreen(onOpenSession = ::openSessionNow, onOpenAgent = { nav.navigate("agent/$it") { launchSingleTop = true } }, entries = entries, onAccounts = { go(Dest.Accounts) }, onComputers = { go(Dest.Nodes) }) }
+                composable(Dest.Home.route) { HomeScreen(onOpenSession = ::openSessionNow, onOpenAgent = { nav.navigate("agent/$it") { launchSingleTop = true } }, entries = entries, onAccounts = { go(Dest.Accounts) }, onComputers = { go(Dest.Nodes) }, onOpenProactive = { id, tab -> nav.navigate("agent/$id/briefing?focus=" + (if (tab == 0) "goals" else if (tab == 1) "suggestions" else "brief")) { launchSingleTop = true } }) }
                 // Agents (docs/design/agents-2026-10.md, Figma 11): the chat, the agent's page and what hangs off it.
                 composable("agent/{id}") { e ->
                     val id = e.arguments?.getString("id").orEmpty()
-                    app.umbra.agent.ui.agents.AgentChatScreen(id, onBack = back, onProfile = { nav.navigate("agent/$id/profile") }, onOpenSession = ::openSessionNow)
+                    app.umbra.agent.ui.agents.AgentChatScreen(id, onBack = back, onProfile = { nav.navigate("agent/$id/profile") }, onOpenSession = ::openSessionNow,
+                        onProactive = { tab -> nav.navigate("agent/$id/briefing?focus=" + (if (tab == 1) "suggestions" else "brief")) { launchSingleTop = true } })
                 }
                 composable("agent/{id}/profile") { e ->
                     app.umbra.agent.ui.agents.AgentProfileScreen(
@@ -315,6 +331,17 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 composable("agent/{id}/soul") { e -> app.umbra.agent.ui.agents.SoulScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
                 composable("agent/{id}/memory") { e -> app.umbra.agent.ui.agents.MemoryScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
                 composable("agent/{id}/timers") { e -> app.umbra.agent.ui.agents.TimersScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
+                composable("agent/{id}/proactivity?tab={tab}", arguments = listOf(androidx.navigation.navArgument("tab") { type = androidx.navigation.NavType.IntType; defaultValue = 2 })) { e ->
+                    app.umbra.agent.ui.agents.ProactiveScreen(e.arguments?.getString("id").orEmpty(), onBack = back, onOpenSession = ::openSessionNow, initialTab = e.arguments?.getInt("tab") ?: 2)
+                }
+                composable("agent/{id}/briefing?focus={focus}", arguments = listOf(androidx.navigation.navArgument("focus") { type = androidx.navigation.NavType.StringType; defaultValue = "brief" })) { e ->
+                    val id = e.arguments?.getString("id").orEmpty()
+                    app.umbra.agent.ui.agents.BriefingScreen(id, onBack = back, onOpenSession = ::openSessionNow,
+                        onSettings = { nav.navigate("agent/$id/proactivity") { launchSingleTop = true } }, focus = e.arguments?.getString("focus") ?: "brief")
+                }
+                composable("proactive-agents") {
+                    app.umbra.agent.ui.agents.ProactiveAgentsScreen(onBack = back, onAgentSettings = { nav.navigate("agent/$it/proactivity") }, onBriefing = { nav.navigate("agent/$it/briefing") })
+                }
                 composable("agent/{id}/wake") { e -> app.umbra.agent.ui.agents.WakeScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
                 composable("agent/{id}/channels") { e -> app.umbra.agent.ui.agents.ChannelsScreen(e.arguments?.getString("id").orEmpty(), onBack = back, onGo = { route -> nav.navigate(route) }) }
                 composable("agent/{id}/telegram") { e -> app.umbra.agent.ui.agents.TelegramScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
@@ -351,7 +378,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 composable(Dest.Diagnostics.route) { DiagnosticsScreen(onBack = back) }
                 composable(Dest.Appearance.route) { app.umbra.agent.ui.AppearanceScreen(onBack = back) }
                 composable(Dest.Reference.route) { app.umbra.agent.ui.reference.ReferenceScreen(onBack = back) }
-                composable(Dest.Settings.route) { app.umbra.agent.ui.settings.SettingsScreen(onBack = back, onGo = ::go) }
+                composable(Dest.Settings.route) { app.umbra.agent.ui.settings.SettingsScreen(onBack = back, onGo = ::go, onRoute = { nav.navigate(it) }) }
                 composable(Dest.MoreSettings.route) { app.umbra.agent.ui.MoreSettingsScreen(onBack = back, onGo = ::go) }
             }
           }

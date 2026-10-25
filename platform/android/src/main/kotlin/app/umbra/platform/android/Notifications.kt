@@ -85,18 +85,26 @@ class AndroidNotificationBackend(private val context: Context) : NotificationBac
     override suspend fun open(key: String): Boolean = withContext(Dispatchers.Default) {
         val sbn = find(key) ?: return@withContext false
         val content = sbn.notification.contentIntent ?: return@withContext false
-        send(content).also { if (it && sbn.notification.flags and Notification.FLAG_AUTO_CANCEL != 0) listener().cancelNotification(key) }
+        app.umbra.platform.api.DispatchFence.checkCurrent()
+        val sent = send(content)
+        if (sent && sbn.notification.flags and Notification.FLAG_AUTO_CANCEL != 0) {
+            app.umbra.platform.api.DispatchFence.checkCurrent()
+            listener().cancelNotification(key)
+        }
+        sent
     }
 
     override suspend fun dismiss(key: String): Boolean = withContext(Dispatchers.Default) {
         val sbn = find(key) ?: return@withContext false
         if (!sbn.isClearable) return@withContext false
+        app.umbra.platform.api.DispatchFence.checkCurrent()
         listener().cancelNotification(key)
         true
     }
 
     override suspend fun pressAction(key: String, index: Int): Boolean = withContext(Dispatchers.Default) {
         val action = find(key)?.notification?.actions?.getOrNull(index) ?: return@withContext false
+        app.umbra.platform.api.DispatchFence.checkCurrent()
         action.actionIntent?.let(::send) ?: false
     }
 
@@ -106,6 +114,7 @@ class AndroidNotificationBackend(private val context: Context) : NotificationBac
         val results = Bundle().also { b -> inputs.forEach { b.putCharSequence(it.resultKey, text) } }
         val fillIn = Intent()
         RemoteInput.addResultsToIntent(inputs, fillIn, results)
+        app.umbra.platform.api.DispatchFence.checkCurrent()
         action.actionIntent?.let { send(it, fillIn) } ?: false
     }
 }

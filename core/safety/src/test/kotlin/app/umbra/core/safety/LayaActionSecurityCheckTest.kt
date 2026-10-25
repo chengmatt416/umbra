@@ -72,7 +72,7 @@ class LayaActionSecurityCheckTest {
             assertTrue(it.state.length <= 3_000, "State length: ${it.state.length}")
             assertTrue(it.state.contains("Untrusted recent tool output:"))
             assertTrue(it.state.contains("Untrusted visible context:"))
-            assertEquals(setOf("risk", "category", "injection"), it.questions.keys)
+            assertEquals(setOf("risk", "category", "injection", "outbound"), it.questions.keys)
             response(RiskLevel.NONE)
         })
         val large = "x".repeat(100_000)

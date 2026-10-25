@@ -21,6 +21,7 @@ class BridgeController(private val container: AppContainer, private val control:
 
     @Synchronized
     fun start(requestedToken: String? = null, requestedPort: Int = 0): Int {
+        if (server != null && requestedToken != null && requestedToken == token && (requestedPort == 0 || requestedPort == port)) return port
         stop()
         val t = requestedToken?.takeIf { it.length >= 16 } ?: randomToken()
         val s = ToolBridgeServer(t, container::toolHost, requestedPort, control = control)

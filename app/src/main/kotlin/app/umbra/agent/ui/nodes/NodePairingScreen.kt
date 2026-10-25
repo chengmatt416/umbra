@@ -38,9 +38,9 @@ import kotlinx.coroutines.launch
 internal fun NodePairingScreen(onBack: () -> Unit, onPaired: (String) -> Unit) {
     val context = LocalContext.current
     val view = androidx.compose.ui.platform.LocalView.current
-    val ink = Color(0xffeef3ec)
-    val sub = Color(0xff93a595)
-    val fieldColors = OutlinedTextFieldDefaults.colors(focusedTextColor = ink, unfocusedTextColor = ink, focusedLabelColor = ink, unfocusedLabelColor = sub, focusedBorderColor = Color(0xff9dbba1), unfocusedBorderColor = sub)
+    val ink = pcHue(0xFFeef3ec)
+    val sub = pcHue(0xFF93a595)
+    val fieldColors = OutlinedTextFieldDefaults.colors(focusedTextColor = ink, unfocusedTextColor = ink, focusedLabelColor = ink, unfocusedLabelColor = sub, focusedBorderColor = pcHue(0xFF9dbba1), unfocusedBorderColor = sub)
     DisposableEffect(view) {
         val window = (context as? android.app.Activity)?.window
         val controller = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
@@ -67,12 +67,12 @@ internal fun NodePairingScreen(onBack: () -> Unit, onPaired: (String) -> Unit) {
         runCatching { NodeInvitation.parse(value) }.onSuccess { invitation = it; error = null }.onFailure { error = it.message }
     }
     androidx.activity.compose.BackHandler(onBack = onBack)
-    Box(Modifier.fillMaxSize().background(Color(0xff0e1511)).statusBarsPadding().navigationBarsPadding()) {
+    Box(Modifier.fillMaxSize().background(pcHue(0xFF0e1511)).statusBarsPadding().navigationBarsPadding()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 26.dp, vertical = 56.dp), verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
             if (!manual) {
-                Box(Modifier.size(260.dp).clip(RoundedCornerShape(28.dp)).background(Color(0xff0e1511)).border(3.dp, Color(0xff9dbba1), RoundedCornerShape(28.dp)), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(260.dp).clip(RoundedCornerShape(28.dp)).background(pcHue(0xFF0e1511)).border(3.dp, pcHue(0xFF9dbba1), RoundedCornerShape(28.dp)), contentAlignment = Alignment.Center) {
                     when {
-                        invitation != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) { PIcon(PIcons.check, tint = Color(0xff9dbba1), size = 48.dp); Text(stringResource(R.string.rn_found, invitation!!.name), color = Color(0xffeef3ec), modifier = Modifier.padding(18.dp)) }
+                        invitation != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) { PIcon(PIcons.check, tint = pcHue(0xFF9dbba1), size = 48.dp); Text(stringResource(R.string.rn_found, invitation!!.name), color = pcHue(0xFFeef3ec), modifier = Modifier.padding(18.dp)) }
                         permission && active -> NodeQrCamera(onCode = ::scanned, onError = { error = it })
                         else -> NodePill(stringResource(R.string.rn_camera), { request.launch(Manifest.permission.CAMERA) }, Modifier.padding(20.dp), dark = true)
                     }
@@ -80,7 +80,7 @@ internal fun NodePairingScreen(onBack: () -> Unit, onPaired: (String) -> Unit) {
                 Text(stringResource(R.string.rn_aim), color = ink, fontSize = 17.sp)
             }
             error?.let { Callout(it, Tone.Danger) }
-            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color(0xff121815)).padding(18.dp)) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(pcHue(0xFF121815)).padding(18.dp)) {
                 val invite = invitation
                 if (invite != null) {
                     Text(stringResource(R.string.rn_found, invite.name), fontSize = 16.sp, color = ink)

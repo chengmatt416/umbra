@@ -22,11 +22,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.umbra.agent.R
+import app.umbra.agent.container
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.PConfirm
 import app.umbra.agent.ui.porcelain.PField
@@ -113,6 +115,7 @@ fun rememberLabel(scope: RememberScope) = when (scope) {
  */
 @Composable
 fun ApprovalPanel(request: ApprovalRequest, sessionTitle: String?, onDecision: (ApprovalDecision) -> Unit, modifier: Modifier = Modifier) {
+    val container = LocalContext.current.container
     val level = request.assessment.level
     val gesture = approveGesture(level, ApprovalSurface.FULL)
     val offered = offeredRememberScope(request, ApprovalSurface.FULL)
@@ -139,11 +142,17 @@ fun ApprovalPanel(request: ApprovalRequest, sessionTitle: String?, onDecision: (
         Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             PButton(stringResource(R.string.appr_deny), { onDecision(ApprovalDecision.Denied("denied by the user")) }, Modifier.weight(1f), style = ButtonStyle.Alt)
             PButton(
-                stringResource(R.string.appr_approve_once),
+                stringResource(if (request.details["checkout_service"] != null) R.string.checkout_approve else R.string.appr_approve_once),
                 { if (gesture == ApproveGesture.CONFIRM) confirming = true else onDecision(ApprovalDecision.Approved()) },
                 Modifier.weight(1f),
                 style = if (level >= RiskLevel.HIGH) ButtonStyle.Warn else ButtonStyle.Primary,
             )
+        }
+        request.details["checkout_resource"]?.let { resource ->
+            PButton(stringResource(R.string.checkout_take_over), {
+                container.takeOver(resource, request.sessionId)
+                onDecision(ApprovalDecision.Denied("the user took over checkout"))
+            }, Modifier.fillMaxWidth().padding(top = 8.dp), style = ButtonStyle.Alt)
         }
         if (offered != null) {
             PButton(stringResource(rememberLabel(offered)), { if (offered == RememberScope.THIS_COMMAND_FOREVER) confirmPrefix = true else onDecision(ApprovalDecision.Approved(offered)) }, Modifier.fillMaxWidth().padding(top = 8.dp), style = ButtonStyle.Ghost, tiny = true)

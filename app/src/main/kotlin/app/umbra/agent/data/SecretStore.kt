@@ -66,8 +66,19 @@ class SecretStore(context: Context, file: String = "secrets") {
         version.value++
     }
 
+    fun putDurable(name: String, value: String) {
+        require(NAME.matches(name) && value.isNotEmpty())
+        check(prefs.edit().putString(name, encrypt(value)).commit()) { "The encrypted credential could not be saved" }
+        version.value++
+    }
+
     fun remove(name: String) {
         prefs.edit().remove(name).apply()
+        version.value++
+    }
+
+    fun removeDurable(name: String) {
+        check(prefs.edit().remove(name).commit()) { "The encrypted credential could not be removed" }
         version.value++
     }
 

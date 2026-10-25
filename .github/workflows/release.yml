@@ -10,17 +10,38 @@ permissions:
   contents: write
 
 jobs:
+  signing:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require signing configuration before building a published release
+        env:
+          REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          UMBRA_KEYSTORE_B64: ${{ secrets.UMBRA_KEYSTORE_B64 }}
+          UMBRA_KEYSTORE_PASSWORD: ${{ secrets.UMBRA_KEYSTORE_PASSWORD }}
+          UMBRA_KEY_PASSWORD: ${{ secrets.UMBRA_KEY_PASSWORD }}
+        run: |
+          if [[ "$REQUIRE_SIGNING" != "true" ]]; then exit 0; fi
+          for required in UMBRA_KEYSTORE_B64 UMBRA_KEYSTORE_PASSWORD UMBRA_KEY_PASSWORD; do
+            if [[ -z "${!required}" ]]; then
+              echo "::error::Published releases require $required"
+              exit 1
+            fi
+          done
+
   # The Linux environment the APK carries: Debian + omp, and the offline package repository for the add-ons.
   rootfs:
+    needs: signing
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
+    env:
+      LINUX_VERSION: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
-      - run: runtime-build/rootfs/build.sh ${{ github.ref_name }}
+      - run: runtime-build/rootfs/build.sh "$LINUX_VERSION"
       - name: Collect the distributed runtime's original notices
         run: |
-          python3 scripts/third-party-notices.py --rootfs build/rootfs/umbra-rootfs-${{ github.ref_name }}-arm64.tar.xz --packs build/rootfs/umbra-packs-${{ github.ref_name }}-arm64.tar --output build/rootfs/legal
-          tar -czf build/rootfs/umbra-runtime-notices-${{ github.ref_name }}.tar.gz -C build/rootfs/legal .
+          python3 scripts/third-party-notices.py --rootfs "build/rootfs/umbra-rootfs-${LINUX_VERSION}-arm64.tar.xz" --packs "build/rootfs/umbra-packs-${LINUX_VERSION}-arm64.tar" --output build/rootfs/legal
+          tar -czf "build/rootfs/umbra-runtime-notices-${LINUX_VERSION}.tar.gz" -C build/rootfs/legal .
       - uses: actions/upload-artifact@v4
         with:
           name: rootfs
@@ -34,6 +55,9 @@ jobs:
     needs: rootfs
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      LINUX_VERSION: ${{ github.ref_name }}
+      REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -61,12 +85,26 @@ jobs:
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/umbra.jks"
             echo "UMBRA_KEYSTORE=$RUNNER_TEMP/umbra.jks" >> "$GITHUB_ENV"
           fi
-      - run: ./gradlew :app:assembleRelease -Pumbra.linuxVersion=${{ github.ref_name }}
+      - run: ./gradlew :app:assembleRelease "-Pumbra.linuxVersion=$LINUX_VERSION" "-Pumbra.requireReleaseSigning=$REQUIRE_SIGNING"
         env:
           UMBRA_KEYSTORE_PASSWORD: ${{ secrets.UMBRA_KEYSTORE_PASSWORD }}
           UMBRA_KEY_ALIAS: ${{ secrets.UMBRA_KEY_ALIAS }}
           UMBRA_KEY_PASSWORD: ${{ secrets.UMBRA_KEY_PASSWORD }}
-      - run: cp app/build/outputs/apk/release/app-release.apk umbra-${{ github.ref_name }}.apk && sha256sum umbra-${{ github.ref_name }}.apk > umbra-${{ github.ref_name }}.apk.sha256
+      - name: Verify the published APK matches its version tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          metadata = json.loads(Path('app/build/outputs/apk/release/output-metadata.json').read_text())
+          outputs = metadata.get('elements', [])
+          expected = os.environ['RELEASE_TAG'].removeprefix('v')
+          if not outputs or any(row.get('versionName') != expected for row in outputs):
+              raise SystemExit('APK versionName must match the release tag; update app/build.gradle.kts before publishing')
+          PYTHON
+      - run: cp app/build/outputs/apk/release/app-release.apk "umbra-${LINUX_VERSION}.apk" && sha256sum "umbra-${LINUX_VERSION}.apk" > "umbra-${LINUX_VERSION}.apk.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: apk

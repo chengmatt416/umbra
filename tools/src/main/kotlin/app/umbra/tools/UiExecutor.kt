@@ -69,9 +69,9 @@ internal class UiExecutor(private val env: PipelineEnv) {
         is Operation.PressKey -> pressKey(c, op)
         is Operation.Global -> global(c, op)
         is Operation.LaunchApp -> launchApp(c, op)
-        is Operation.StopApp -> stopApp(op)
+        is Operation.StopApp -> stopApp(c, op)
         is Operation.SwitchApp -> switchApp(c, op)
-        is Operation.Notifications -> notifications(op)
+        is Operation.Notifications -> notifications(c, op)
         else -> OpOutcome.unsupported("${op.name} is not a UI operation")
     }
 
@@ -171,7 +171,7 @@ internal class UiExecutor(private val env: PipelineEnv) {
                 }
                 if (UiFeature.GESTURES in ui.features) {
                     add(Strategy(if (taps == 2) "gesture_double_tap" else "gesture_tap", ui.name) {
-                        repeat(taps) { i -> if (i > 0) delay(60); ui.tap(c.displayId, point) }
+                        repeat(taps) { i -> if (i > 0) delay(60); c.checkDispatch(); ui.tap(c.displayId, point) }
                         StrategyOutcome.Done()
                     })
                 }
@@ -435,9 +435,11 @@ internal class UiExecutor(private val env: PipelineEnv) {
                             ui.tap(c.displayId, target.let { (n, t) -> visibleCenter(n, t) })
                         }
                         if (op.clearFirst) {
+                            c.checkDispatch()
                             ui.key(c.displayId, "KEYCODE_MOVE_END")
-                            repeat(minOf(node?.text?.length ?: 0, 200)) { ui.key(c.displayId, "KEYCODE_DEL") }
+                            repeat(minOf(node?.text?.length ?: 0, 200)) { c.checkDispatch(); ui.key(c.displayId, "KEYCODE_DEL") }
                         }
+                        c.checkDispatch()
                         ui.typeText(c.displayId, op.text)
                         StrategyOutcome.Done()
                     })
@@ -447,12 +449,20 @@ internal class UiExecutor(private val env: PipelineEnv) {
             if (!op.secret && clip != null && node != null && ownBackend != null && UiFeature.NODE_ACTIONS in ownBackend.features && clip.isAvailable()) {
                 add(Strategy("clipboard_paste", clip.name) {
                     val before = tryOrNull { clip.get() }
+                    c.checkDispatch()
                     clip.set(op.text)
-                    ownBackend.performAction(node, NodeAction.FOCUS)
-                    if (op.clearFirst) ownBackend.performAction(node, NodeAction.SET_TEXT, NodeActionArgs(text = ""))
-                    val pasted = ownBackend.performAction(node, NodeAction.PASTE)
-                    if (before != null) clip.set(before)
-                    if (pasted) StrategyOutcome.Done() else StrategyOutcome.Refused("the field refused PASTE")
+                    try {
+                        c.checkDispatch()
+                        ownBackend.performAction(node, NodeAction.FOCUS)
+                        if (op.clearFirst) {
+                            c.checkDispatch()
+                            ownBackend.performAction(node, NodeAction.SET_TEXT, NodeActionArgs(text = ""))
+                        }
+                        c.checkDispatch()
+                        if (ownBackend.performAction(node, NodeAction.PASTE)) StrategyOutcome.Done() else StrategyOutcome.Refused("the field refused PASTE")
+                    } finally {
+                        if (before != null) clip.set(before)
+                    }
                 })
             }
             if (ShellInput.canInputText(op.text)) {
@@ -508,8 +518,8 @@ internal class UiExecutor(private val env: PipelineEnv) {
                 val text = op.text ?: return OpOutcome.fail(ErrorCode.INVALID_ARGUMENTS, "clipboard set needs text.")
                 val gui = backends.linuxGui
                 when {
-                    c.environment == Environment.LINUX_GUI && gui != null -> gui.clipboardSet(text)
-                    clip != null && clip.isAvailable() -> clip.set(text)
+                    c.environment == Environment.LINUX_GUI && gui != null -> { c.checkDispatch(); gui.clipboardSet(text) }
+                    clip != null && clip.isAvailable() -> { c.checkDispatch(); clip.set(text) }
                     else -> return OpOutcome.unavailable("The clipboard is not accessible.")
                 }
                 OpOutcome.ok("Set the clipboard (${text.length} characters)")
@@ -577,6 +587,7 @@ internal class UiExecutor(private val env: PipelineEnv) {
     private suspend fun launchApp(c: OpContext, op: Operation.LaunchApp): OpOutcome {
         val apps = backends.apps?.takeIf { it.isAvailable() } ?: return OpOutcome.unavailable("Launching apps needs shell access (Shizuku or root) or the accessibility service.")
         val started = env.clock.nowMs()
+        c.checkDispatch()
         val outcome = apps.launch(AppLaunch(op.packageName, op.activity, op.intentAction, op.uri, op.extras, c.displayId))
         if (!outcome.started) {
             return OpOutcome.fail(ErrorCode.NOT_FOUND, "Could not launch ${op.packageName}: ${outcome.message.ifBlank { "the system refused" }}. Check the package name with the packages tool.", retryable = false)
@@ -626,15 +637,18 @@ internal class UiExecutor(private val env: PipelineEnv) {
         }
     }
 
-    private suspend fun stopApp(op: Operation.StopApp): OpOutcome {
+    private suspend fun stopApp(c: OpContext, op: Operation.StopApp): OpOutcome {
         val apps = backends.apps?.takeIf { it.isAvailable() } ?: return OpOutcome.unavailable("Stopping apps needs shell access (Shizuku or root).")
+        c.checkDispatch()
         apps.stop(op.packageName, op.force)
         return OpOutcome.ok("Stopped ${op.packageName}", backend = apps.name)
     }
 
     private suspend fun switchApp(c: OpContext, op: Operation.SwitchApp): OpOutcome {
         val apps = backends.apps?.takeIf { it.isAvailable() } ?: return OpOutcome.unavailable("Switching apps needs shell access (Shizuku or root).")
+        c.checkDispatch()
         if (apps.bringToFront(op.packageName, c.displayId)) return OpOutcome.ok("Switched to ${op.packageName}", backend = apps.name)
+        c.checkDispatch()
         val launched = apps.launch(AppLaunch(packageName = op.packageName, displayId = c.displayId))
         return if (launched.started) OpOutcome.ok("${op.packageName} was not running; launched it", backend = apps.name)
         else OpOutcome.fail(ErrorCode.NOT_FOUND, "${op.packageName} is not running and could not be launched: ${launched.message}")
@@ -642,9 +656,10 @@ internal class UiExecutor(private val env: PipelineEnv) {
 
     // ---- notifications ----
 
-    private suspend fun notifications(op: Operation.Notifications): OpOutcome {
+    private suspend fun notifications(c: OpContext, op: Operation.Notifications): OpOutcome {
         val nb = backends.notifications?.takeIf { it.isAvailable() }
             ?: return OpOutcome.unavailable("Reading notifications needs the notification listener permission.")
+        c.checkDispatch()
         return when (op.action) {
             NotificationAction.LIST -> {
                 val list = nb.list()

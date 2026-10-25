@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.current
 
+import app.umbra.agent.ui.porcelain.inkItem
 import app.umbra.runtime.omp.branch
 import app.umbra.agent.ui.sessionsFlow
 import android.content.ClipData
@@ -463,12 +464,13 @@ private fun ChatList(
     val context = LocalContext.current
     val resources = androidx.compose.ui.platform.LocalResources.current
     val list = rememberLazyListState()
+    val secureInput by container.credentialHandoff.pending.collectAsStateWithLifecycle()
     // Simple leaves out what is for developers: system notices and command output.
     val items = conversation.items.filter { it !is ChatItem.ToolResult && !(simple && (it is ChatItem.Custom || it is ChatItem.CommandOutput)) }
     val resultImages = remember(conversation.items) { conversation.items.filterIsInstance<ChatItem.ToolResult>().filter { it.images.isNotEmpty() }.associate { it.toolCallId to it.images } }
     val atBottom by remember { derivedStateOf { list.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= list.layoutInfo.totalItemsCount - 2 } ?: true } }
     val streamedLength = (conversation.items.lastOrNull() as? ChatItem.Assistant)?.let { a -> a.blocks.sumOf { b -> (b as? app.umbra.core.orchestrator.Block.Text)?.text?.length ?: 0 } } ?: 0
-    LaunchedEffect(items.size, approvals.size, questions.size, streamedLength / 80, conversation.tools.size) {
+    LaunchedEffect(items.size, approvals.size, questions.size, streamedLength / 80, conversation.tools.size, secureInput?.id) {
         if (atBottom && list.layoutInfo.totalItemsCount > 0) list.animateScrollToItem(list.layoutInfo.totalItemsCount - 1)
     }
     val actions = remember(session.id) {
@@ -485,7 +487,7 @@ private fun ChatList(
                 if (session.request.isNotBlank() && session.state != SessionState.CREATED) Subtle(stringResource(R.string.cur_request, session.request), Modifier.padding(top = 6.dp))
             }
         }
-        items(items, key = { it.key }) { item ->
+        items(items, key = { it.key }) { item -> androidx.compose.foundation.layout.Box(inkItem(placement = false)) {
             when (item) {
                 is ChatItem.User -> UserMessage(item, actions)
                 is ChatItem.Assistant -> AssistantMessage(item, conversation.tools, resultImages, actions)
@@ -497,14 +499,17 @@ private fun ChatList(
                 is ChatItem.Notice -> NoticeLine(item)
                 is ChatItem.ToolResult -> Unit
             }
-        }
+        } }
         if (session.state == SessionState.COMPLETED && session.kind != app.umbra.core.session.SessionKind.AGENT) {
-            session.resultSummary?.let { summary -> item(key = "result-summary") {
+            // The summary is the final answer, saved: shown when the conversation itself does not already end with it.
+            val lastAnswer = items.lastOrNull { it is ChatItem.Assistant && it.text.isNotBlank() } as? ChatItem.Assistant
+            session.resultSummary?.takeIf { s -> lastAnswer == null || !lastAnswer.text.trim().startsWith(s.trim().take(200)) }?.let { summary -> item(key = "result-summary") {
                 app.umbra.agent.ui.porcelain.PCard {
                     app.umbra.agent.ui.porcelain.Kicker(stringResource(R.string.task_result_summary))
-                    Text(summary, color = P.ink, modifier = Modifier.padding(top = 6.dp))
+                    app.umbra.agent.ui.MarkdownText(summary, color = P.ink, modifier = Modifier.padding(top = 6.dp))
                 }
             } }
+            if (session.attachments.containsKey(app.umbra.core.orchestrator.CompletionEvidence.KEY)) item(key = "deliverable-receipt") { DeliverableCard(session) }
         }
         if (session.state == SessionState.RUNNING) item(key = "orb-activity") {
             val orb = app.umbra.agent.ui.porcelain.thinkingOrbState(conversation)
@@ -519,8 +524,9 @@ private fun ChatList(
         }
         if (conversation.compacting) item(key = "compacting") { Callout(stringResource(R.string.cur_compacting), Tone.Neutral) }
         if (live != null) item(key = "live") { LiveDisplayCard(session, live, onExpand) }
-        items(approvals, key = { it.id }) { r -> ApprovalPanel(r, null, onDecision = { container.approvals.resolve(r.id, it) }) }
-        items(questions, key = { it.request.id }) { q -> QuestionPanel(q, null, onAnswer = { container.questions.answer(q.request.id, it) }) }
+        if (secureInput?.sessionId == session.id) item(key = "secure-input") { app.umbra.agent.ui.vault.CredentialHandoffCard(session.id) }
+        items(approvals, key = { it.id }) { r -> androidx.compose.foundation.layout.Box(inkItem(placement = false)) { ApprovalPanel(r, null, onDecision = { container.approvals.resolve(r.id, it) }) } }
+        items(questions, key = { it.request.id }) { q -> androidx.compose.foundation.layout.Box(inkItem(placement = false)) { QuestionPanel(q, null, onAnswer = { container.questions.answer(q.request.id, it) }) } }
         if (session.state == SessionState.FAILED) item(key = "failed") { Callout(session.lastError ?: stringResource(R.string.cur_failed), Tone.Danger) }
     }
 }
@@ -561,7 +567,7 @@ private fun ActivityList(sessionId: String) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp, 10.dp, 18.dp, 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (plan.isNotEmpty()) item(key = "plan") { PlanCard(plan) }
         session?.let { s -> item(key = "activity") { ActivityCard(s) } }
-        items(items, key = { it.key }) { item ->
+        items(items, key = { it.key }) { item -> androidx.compose.foundation.layout.Box(inkItem(placement = false)) {
             when (item) {
                 is TimelineItem.User -> UserBubble(item.text, item.imageCount)
                 is TimelineItem.Agent -> AgentBubble(item.text)
@@ -572,6 +578,6 @@ private fun ActivityList(sessionId: String) {
                 is TimelineItem.Subagent -> NoticeRow("info", stringResource(R.string.act_helper, item.id, item.kind), item.summary.orEmpty())
                 is TimelineItem.Decision -> NoticeRow("info", stringResource(R.string.act_quick, item.engine ?: stringResource(R.string.act_local)), "${item.question} → ${item.answer}")
             }
-        }
+        } }
     }
 }

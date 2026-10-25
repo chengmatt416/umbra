@@ -27,7 +27,7 @@ export UMBRA_KEYSTORE_PASSWORD="$(cat ~/.umbra-signing/password.txt)"
 export UMBRA_KEY_PASSWORD="$UMBRA_KEYSTORE_PASSWORD"
 # the Linux image to carry: build/rootfs/umbra-rootfs-<v>-arm64.tar.xz + packs + manifest.json (runtime-build/rootfs/build.sh <v>);
 # 0.4.0 includes the offline Chromium pack. A different image makes installed apps offer a Linux update.
-(cd .. && ./gradlew -Pumbra.linuxVersion=0.4.0 :app:assembleRelease)
+(cd .. && ./gradlew -Pumbra.linuxVersion=0.4.0 -Pumbra.requireReleaseSigning=true :app:assembleRelease)
 node tools/upload-release.mjs ../app/build/outputs/apk/release/app-release.apk umbra-0.4.3.apk   # writes src/apk.json (size, sha256, version, versionCode)
 # bump version/file in src/content.mjs (APK.version/versionCode/file) and LATEST_APK in wrangler.toml, then:
 node build.mjs && npx wrangler pages deploy dist --project-name umbra-agent --branch main
@@ -51,3 +51,39 @@ Delete the test objects (`npx wrangler r2 object delete umbra-releases/<name> --
 `marketing/capture/*.py` drive the real app on the emulator (`scripts/emulator.sh start`, `scripts/dev-device.sh setup`) and screen-record it;
 `marketing/clips.py` cuts `marketing/clips.json` into `public/clips`; `marketing/reels/build_reel.py` builds the two Instagram Reels
 (`marketing/reels/out/umbra-reel-{en,zh-tw}.mp4`, 1080×1920). The language model in the recordings is the project's scripted stand-in (`scripts/scripted_model.py`).
+
+## Secure input links
+
+`public/.well-known/assetlinks.json` associates `umbra-agent.pages.dev` with Umbra's existing release
+signing certificate. `public/credential-handoff/` is a static, bilingual native-app launcher. It accepts
+an opaque panel nonce only in a URL fragment, removes that fragment from browser history, contains no
+credential fields and opens a package-bound Android intent only after a user click. No nonce or
+credential is sent to this site's backend. The app emits HTTPS panel links only after Android reports
+this domain verified and link handling enabled; otherwise its existing local link remains available.
+
+Run `node tools/test-credential-links.mjs` after building. A live deployment and Android's actual
+`pm verify-app-links`/`pm get-app-links` verification are required before describing HTTPS routing as
+verified. Keep the association tied to the APK signing certificate; do not add a development key.
+
+## Optional app usage counts
+
+`POST /api/usage-counts` accepts only `{"install_id":"<random UUID v4>"}` (at most 256 bytes).
+It uses the existing private `RELEASES` R2 binding, with no additional service or client SDK.
+Objects under `usage-counts/v1/installs/` count distinct opted-in installations; objects under
+`usage-counts/v1/monthly/YYYY-MM/` count installations that opened the main app during that UTC month.
+Count objects with each prefix to obtain installs and MAU; MAU is an installation-based measure.
+Retries use conditional creates and cannot increase either count twice. Identifiers are SHA-256
+hashed with separate install/month namespaces; only the hash keys and the value `1` are stored.
+The public download handler rejects these object paths. There is no public reporting/read endpoint.
+
+Collection is off by default and controlled by Settings → Share usage counts. Background service
+wakes never report activity. The app retains the same random ID across opt-out/re-enable, and a
+successful report suppresses more requests that month. Uninstalling or clearing app storage creates
+a new installation. These counts are not device attestation; an unauthenticated client can submit
+synthetic identifiers. Hosting-provider request logs have their own retention/configuration.
+
+Verify with `node --test tools/usage-counts.test.mjs` and `wrangler pages functions build`.
+The endpoint was deployed and checked on 2026-10-24, including duplicate synthetic reports and private
+R2 record verification/cleanup. The scoped deployment preserved the existing live assets and APK feed;
+only the two privacy documents changed. Publishing the entire working-tree site also publishes any
+other pending content/download changes; review those separately before a production Pages deployment.

@@ -37,12 +37,14 @@ class UsageBudgets(
     private suspend fun limits(s: Session): List<Pair<String, AiUsageLimit>> = buildList {
         var task: Session? = s
         val visited = mutableSetOf<String>()
+        val agents = mutableSetOf<String>()
         while (task != null && visited.size < 32 && visited.add(task.id)) {
             val current = task
             current.usageLimit?.let { add("task:${current.id}" to it) }
-            task = current.spawnedBy?.let { sessionLookup(it) }
+            current.agentId?.takeIf { agents.add(it) }?.let { id -> agentLimit(id)?.let { add("agent:$id" to it) } }
+            task = current.spawnedBy?.let { requireNotNull(sessionLookup(it)) { "The parent task is missing; inherited usage limits cannot be verified." } }
         }
-        s.agentId?.let { id -> agentLimit(id)?.let { add("agent:$id" to it) } }
+        check(task == null) { "The task ancestry is cyclic or too deep to verify its usage limits." }
     }
 
     suspend fun configured(session: Session): Boolean = limits(session).isNotEmpty()

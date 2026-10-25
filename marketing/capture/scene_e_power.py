@@ -12,7 +12,7 @@ from lib import *
 
 SID = sys.argv[1]
 b = umbractl.Bridge(); umbractl.setup()
-ui_set(b, mode="power", onboarded=True, effort="auto")
+ui_set(b, mode="power", onboarded=True, effort="auto", homeAgents=False)
 b.control("capsule.set", {"on": False})
 
 
@@ -44,7 +44,7 @@ rec = Recorder("scene_e").start()
 rec.mark("power"); time.sleep(2.4)
 tap_text("Open the menu", exact=True); time.sleep(2.6)
 tap_text("Close the menu", exact=True); time.sleep(1.0)
-tap_text("Prepare the 0.3.2"); time.sleep(2.6)
+tap_text("Prepare the 0.6.0"); time.sleep(2.6)
 tap_text("Steps", exact=True); time.sleep(2.8)
 tap_text("Terminal", exact=True); time.sleep(3.2)
 tap_text("Changes", exact=True); time.sleep(2.4)

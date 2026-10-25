@@ -47,6 +47,8 @@ import app.umbra.agent.ui.porcelain.P
 import app.umbra.agent.ui.porcelain.PIcon
 import app.umbra.agent.ui.porcelain.PIcons
 import app.umbra.agent.ui.porcelain.pcHue
+import app.umbra.agent.ui.porcelain.Theme
+import app.umbra.agent.ui.porcelain.inkOnPrimary
 import kotlinx.coroutines.delay
 
 /** One choice of the menu. */
@@ -67,12 +69,12 @@ fun MenuButton(open: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifie
             .size(56.dp)
             .shadow(10.dp, shape, ambientColor = pcHue(0x3322352D), spotColor = pcHue(0x5522352D))
             .clip(shape)
-            .background(if (open) P.ink else P.accent2)
+            .background(if (open) (if (Theme.mono) P.highlight else P.ink) else P.accent2)
             .clickable(role = Role.Button, onClickLabel = label, onClick = onToggle)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        PIcon(if (open) PIcons.close else PIcons.plus, Modifier.graphicsLayer { rotationZ = turn }, size = 24.dp, tint = P.base)
+        PIcon(if (open) PIcons.close else PIcons.plus, Modifier.graphicsLayer { rotationZ = turn }, size = 24.dp, tint = if (Theme.mono) (if (open) P.ink else inkOnPrimary) else P.base)
     }
 }
 
@@ -114,7 +116,7 @@ fun MenuEntries(open: Boolean, entries: List<MenuEntry>, leftHanded: Boolean, mo
 }
 
 /**
- * The menu's last row (Figma 10.3): two icon-only circles side by side, a new coding session and a new agent, nearest the
+ * The menu's last row (Figma 10.3): two labelled pills side by side, a new coding session and a new agent, nearest the
  * thumb; swapped for the left hand. They grow in with the entries above them.
  */
 @Composable
@@ -129,18 +131,22 @@ fun MenuPills(open: Boolean, coding: MenuEntry, agent: MenuEntry, leftHanded: Bo
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             val pills = listOf(coding to R.drawable.fab_coding, agent to R.drawable.fab_agent).let { if (leftHanded) it.reversed() else it }
             pills.forEach { (entry, image) ->
-                val shape = androidx.compose.foundation.shape.CircleShape
-                Box(
+                // Labelled pills: an icon alone did not say which one makes a task and which an agent.
+                val shape = RoundedCornerShape(28.dp)
+                Row(
                     Modifier
-                        .size(56.dp)
+                        .height(56.dp)
                         .shadow(3.dp, shape, ambientColor = pcHue(0x2222352D), spotColor = pcHue(0x3322352D))
                         .clip(shape)
                         .background(P.accent2)
                         .clickable(role = Role.Button, onClick = entry.onClick)
-                        .semantics { contentDescription = entry.label },
-                    contentAlignment = Alignment.Center,
+                        .padding(start = 16.dp, end = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(image), contentDescription = null, modifier = Modifier.size(20.dp))
+                    if (Theme.mono) PIcon(entry.icon, size = 20.dp, tint = inkOnPrimary)
+                    else androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(image), contentDescription = null, modifier = Modifier.size(20.dp))
+                    Text(entry.label, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = if (Theme.mono) inkOnPrimary else P.base, maxLines = 1)
                 }
             }
         }

@@ -223,6 +223,7 @@ class ShellRiskAnalyzer {
                 cmd == "init" -> if (args.firstOrNull() in setOf("0", "6")) add(DESTRUCTIVE_SYSTEM, HIGH, "init $args reboots or powers off the device")
                 cmd == "svc" -> svc(args)
                 cmd == "pm" -> packageManager(args)
+                cmd in SHELL_SCREEN_INPUT -> screenInput(cmd)
                 cmd == "cmd" -> cmdService(args)
                 cmd == "am" -> activityManager(args)
                 cmd == "settings" -> settings(args)
@@ -391,8 +392,13 @@ class ShellRiskAnalyzer {
             }
         }
 
+        /** Synthetic taps, keys and text land wherever the screen happens to be, outside the screen-safety checks (review item A). */
+        private fun screenInput(cmd: String) =
+            add(DYNAMIC_COMMAND, HIGH, "'$cmd' injects screen input outside the screen-safety checks; its effect depends on what is on screen. Use android_tap/android_type instead")
+
         private fun cmdService(args: List<String>) {
             when (args.firstOrNull()) {
+                "input" -> screenInput("cmd input")
                 "package" -> packageManager(args.drop(1))
                 "appops" -> if (args.getOrNull(1) == "set") add(SYSTEM_CONFIGURATION, MEDIUM, "changes an app operation permission")
                 "overlay", "role", "notification" -> add(SYSTEM_CONFIGURATION, LOW, "changes ${args.first()} state")
@@ -803,3 +809,6 @@ class ShellRiskAnalyzer {
         }
     }
 }
+
+/** Programs that inject taps, keys or text into whatever is on screen. */
+internal val SHELL_SCREEN_INPUT = setOf("input", "sendevent", "monkey", "uiautomator")

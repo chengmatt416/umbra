@@ -92,7 +92,7 @@ fun MoreSettingsScreen(onBack: () -> Unit, onGo: (app.umbra.agent.ui.shell.Dest)
                 PLink(stringResource(R.string.dest_processes), stringResource(R.string.set_processes_summary), icon = PIcons.activity, onClick = onProcesses)
                 PLink(stringResource(R.string.dest_displays), stringResource(R.string.set_displays_summary), icon = PIcons.monitor, onClick = onDisplays)
                 PLink(stringResource(R.string.dest_diagnostics), stringResource(R.string.set_diagnostics_summary), icon = PIcons.info, onClick = onDiagnostics)
-                PLink(stringResource(R.string.dest_appearance), stringResource(when (prefs.theme.style) { app.umbra.agent.data.ThemeStyle.LIQUID -> R.string.theme_liquid; app.umbra.agent.data.ThemeStyle.APPLE -> R.string.theme_apple; else -> R.string.theme_porcelain }), icon = PIcons.drop, onClick = onAppearance)
+                PLink(stringResource(R.string.dest_appearance), stringResource(when (prefs.theme.style) { app.umbra.agent.data.ThemeStyle.LIQUID -> R.string.theme_liquid; app.umbra.agent.data.ThemeStyle.APPLE -> R.string.theme_apple; app.umbra.agent.data.ThemeStyle.MONO -> R.string.theme_mono; else -> R.string.theme_porcelain }), icon = PIcons.drop, onClick = onAppearance)
                 PLink(stringResource(R.string.set_language), stringResource(R.string.set_language_body), icon = PIcons.book, divider = false) {
                     runCatching { context.startActivity(Intent(Settings.ACTION_APP_LOCALE_SETTINGS, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                 }
@@ -267,6 +267,7 @@ fun UnverifiedTag() = Tag(stringResource(R.string.unverified), Tone.Warn)
 internal fun LayaSection() {
     val container = LocalContext.current.container
     val state by container.laya.state.collectAsStateWithLifecycle()
+    val prefs by container.settings.flow.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { container.laya.refresh() }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.set_laya), Modifier.weight(1f), fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, color = P.ink)
@@ -289,6 +290,9 @@ internal fun LayaSection() {
             LayaSidecar.State.STOPPED -> PButton(stringResource(R.string.laya_start), { container.laya.start() }, style = ButtonStyle.Alt, tiny = true)
             LayaSidecar.State.RUNNING -> PButton(stringResource(R.string.laya_stop), { container.laya.stop() }, style = ButtonStyle.Alt, tiny = true)
             else -> Unit
+        }
+        if (state != LayaSidecar.State.RUNNING && prefs.layaWanted) {
+            PButton(stringResource(R.string.laya_stop), { container.laya.stop() }, style = ButtonStyle.Alt, tiny = true)
         }
     }
     Disclosure(stringResource(R.string.details)) { Subtle(stringResource(R.string.unverified_detail)) }

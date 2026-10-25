@@ -1,6 +1,6 @@
 # Umbra privacy policy
 
-Effective date: 2026-10-20.
+Effective date: 2026-10-25.
 
 Umbra is an open-source Android app maintained by 鄭品彥
 ([chengmatt416](https://github.com/chengmatt416)). This policy covers the app and the project website
@@ -43,9 +43,20 @@ for the app. Root access, device compromise, exported files and files in shared 
   The destinations and transmitted data depend on the task and installed software.
 - **Speech input:** the Android speech-recognition service you use may process audio remotely under
   that service's own policy.
+- **Usage counts (you can switch them off):** on new installations from version 0.6.1, Settings → Share
+  usage counts is on by default and shown with its switch during setup; installations from earlier
+  versions keep the choice they had (off unless you turned it on). When enabled, opening
+  the app sends a random installation identifier to `/api/usage-counts` at most once per UTC month
+  after a successful report. Failed reports may retry after six hours. The endpoint stores a hash for
+  the installation count and a different, month-specific hash for monthly active installations. It
+  does not store the raw identifier, prompts, messages, files, screen contents, device logs or account
+  details. Cloudflare still processes ordinary web request information as described above. Turning
+  the setting off stops future reports; existing aggregate counts remain. The local identifier is
+  removed when app-private storage is cleared or the app is uninstalled.
 
-The app source does not include a project-operated advertising, analytics or automatic crash-reporting
-SDK. This does not describe telemetry in every installed tool or third-party service. The maintainer
+The app source does not include an advertising or automatic crash-reporting SDK. Its usage
+counter is limited to the install and monthly-active measurements described above. This does not
+describe telemetry in every installed tool or third-party service. The maintainer
 does not operate the model providers or receive task conversations through an Umbra conversation server.
 If you submit an issue, log or screenshot to the project, the hosting platform and maintainers can read it;
 public submissions are visible to everyone. Remove credentials and personal information first.

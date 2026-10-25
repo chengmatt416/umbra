@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.agents
 
+import app.umbra.agent.ui.porcelain.inkItem
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -26,6 +27,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -195,7 +197,7 @@ internal fun rememberToolNote(): (String, Map<String, String>) -> String? {
  * with pictures at the bottom.
  */
 @Composable
-fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, onOpenSession: (String) -> Unit) {
+fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, onOpenSession: (String) -> Unit, onProactive: (Int) -> Unit) {
     val editPrefix = stringResource(R.string.ag_edit_prefix)
     val container = LocalContext.current.container
     val context = LocalContext.current
@@ -212,6 +214,9 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
     val sessions by remember { container.sessionStore.changes }.collectAsStateWithLifecycle(null)
     val session by produceState<app.umbra.core.session.Session?>(null, sid, sessions) { value = sid?.let { container.sessionStore.get(it) } }
     val delegated by produceState<app.umbra.core.session.Session?>(null, agentId, sessions) { value = activeDelegatedWork(agentId, container.sessionStore.list()) }
+    val work by produceState(emptyList<app.umbra.core.session.Session>(), agentId, sid, sessions) {
+        value = agentWork(agentId, sid, container.sessionStore.list(app.umbra.core.session.SessionFilter(limit = Int.MAX_VALUE)))
+    }
     val approvals by container.approvals.pending.collectAsStateWithLifecycle()
     val mine = approvals.filter { it.sessionId == sid }
     val activity by container.agents.activity.collectAsStateWithLifecycle()
@@ -219,6 +224,12 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
     val state by produceState(app.umbra.agent.agents.AgentState(), agentId) { while (true) { value = container.agents.store.state(agentId); delay(5_000) } }
     val toolNote = rememberToolNote()
     val lines = remember(conversation.items, conversation.tools, toolNote) { chatLines(conversation, toolNote) }
+    // Sent but not yet in the agent's conversation (its process may be starting): shown at once, with a clock.
+    val sending = remember(agentId) { androidx.compose.runtime.mutableStateListOf<Pair<Long, String>>() }
+    LaunchedEffect(lines) {
+        val seen = lines.filterIsInstance<Line.Mine>()
+        sending.removeAll { (at, text) -> seen.any { it.at >= at - 5_000 && it.text.trim() == text } || System.currentTimeMillis() - at > 180_000 }
+    }
     var draft by remember(agentId) { mutableStateOf("") }
     val pictures = remember(agentId) { mutableStateListOf<ContentBlock.Image>() }
     var error by remember { mutableStateOf<String?>(null) }
@@ -269,6 +280,17 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
             }
             PIconButton(PIcons.more, stringResource(R.string.ag_profile), onProfile, size = 36.dp)
         }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            app.umbra.agent.ui.porcelain.PButton(stringResource(R.string.briefing_title), { onProactive(2) }, tiny = true, style = app.umbra.agent.ui.porcelain.ButtonStyle.Ghost, icon = PIcons.clock)
+        }
+        if (work.isNotEmpty()) Column(Modifier.fillMaxWidth().heightIn(max = 180.dp).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(stringResource(R.string.ag_active_work, work.size), color = P.sub, fontSize = 12.sp)
+            work.forEach { task ->
+                app.umbra.agent.ui.porcelain.PButton("${task.title} · ${app.umbra.agent.ui.sessions.stateText(task.state)}", { onOpenSession(task.id) },
+                    tiny = true, style = app.umbra.agent.ui.porcelain.ButtonStyle.Ghost)
+            }
+        }
         // Pinned: the next timers.
         if (timers.isNotEmpty()) {
             Row(
@@ -295,7 +317,7 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                     Text(stringResource(R.string.ag_intro, p.name), fontSize = 14.sp, color = P.sub, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
                 }
             }
-            items(lines, key = { it.key }) { line ->
+            items(lines, key = { it.key }) { line -> androidx.compose.foundation.layout.Box(inkItem(placement = false)) {
                 when (line) {
                     is Line.Day -> SysNote(DateUtils.formatDateTime(context, line.at, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_WEEKDAY or DateUtils.FORMAT_ABBREV_ALL))
                     is Line.Note -> if (line.sessionRef == null) SysNote(line.text) else SessionEventLink(line.text) {
@@ -311,8 +333,9 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                         }
                     })
                 }
-            }
-            items(mine, key = { "approval-" + it.id }) { request ->
+            } }
+            items(sending, key = { "sending-" + it.first }) { (at, text) -> androidx.compose.foundation.layout.Box(inkItem(placement = false)) { Bubble(text, at, mine = true, via = null, pending = true) } }
+            items(mine, key = { "approval-" + it.id }) { request -> androidx.compose.foundation.layout.Box(inkItem(placement = false)) {
                 Column(Modifier.fillMaxWidth().padding(end = 48.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Bubble(request.description, request.createdAtMs, mine = false, via = null, accent = true)
                     Row(Modifier.widthIn(max = 300.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -324,7 +347,7 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                         InlineButton(stringResource(R.string.ag_dont), primary = false, Modifier.weight(1f)) { container.approvals.resolve(request.id, ApprovalDecision.Denied("not now, from the agent's chat")) }
                     }
                 }
-            }
+            } }
             if (working) item(key = "typing") {
                 ThinkingOrbActivity(status, orbState, Modifier.fillMaxWidth().padding(vertical = 8.dp), paused = orbPaused)
             }
@@ -359,7 +382,10 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                     val text = draft.trim()
                     val imgs = pictures.toList()
                     draft = ""; pictures.clear(); error = null
-                    scope.launch { runCatching { container.agents.talk(agentId, text.ifEmpty { "(picture)" }, imgs) }.onFailure { error = it.message; draft = text } }
+                    val entry = System.currentTimeMillis() to text.ifEmpty { "(picture)" }
+                    sending += entry
+                    scope.launch { list.animateScrollToItem(lines.size + sending.size) }
+                    scope.launch { runCatching { container.agents.talk(agentId, text.ifEmpty { "(picture)" }, imgs) }.onFailure { error = it.message; draft = text; sending -= entry } }
                 }.semantics { contentDescription = send },
                 contentAlignment = Alignment.Center,
             ) { PIcon(PIcons.send, size = 22.dp, tint = P.base) }
@@ -384,23 +410,25 @@ internal fun SysNote(text: String) {
 }
 
 @Composable
-private fun Bubble(text: String, at: Long, mine: Boolean, via: String?, accent: Boolean = false) {
+private fun Bubble(text: String, at: Long, mine: Boolean, via: String?, accent: Boolean = false, pending: Boolean = false) {
     val context = LocalContext.current
     val shape = if (mine) RoundedCornerShape(18.dp, 18.dp, 6.dp, 18.dp) else RoundedCornerShape(18.dp, 18.dp, 18.dp, 6.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
         Column(
             Modifier.padding(start = if (mine) 48.dp else 0.dp, end = if (mine) 0.dp else 48.dp).clip(shape)
-                .background(if (mine) pc(0xFFDCE8D8) else if (accent) P.amber.copy(alpha = 0.12f) else pc(0xFFF6F8F2))
-                .then(if (accent) Modifier.border(1.dp, P.amber.copy(alpha = 0.4f), shape) else Modifier)
+                // Ink: the user's words are the ink bubbles, the agent's are paper.
+                .background(if (mine) (if (app.umbra.agent.ui.porcelain.Theme.mono) P.accent2 else pc(0xFFDCE8D8)) else if (accent) P.amber.copy(alpha = 0.12f) else pc(0xFFF6F8F2))
+                .then(if (accent) Modifier.border(1.dp, P.amber.copy(alpha = 0.4f), shape) else if (!mine && app.umbra.agent.ui.porcelain.Theme.mono) Modifier.border(1.dp, P.line2, shape) else Modifier)
                 .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
             horizontalAlignment = Alignment.End,
         ) {
-            if (mine) Text(text, fontSize = 15.sp, lineHeight = 21.sp, color = P.ink)
+            val onBubble = if (mine && app.umbra.agent.ui.porcelain.Theme.mono) app.umbra.agent.ui.porcelain.inkOnPrimary else null
+            if (mine) Text(text, fontSize = 15.sp, lineHeight = 21.sp, color = onBubble ?: P.ink)
             else app.umbra.agent.ui.MarkdownText(text, color = P.ink)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 if (via != null) Text(via, fontSize = 10.5.sp, color = P.muted)
-                Text(DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_TIME), fontSize = 11.sp, color = P.muted)
-                if (mine) PIcon(PIcons.check, size = 13.dp, tint = P.accent2)
+                Text(DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_TIME), fontSize = 11.sp, color = onBubble?.copy(alpha = 0.6f) ?: P.muted)
+                if (mine) PIcon(if (pending) PIcons.clock else PIcons.check, size = 13.dp, tint = onBubble?.copy(alpha = 0.75f) ?: P.accent2)
             }
         }
     }
@@ -450,6 +478,16 @@ private fun InlineButton(text: String, primary: Boolean, modifier: Modifier, onC
 }
 
 /** What the agent list shows for an agent: its last words and how many the user has not read. */
+/** The first line of a Markdown answer as a list preview reads it: no heading marks, emphasis or code ticks. */
+internal fun plainPreview(text: String): String {
+    var fenced = false
+    val line = text.lineSequence().map { it.trim() }.firstOrNull { l ->
+        if (l.startsWith("```")) { fenced = !fenced; false } else !fenced && l.isNotEmpty()
+    }.orEmpty()
+    return line.replace(Regex("^(#{1,6}\\s+|>\\s*|[-*+]\\s+|\\d+[.)]\\s+)"), "")
+        .replace(Regex("(\\*\\*|__|`)"), "")
+}
+
 internal fun lastLine(state: ConversationState, lastReadMs: Long): Pair<String, Int> {
     var last = ""
     var unread = 0
@@ -459,7 +497,7 @@ internal fun lastLine(state: ConversationState, lastReadMs: Long): Pair<String, 
             is ChatItem.Assistant -> {
                 val t = item.text.trim()
                 if (t.isNotEmpty() && !t.startsWith(AgentRuntime.QUIET)) {
-                    last = t.lineSequence().first()
+                    last = plainPreview(t)
                     if (item.timestamp > lastReadMs) unread++
                 }
             }

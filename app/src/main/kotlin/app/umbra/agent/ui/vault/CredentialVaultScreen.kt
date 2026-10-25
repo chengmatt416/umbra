@@ -88,6 +88,7 @@ fun CredentialVaultScreen() {
         if (to.startsWith("session ")) sessions.firstOrNull { it.id == to.removePrefix("session ") }?.let { sessionLabel.format(it.title) } ?: to else to
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 18.dp)) {
+        CredentialHandoffCard()
         Eyebrow(stringResource(R.string.vault_eyebrow))
         Headline(stringResource(R.string.vault_headline), stringResource(R.string.vault_headline_tail), Modifier.padding(top = 6.dp, bottom = 12.dp), size = 26)
         message?.let { Callout(it, Tone.Neutral); Gap(10.dp) }

@@ -1,14 +1,16 @@
 package app.umbra.agent.telegram
 
 import android.content.Context
-import android.content.Intent
 import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -16,9 +18,13 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+import app.umbra.agent.ui.voice.SpeechInput
+import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -31,65 +37,76 @@ import kotlinx.coroutines.withTimeoutOrNull
 class VoiceTranscriber(private val context: Context) {
     suspend fun transcribe(audio: ByteArray): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
-        if (!SpeechRecognizer.isRecognitionAvailable(context)) return null
+        if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) return null
+        if (audio.isEmpty() || audio.size > MAX_AUDIO_BYTES) return null
         val pcm = withContext(Dispatchers.IO) { decode(audio) } ?: return null
         return withTimeoutOrNull(45_000) { recognize(pcm) }
     }
 
     /** Decodes to 16 kHz mono 16-bit PCM. */
-    private fun decode(audio: ByteArray): ShortArray? {
+    private suspend fun decode(audio: ByteArray): ShortArray? {
         val input = File.createTempFile("voice", ".ogg", context.cacheDir)
+        val extractor = MediaExtractor()
+        var codec: MediaCodec? = null
         try {
             input.writeBytes(audio)
-            val extractor = MediaExtractor()
             extractor.setDataSource(input.path)
             val track = (0 until extractor.trackCount).firstOrNull { extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true } ?: return null
             extractor.selectTrack(track)
             val format = extractor.getTrackFormat(track)
-            val codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
-            codec.configure(format, null, null, 0)
-            codec.start()
+            val decoder = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
+            codec = decoder
+            format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+            decoder.configure(format, null, null, 0)
+            decoder.start()
             val out = java.io.ByteArrayOutputStream()
             var rate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
             var channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
             val info = MediaCodec.BufferInfo()
             var inputDone = false
             var outputDone = false
+            val deadline = SystemClock.elapsedRealtime() + 20_000
             while (!outputDone) {
+                coroutineContext.ensureActive()
+                check(SystemClock.elapsedRealtime() < deadline) { "Audio decoding timed out" }
                 if (!inputDone) {
-                    val i = codec.dequeueInputBuffer(10_000)
+                    val i = decoder.dequeueInputBuffer(10_000)
                     if (i >= 0) {
-                        val buffer = codec.getInputBuffer(i)!!
+                        val buffer = decoder.getInputBuffer(i)!!
                         val n = extractor.readSampleData(buffer, 0)
                         if (n < 0) {
-                            codec.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            decoder.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                             inputDone = true
                         } else {
-                            codec.queueInputBuffer(i, 0, n, extractor.sampleTime, 0)
+                            decoder.queueInputBuffer(i, 0, n, extractor.sampleTime, 0)
                             extractor.advance()
                         }
                     }
                 }
-                val o = codec.dequeueOutputBuffer(info, 10_000)
+                val o = decoder.dequeueOutputBuffer(info, 10_000)
                 when {
                     o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                        rate = codec.outputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                        channels = codec.outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                        val output = decoder.outputFormat
+                        rate = output.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                        channels = output.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                        require(!output.containsKey(MediaFormat.KEY_PCM_ENCODING) || output.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_16BIT)
                     }
                     o >= 0 -> {
-                        val buffer = codec.getOutputBuffer(o)!!
+                        require(info.size >= 0 && out.size().toLong() + info.size <= MAX_PCM_BYTES)
+                        val buffer = decoder.getOutputBuffer(o)!!
                         val chunk = ByteArray(info.size)
                         buffer.position(info.offset)
                         buffer.get(chunk)
                         out.write(chunk)
-                        codec.releaseOutputBuffer(o, false)
+                        decoder.releaseOutputBuffer(o, false)
                         if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
                     }
                 }
             }
-            codec.stop(); codec.release(); extractor.release()
+            require(rate in 8000..192000 && channels in 1..8)
             val shorts = ByteBuffer.wrap(out.toByteArray()).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-            val frames = shorts.remaining() / channels.coerceAtLeast(1)
+            val frames = shorts.remaining() / channels
+            require(frames > 0 && frames.toLong() * 1000 / rate <= MAX_DURATION_MS)
             val mono = ShortArray(frames) { f ->
                 var sum = 0
                 for (c in 0 until channels) sum += shorts.get(f * channels + c)
@@ -105,26 +122,42 @@ class VoiceTranscriber(private val context: Context) {
                 val t = x - a
                 (mono[a] * (1 - t) + mono[b] * t).toInt().toShort()
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             return null
         } finally {
+            runCatching { codec?.stop() }
+            runCatching { codec?.release() }
+            runCatching { extractor.release() }
             input.delete()
         }
     }
 
     private suspend fun recognize(pcm: ShortArray): String? = withContext(Dispatchers.Main) {
+        val recognizer = runCatching { SpeechRecognizer.createOnDeviceSpeechRecognizer(context) }.getOrNull() ?: return@withContext null
+        val pipe = try { ParcelFileDescriptor.createPipe() } catch (_: Exception) {
+            recognizer.destroy()
+            return@withContext null
+        }
         suspendCancellableCoroutine { cont ->
-            val recognizer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
-                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-            } else {
-                SpeechRecognizer.createSpeechRecognizer(context)
-            }
-            val pipe = ParcelFileDescriptor.createPipe()
-            val done = { text: String? ->
-                runCatching { recognizer.destroy() }
+            val finished = AtomicBoolean(false)
+            val main = Handler(Looper.getMainLooper())
+            val cleanup = {
                 runCatching { pipe[0].close() }
-                if (cont.isActive) cont.resume(text)
+                runCatching { pipe[1].close() }
+                if (Looper.myLooper() == Looper.getMainLooper()) runCatching { recognizer.destroy() }
+                else main.post { runCatching { recognizer.destroy() } }
+                Unit
             }
+            val done = { text: String? ->
+                if (finished.compareAndSet(false, true)) {
+                    cleanup()
+                    if (cont.isActive) cont.resume(text?.trim()?.takeIf { it.isNotEmpty() })
+                }
+            }
+            cont.invokeOnCancellation { if (finished.compareAndSet(false, true)) cleanup() }
+            if (finished.get()) return@suspendCancellableCoroutine
             recognizer.setRecognitionListener(object : RecognitionListener {
                 override fun onResults(results: Bundle) = done(results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull())
                 override fun onError(error: Int) = done(null)
@@ -136,15 +169,13 @@ class VoiceTranscriber(private val context: Context) {
                 override fun onPartialResults(partialResults: Bundle?) {}
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
-                .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            val intent = SpeechInput.intent(context.packageName, partialResults = false, onDevice = true)
                 .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipe[0])
                 .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
                 .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
                 .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, TARGET_RATE)
-            recognizer.startListening(intent)
+            try { recognizer.startListening(intent) } catch (_: RuntimeException) { done(null) }
+            if (finished.get()) return@suspendCancellableCoroutine
             // The audio goes into the pipe from another thread; closing it ends the speech.
             Thread {
                 runCatching {
@@ -155,12 +186,14 @@ class VoiceTranscriber(private val context: Context) {
                     }
                 }
                 runCatching { pipe[1].close() }
-            }.start()
-            cont.invokeOnCancellation { runCatching { recognizer.destroy() } }
+            }.apply { name = "umbra-voice-audio"; isDaemon = true }.start()
         }
     }
 
     private companion object {
         const val TARGET_RATE = 16_000
+        const val MAX_AUDIO_BYTES = 20_000_000
+        const val MAX_PCM_BYTES = 24_000_000
+        const val MAX_DURATION_MS = 120_000
     }
 }

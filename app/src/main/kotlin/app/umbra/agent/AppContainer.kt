@@ -88,6 +88,7 @@ class AppContainer(val context: Context) {
 
     // ---- user data ----
     val settings = AppSettings(context)
+    internal val usageCounts = app.umbra.agent.data.UsageCounts.native(context) { settings.value.shareUsageCounts }
 
     /** The control plane's durable state (architecture spec §1.2): projects, journals, leases, policies, … */
     val control = app.umbra.core.control.ControlStore(File(context.filesDir.canonicalFile, "control").toPath())
@@ -133,6 +134,46 @@ class AppContainer(val context: Context) {
     /** Input authority over terminals, the screen and desktops (architecture spec §7); fenced by a lockdown. */
     val inputLeases = app.umbra.core.control.InputLeases(control) { emergency.lockdownReason() }
     private val backgroundApps = ConcurrentHashMap<String, String>()
+    private val lastInputSession = ConcurrentHashMap<String, String>()
+    private val takeoverJobs = ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+    fun noteAgentInput(resource: String, sessionId: String) { lastInputSession[resource] = sessionId }
+    suspend fun userInput(resource: String, block: suspend () -> Unit) {
+        val lease = requireNotNull(inputLeases.current(resource)) { "Take over this screen first" }
+        check(lease.owner == app.umbra.core.control.Principal.User && lease.state == app.umbra.core.control.LeaseState.ACTIVE) { "You no longer hold this screen" }
+        kotlinx.coroutines.withContext(app.umbra.platform.api.DispatchFence {
+            check(inputLeases.check(resource, app.umbra.core.control.Principal.User, lease.generation) is app.umbra.core.control.LeaseCheck.Allowed) { "Screen control changed before this input was sent" }
+        }) { app.umbra.platform.api.DispatchFence.checkCurrent(); block() }
+    }
+    fun takeOver(resource: String, sessionId: String? = null) {
+        val previous = inputLeases.current(resource)
+        if (previous?.owner == app.umbra.core.control.Principal.User && previous.state == app.umbra.core.control.LeaseState.ACTIVE) return
+        val owner = sessionId ?: lastInputSession[resource] ?: previous?.lastAgentId
+        inputLeases.takeBack(resource, lastAgentId = owner)
+        if (owner != null) {
+            val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                try { if (sessionStore.get(owner)?.state?.isActive == true) supervisor.pause(owner, "The user took over $resource") }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { /* The immediate input fence remains in force even if a process cannot be paused. */ }
+            }
+            takeoverJobs[resource] = job
+            job.start()
+        }
+    }
+    fun returnControl(resource: String, sessionId: String? = null) {
+        val lease = inputLeases.current(resource) ?: return
+        if (lease.owner != app.umbra.core.control.Principal.User) return
+        val owner = sessionId ?: lease.lastAgentId
+        inputLeases.release(resource, app.umbra.core.control.Principal.User, "returned by the user; fresh observation required")
+        val pause = takeoverJobs.remove(resource)
+        if (owner != null) scope.launch {
+            pause?.join()
+            try {
+                if (sessionStore.get(owner)?.state in setOf(SessionState.PAUSED, SessionState.RUNNING, SessionState.WAITING_APPROVAL)) supervisor.send(owner,
+                    "The user returned control of $resource. Re-observe its current state before any input; user edits invalidate your previous plan. Then continue the original task within its existing approvals and usage limits.", messageSource = "control")
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { runCatching { sessionStore.append(owner, app.umbra.core.session.SessionEvent.Notice("warning", "Control was returned, but the task could not resume. Review its state and usage limits before resuming.", "control")) } }
+        }
+    }
 
     private suspend fun claimBackgroundApp(pkg: String, session: String): String? {
         while (true) {
@@ -149,6 +190,11 @@ class AppContainer(val context: Context) {
      */
     private suspend fun inputGate(request: app.umbra.core.model.action.ActionRequest, displayId: Int?, touchesDisplay: Boolean): String? {
         emergency.lockdownReason()?.let { return "Emergency input lockdown is in force ($it): no side effects until the user lifts it." }
+        request.sessionId?.let { sessionStore.get(it) }?.let { task ->
+            try { agents.proactive.checkAuthority(task) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { return e.message ?: "This task's execution permission changed" }
+        }
         if (!touchesDisplay) return null
         if (displayId != null && displayId != 0 && request.target.environment != app.umbra.core.model.action.Environment.LINUX_GUI) {
             val pkg = request.target.app
@@ -166,17 +212,20 @@ class AppContainer(val context: Context) {
             }
         }
         val resource = if (request.target.environment == app.umbra.core.model.action.Environment.LINUX_GUI) "gui:0" else "display:${displayId ?: 0}"
-        val lease = inputLeases.current(resource) ?: return null
+        val lease = inputLeases.current(resource) ?: run { request.sessionId?.let { noteAgentInput(resource, it) }; return null }
         return if (lease.owner == app.umbra.core.control.Principal.User && lease.state == app.umbra.core.control.LeaseState.ACTIVE) {
             // A wait in the Resource Wait Graph: the session's work on this screen is blocked on the user (AC-005).
             request.sessionId?.let { inputLeases.recordBlocked(resource, app.umbra.core.control.Principal.agent(it), app.umbra.core.control.Principal.User) }
             "The user has taken back this screen ($resource). Wait until they return it, or work on a background display."
-        } else null
+        } else if (lease.needsObservation) "The user changed this screen. Call android_observe, android_screenshot or gui_screenshot after control is returned before sending input."
+        else { request.sessionId?.let { noteAgentInput(resource, it) }; null }
     }
     val ui = app.umbra.agent.data.UiState(context)
 
     /** The Material Capsule and Snapshot selection (§3.1); shown by the foreground service while the user has it on. */
     val capsule by lazy { app.umbra.agent.capsule.Capsule(context, this) }
+    val capsuleSignals by lazy { app.umbra.agent.capsule.CapsuleSignals(context, this) }
+    internal val capsuleSuggestions by lazy { app.umbra.agent.capsule.CapsuleSuggestions(this) }
 
     /** Screen recordings as context, started from the Capsule (capsule/ScreenRecorder). */
     val recorder by lazy { app.umbra.agent.capsule.ScreenRecorder(context, this) }
@@ -265,11 +314,21 @@ class AppContainer(val context: Context) {
     /** Auto: Laya picks each new task's model (data/AutoModel). */
     val autoModel by lazy { app.umbra.agent.data.AutoModel(this) }
     val decisions = DecisionRouter(primary = laya.engine)
-    val safetyGate = SafetyGate(
+    val safetyGate: SafetyGate = SafetyGate(
         RiskClassifier(), { ApprovalPolicy(approvalMode) }, approvals,
         securityCheck = app.umbra.core.safety.LayaActionSecurityCheck(laya.engine),
         commandRules = { settings.value.commandApprovals },
         saveCommandRule = { rule -> settings.update { it.copy(commandApprovals = it.commandApprovals.filterNot { old -> old.commandPrefix == rule.commandPrefix && old.workingDirectory == rule.workingDirectory } + rule) } },
+        dlp = app.umbra.core.safety.OutboundDlpGuard(4) { protectedValues() },
+        customRules = { sessionId -> agents.proactive.store.actionRules(sessionStore.get(sessionId)?.agentId) },
+        originalIntent = { sessionId -> sessionStore.get(sessionId)?.let { it.latestUserIntent ?: it.request } },
+        onHandoff = { request, ctx ->
+            if (ctx.foregroundPackage != null || request.target.display != null || request.target.environment == app.umbra.core.model.action.Environment.LINUX_GUI) {
+                val resource = if (request.target.environment == app.umbra.core.model.action.Environment.LINUX_GUI) "gui:0" else "display:${request.target.display ?: 0}"
+                takeOver(resource, request.sessionId)
+            }
+            if (ctx.foregroundPackage == null && request.target.display == null && request.target.environment != app.umbra.core.model.action.Environment.LINUX_GUI) request.sessionId?.let { id -> scope.launch { supervisor.pause(id, "User takeover required") } }
+        },
     )
     val journal = ActionJournal()
     val leases = DisplayLeaseManager(onBlocked = { session, display, holder ->
@@ -289,28 +348,78 @@ class AppContainer(val context: Context) {
         // The agent names files the way Linux sees them; tools that act on the phone's file system need the phone's path.
         config = PipelineConfig(pathMapper = { path -> workspaceLayout.toHost(path)?.toString() ?: path }),
         inputGate = ::inputGate,
+        inputEpoch = { request, displayId, touchesDisplay ->
+            val resource = if (request.target.environment == app.umbra.core.model.action.Environment.LINUX_GUI) "gui:0" else "display:${displayId ?: 0}"
+            val op = request.operation
+            emergency.current().generation to when {
+                op is app.umbra.core.model.action.Operation.Display && op.action == app.umbra.core.model.action.DisplayAction.CREATE -> inputLeases.revision()
+                touchesDisplay || op is app.umbra.core.model.action.Operation.Observe || op is app.umbra.core.model.action.Operation.Screenshot -> inputLeases.revision(resource)
+                else -> 0L
+            }
+        },
+        onObservation = { request, displayId, epoch ->
+            val resource = if (request.target.environment == app.umbra.core.model.action.Environment.LINUX_GUI) "gui:0" else "display:${displayId ?: 0}"
+            val captured = epoch as? Pair<*, *>
+            if (captured?.first == emergency.current().generation) request.sessionId?.let { sid ->
+                (captured.second as? Long)?.let { inputLeases.observed(resource, app.umbra.core.control.Principal.agent(sid), it) }
+            }
+        },
     )
 
     private val hosts = ConcurrentHashMap<String, UmbraToolHost>()
 
     /** The tools of one agent session (created on first use, one per session id). */
-    fun toolHost(sessionId: String): UmbraToolHost = hosts.getOrPut(sessionId) {
+    fun toolHost(sessionId: String, ownerAgentId: String? = null, agentConversation: Boolean? = null): UmbraToolHost = hosts.getOrPut(sessionId) {
         // The Linux desktop tools are offered only once the desktop pack is installed.
         val desktop = guest.desktopInstalled
-        val profile = agents.store.bySession(sessionId)
+        val profile = ownerAgentId?.let { agents.store.get(it) } ?: agents.store.bySession(sessionId)
+        val assistant = agentConversation ?: (agents.store.bySession(sessionId) != null)
         UmbraToolHost(
             pipeline, sessionId, decisions, exclude = { it.startsWith("gui_") && !desktop },
             // Every session can talk to the others; an agent's conversation also gets its memory, timers and the rest.
-            extra = sessionTools.forSession(sessionId, allowSubagents = profile == null) + connectors.messages.tools(sessionId) + remoteNodeTools.forSession(sessionId) + (profile?.let { agentTools.forAgent(it.id) } ?: emptyList()),
+            extra = sessionTools.forSession(sessionId, allowSubagents = !assistant) + app.umbra.core.orchestrator.DeliverableTools(sessionStore, workspaces, environment).forSession(sessionId) + synthesizedTools.forSession(sessionId, profile?.id) + skillWorkflows.forSession(sessionId, profile?.id) + demonstrations.forSession(profile?.id) + credentialHandoff.tools(sessionId) + connectors.messages.tools(sessionId, profile?.id) + remoteNodeTools.forSession(sessionId) +
+                (profile?.takeIf { assistant }?.let { agentTools.forAgent(it.id, sessionId) + proactiveTools.forAgent(it.id, sessionId) + teams.forSession(it.id, sessionId) } ?: emptyList()),
         )
     }
 
     /** Messages between sessions and agents (docs/design/agents-2026-10.md §3). */
-    val sessionBus by lazy { app.umbra.core.orchestrator.SessionBus(supervisor, sessionStore, scope, agentSession = { id -> agents.store.get(id)?.sessionId }) }
+    val sessionBus by lazy { app.umbra.core.orchestrator.SessionBus(supervisor, sessionStore, scope,
+        agentSession = { id -> agents.store.get(id)?.sessionId },
+        agentDelivery = { session, text ->
+            val p = agents.store.bySession(session.id)
+            if (p == null) false else {
+                if (p.running && p.proactivityLevel >= 2) agents.proactive.discovery(p, text)
+                else agents.proactive.store.stage(p.id, app.umbra.agent.agents.proactive.AttentionItem(
+                    "message:${System.nanoTime()}", "Session report", text.take(2000), .3, .5, .8, "session", System.currentTimeMillis()))
+                true
+            }
+        }) }
 
     /** The agents: profiles, their wake loop, their conversations (docs/design/agents-2026-10.md §6–§9). */
     val agents by lazy { app.umbra.agent.agents.AgentRuntime(this) }
     val agentTools by lazy { app.umbra.agent.agents.AgentTools(this) }
+    val proactiveTools by lazy { app.umbra.agent.agents.proactive.ProactiveTools(this) }
+    val personalContext by lazy { app.umbra.agent.agents.proactive.PersonalContext(this) }
+    val skills by lazy { app.umbra.agent.agents.proactive.SkillStore(File(context.filesDir, "skills")) }
+    val transformSandbox by lazy { app.umbra.agent.agents.proactive.TransformSandbox(context) }
+    /**
+     * The structured connectors an agent may use (spec §9.1): message apps it reads whose chosen methods include a
+     * structured transport (a visual-only method is not one), plus its authorized personal-context grants.
+     */
+    fun structuredConnectors(agentId: String?): Set<String> {
+        val profile = agentId?.let { agents.store.get(it) } ?: return emptySet()
+        val structured = setOf(app.umbra.agent.connectors.Method.SYSTEM, app.umbra.agent.connectors.Method.API, app.umbra.agent.connectors.Method.UNOFFICIAL)
+        val messages = profile.channels.filter { app -> connectors.settings.methods(app).any { it in structured } }
+        val personal = agents.proactive.store.grants(profile.id).filter { it.enabled && it.authorizedAtMs != null }.map { it.connectorId }
+        return (messages + personal).toSet()
+    }
+    val synthesizedTools by lazy { app.umbra.agent.agents.proactive.SynthesizedTools(this) }
+    val teams by lazy { app.umbra.agent.agents.proactive.Teams(this) }
+    val skillWorkflows by lazy { app.umbra.agent.agents.proactive.SkillWorkflows(this) }
+    val demonstrations by lazy { app.umbra.agent.agents.proactive.Demonstrations(this) }
+    val templateExchange by lazy { app.umbra.agent.agents.proactive.TemplateExchange(this) }
+    val credentialHandoff by lazy { app.umbra.agent.credentials.CredentialHandoff(this) }
+    fun protectedValues() = secrets.names().mapNotNull(secrets::get) + credentialHandoff.protectedValues()
     val remoteNodeTools by lazy { app.umbra.agent.nodes.RemoteNodeTools(this) }
     /** The message apps and how each is reached (docs/design/agents-2026-10.md §6). */
     val connectors by lazy { app.umbra.agent.connectors.Connectors(this) }
@@ -417,18 +526,25 @@ class AppContainer(val context: Context) {
         )
     }
 
-    val supervisor = AgentSupervisor(
+    val supervisor: AgentSupervisor = AgentSupervisor(
         deps = SessionDeps(
             store = sessionStore,
             service = sessionService,
             workspaces = workspaces,
             environment = environment,
             providers = AppProviderResolver(settings, secrets, { name, provider -> vault.admits(name, provider) }, { modelDirectory.auto(it) }),
-            toolHosts = ::toolHost,
+            toolHosts = { s -> toolHost(s.id, s.agentId, s.kind == app.umbra.core.session.SessionKind.AGENT) },
             gate = safetyGate,
             approvals = approvals,
             questions = questions,
             prompts = ::promptContext,
+            backupVisionModel = { settings.value.backupVisionModel },
+            validateModelInput = { text -> app.umbra.core.safety.OutboundDlpGuard(4) { protectedValues() }.requireSafe(text) },
+            modelText = { text -> app.umbra.core.safety.OutboundDlpGuard(4) { protectedValues() }.redact(text) },
+            validateModelPayload = { payload ->
+                val values = protectedValues()
+                app.umbra.core.safety.ModelPayloadGuard(app.umbra.core.safety.OutboundDlpGuard(4) { values }).requireSafe(payload)
+            },
             logMonitor = logMonitor,
             journal = journal,
             artifacts = ArtifactSink { sessionId, name, bytes ->
@@ -452,15 +568,28 @@ class AppContainer(val context: Context) {
                 plans.observe(id, phases.map { p -> app.umbra.core.control.PlanPhase(p.name, p.tasks.map { app.umbra.core.control.PlanTask(it.content, it.status) }) }, "agent")
             },
             // A deleted task's terminals (its shells and the omp TUI) end with it instead of running on unseen.
-            onDeleted = { id -> terminals.closeSession(id) },
-            beforeWork = { session -> sessionFiles.checkpointSession(session) },
+            onDeleted = { id ->
+                try {
+                    try { credentialHandoff.removeSession(id) }
+                    finally { inputLeases.forgetSession(id) }
+                } finally {
+                    lastInputSession.entries.removeIf { it.value == id }
+                    terminals.closeSession(id)
+                }
+            },
+            beforeWork = { session ->
+                agents.proactive.checkAuthority(session)
+                sessionFiles.checkpointSession(session)
+            },
+            checkToolAuthority = { session -> agents.proactive.checkAuthority(session) },
+            connectors = { session -> structuredConnectors(session.agentId) },
             usage = usageBudgets,
             // An agent's conversation is told its soul and memory each time its agent starts.
             sessionPrompt = { s ->
                 val files = sessionFiles.prompt(s)
                 val profile = if (s.kind != app.umbra.core.session.SessionKind.AGENT) null
                 else s.agentId?.let { id -> agents.store.get(id) }?.let { p ->
-                    app.umbra.agent.agents.AgentPrompt.of(p, agents.store.soul(p.id), agents.store.memory(p.id).entries(), agents.intervalMs(p)?.let { (it / 60_000).toInt() })
+                    app.umbra.agent.agents.AgentPrompt.of(p, agents.store.soul(p.id), agents.store.memory(p.id).contextual(s.request) + agents.store.teamMemory().contextual(s.request), agents.intervalMs(p)?.let { (it / 60_000).toInt() })
                 }
                 listOfNotNull(profile, files).joinToString("\n\n").ifBlank { null }
             },
@@ -546,6 +675,8 @@ class AppContainer(val context: Context) {
             }
             governor.start(scope)
             supervisor.start()
+            skillWorkflows.start()
+            credentialHandoff.start()
             sessionBus.start()
             notificationReader.start()
             agents.addSource(connectors.messages)

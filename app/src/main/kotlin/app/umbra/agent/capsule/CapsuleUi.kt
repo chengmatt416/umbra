@@ -7,6 +7,9 @@ import android.graphics.BitmapFactory
 import android.speech.SpeechRecognizer
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -42,11 +45,11 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -106,7 +109,6 @@ import app.umbra.agent.ui.porcelain.PIcon
 import app.umbra.agent.ui.porcelain.PIcons
 import app.umbra.agent.ui.porcelain.Theme
 import app.umbra.agent.ui.porcelain.motionAllowed
-import app.umbra.agent.ui.sessionsFlow
 import app.umbra.core.control.EmergencyLevel
 import app.umbra.core.control.LeaseState
 import app.umbra.core.control.Principal
@@ -118,7 +120,16 @@ import app.umbra.core.safety.RiskLevel
 import app.umbra.core.session.SessionState
 import app.umbra.core.session.Trails
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.abs
+
+@Composable
+private fun <T> StateFlow<T>.onCapsuleSignal(container: AppContainer): androidx.compose.runtime.State<T> {
+    val source = this
+    val flow = remember(source, container) { container.capsuleSignals.read(source) }
+    val initial = remember(source, container) { source.value }
+    return flow.collectAsState(initial)
+}
 
 /** The capsule is black where it meets the camera, so the camera reads as part of it. */
 private val Ink get() = Color.Black
@@ -141,13 +152,13 @@ private val LIVE = setOf(SessionState.RUNNING, SessionState.WAITING_APPROVAL, Se
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
-    val everySession by remember { container.sessionStore.sessionsFlow() }.collectAsState(emptyList())
+    val everySession by remember(container) { container.capsuleSignals.content { container.sessionStore.list() } }.collectAsState(emptyList())
     // The Capsule follows coding tasks; an agent's conversation shows in its own block of the card.
     val sessions = everySession.filter { it.kind == app.umbra.core.session.SessionKind.CODING }
-    val approvals by container.approvals.pending.collectAsState()
-    val questions by container.questions.pending.collectAsState()
-    val focused by container.ui.focusedSession.collectAsState()
-    val emergency by container.emergency.state.collectAsState()
+    val approvals by container.approvals.pending.onCapsuleSignal(container)
+    val questions by container.questions.pending.onCapsuleSignal(container)
+    val focused by container.ui.focusedSession.onCapsuleSignal(container)
+    val emergency by container.emergency.state.onCapsuleSignal(container)
     val expanded by capsule.expanded.collectAsState()
     val tucked by capsule.tucked.collectAsState()
     val dismissed by capsule.dismissedFailures.collectAsState()
@@ -163,9 +174,23 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     val failed = sessions.filter { it.state == SessionState.FAILED && it.id !in dismissed && System.currentTimeMillis() - it.updatedAtMs < 10 * 60_000 }.maxByOrNull { it.updatedAtMs }
     val needsYou = approvals.isNotEmpty() || questions.isNotEmpty()
     val atRest = current == null && !needsYou && !locked && failed == null
-    val nowMs = System.currentTimeMillis()
-    val ticking by produceState(nowMs, expanded, current?.id) { while (expanded || current != null) { delay(1_000); value = System.currentTimeMillis() } }
-    val clockNow = maxOf(ticking, nowMs)
+    val revision by container.capsuleSignals.revision.collectAsState()
+    val nowMs = remember(revision) { System.currentTimeMillis() }
+    val suggestions by remember(container) { container.capsuleSignals.content { container.capsuleSuggestions.snapshot(System.currentTimeMillis()) } }
+        .collectAsState(CapsuleSuggestionSnapshot())
+    SideEffect { capsule.projectedSuggestions = suggestions.count }
+    LaunchedEffect(suggestions.nextExpiryAtMs) {
+        suggestions.nextExpiryAtMs?.let { expiry ->
+            var remaining = expiry - System.currentTimeMillis()
+            while (remaining > 0) {
+                delay(remaining)
+                remaining = expiry - System.currentTimeMillis()
+            }
+            capsule.suggestionExpirySignals++
+            container.capsuleSignals.request()
+        }
+    }
+    val clockNow = nowMs
     val waitingOn = remember(approvals, questions) { approvals.map { it.sessionId }.toSet() + questions.map { it.sessionId } }
     val crew = Crews.of(sessions, activity, waitingOn, finished, dismissed, nowMs)
     val headMood = current?.let { Crews.moodOf(it, activity[it.id], it.id in waitingOn, null, false, nowMs) } ?: Mood.IDLE
@@ -182,32 +207,69 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
         failed != null && current == null -> stringResource(R.string.cap_stopped_error)
         done != null && current == null -> stringResource(R.string.capc_done_label, done.title)
         current != null -> steps.current?.text ?: current.title
+        suggestions.count > 0 -> pluralStringResource(R.plurals.cap_suggestions_label, suggestions.count, suggestions.count)
         else -> stringResource(R.string.cap_at_rest)
     }
     val trailing = when {
         needsYou -> "${approvals.size + questions.size}"
         current != null -> elapsedText(clockNow - (activity[current.id]?.runStartedAtMs ?: current.createdAtMs))
+        suggestions.count > 0 -> "${suggestions.count}"
         crew.overflow > 0 -> "+${crew.overflow}"
         else -> null
     }
     val crewSaid = crewDescription(crew)
     val capsuleDescription = stringResource(R.string.cap_description, label).let { if (crewSaid.isEmpty()) it else stringResource(R.string.capc_description_more, it, crewSaid) }
 
-    if (expanded) {
-        CapsuleCard(capsule, container, current, headMood, steps, activity, trail, crew, sessions, clockNow, tick, moving, locked, failed, approvals, questions)
+    val collapsing by capsule.collapsing.collectAsState()
+    if (expanded || collapsing) {
+        // The card grows out of the pill at the camera and folds back into it; the window waits for the fold. Only
+        // graphics-layer properties move: resizing an overlay window every frame makes the window manager stall.
+        val progress = remember { androidx.compose.animation.core.Animatable(if (moving) 0f else 1f) }
+        LaunchedEffect(expanded) {
+            if (expanded) progress.animateTo(1f, if (moving) spring(dampingRatio = 0.8f, stiffness = 420f) else androidx.compose.animation.core.snap())
+            else {
+                if (moving) progress.animateTo(0f, androidx.compose.animation.core.tween(190, easing = androidx.compose.animation.core.FastOutLinearInEasing))
+                capsule.collapsing.value = false
+            }
+        }
+        Box(
+            Modifier
+                .onPlaced { capsule.cardShown.value = true }
+                .graphicsLayer {
+                    val p = progress.value
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
+                    scaleX = 0.42f + 0.58f * p
+                    scaleY = 0.18f + 0.82f * p
+                    alpha = (p * 1.8f).coerceIn(0f, 1f)
+                },
+        ) {
+            CapsuleCard(capsule, container, current, headMood, steps, activity, trail, crew, sessions, clockNow, tick, moving, locked, failed, approvals, questions, suggestions)
+        }
+        return
+    }
+    val secureInput by container.credentialHandoff.pending.onCapsuleSignal(container)
+    if (secureInput != null) {
+        val secureLabel = stringResource(R.string.credential_title)
+        CollapsedPill(capsule, hole, false, false, secureLabel, "1", true, crew, Mood.WAITING, tick, moving, secureLabel)
+        return
+    }
+    val teaching by container.demonstrations.active.onCapsuleSignal(container)
+    if (teaching != null) {
+        val teachLabel = stringResource(R.string.teach_stop)
+        CollapsedPill(capsule, hole, false, false, teachLabel, null, true, crew, Mood.WAITING, tick, moving, teachLabel)
         return
     }
     // Recording the screen: the capsule is its stop button, showing how long it has run (in the attention colour).
-    val recording by container.recorder.state.collectAsState()
+    val recording by container.recorder.state.onCapsuleSignal(container)
     val rec = recording
     if (rec is ScreenRecorder.State.Recording || rec == ScreenRecorder.State.Finishing) {
-        val recNow by produceState(System.currentTimeMillis(), rec) { while (true) { value = System.currentTimeMillis(); delay(500) } }
+        val recNow = nowMs
         val recLabel = stringResource(if (rec is ScreenRecorder.State.Recording) R.string.r_rec_stop else R.string.r_rec_finishing)
         val recTime = (rec as? ScreenRecorder.State.Recording)?.let { ScreenRecorder.clock(recNow - it.startedAtMs) }
         CollapsedPill(capsule, hole, false, false, recLabel, recTime, true, crew, Mood.WAITING, tick, moving, recLabel)
         return
     }
-    CollapsedPill(capsule, hole, tucked, atRest, label, trailing, needsYou, crew, headMood, tick, moving, capsuleDescription)
+    CollapsedPill(capsule, hole, tucked, atRest && suggestions.count == 0, label, trailing, needsYou, crew, headMood, tick, moving, capsuleDescription)
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -232,8 +294,26 @@ private fun CollapsedPill(
     val expandLabel = stringResource(R.string.cap_expand)
     val height = hole?.let { with(density) { it.heightPx.toDp() } } ?: 34.dp
     val small = tucked || atRest
+    // Arrives with a small pop at the camera, pulses once when something needs the user, and fades out of the way
+    // while another capsule app is expanded over the camera.
+    val yielding by capsule.yielding.collectAsState()
+    val pop = remember { androidx.compose.animation.core.Animatable(if (moving) 0.8f else 1f) }
+    LaunchedEffect(Unit) { if (moving) pop.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 520f)) }
+    val pulse = remember { androidx.compose.animation.core.Animatable(1f) }
+    LaunchedEffect(needsYou) {
+        if (needsYou && moving) {
+            pulse.animateTo(1.08f, spring(dampingRatio = 0.55f, stiffness = 1100f))
+            pulse.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 420f))
+        }
+    }
+    val away by androidx.compose.animation.core.animateFloatAsState(if (yielding) 0f else 1f, if (moving) spring(dampingRatio = 0.9f, stiffness = 380f) else androidx.compose.animation.core.snap(), label = "capsule-yield")
     Row(
         Modifier
+            .graphicsLayer {
+                val k = pop.value * pulse.value * (0.86f + 0.14f * away)
+                scaleX = k; scaleY = k; alpha = away
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
+            }
             .clip(shape).background(Ink).animateContentSize(spring(dampingRatio = 0.82f, stiffness = 520f))
             .pointerInput(hole, tucked) {
                 // Toward the camera tucks it (the task goes on); outward brings it back; down expands it.
@@ -257,6 +337,10 @@ private fun CollapsedPill(
             }
             .combinedClickable(onClickLabel = expandLabel, onLongClickLabel = selectLabel, onLongClick = { capsule.startSelection() }, onClick = { capsule.tap() })
             .semantics { contentDescription = description }
+            .onGloballyPositioned { coordinates ->
+                val at = coordinates.positionOnScreen()
+                if (at.x.isFinite() && at.y.isFinite()) capsule.noteDebugTarget(null, Point((at.x + coordinates.size.width / 4f).toInt(), (at.y + coordinates.size.height / 2f).toInt()))
+            }
             .heightIn(min = height),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -269,7 +353,7 @@ private fun CollapsedPill(
                 if (tucked || atRest) CompanionGlyph(if (atRest) Mood.IDLE else headMood, tick, moving, size = 18.dp)
                 else CrewRow(crew, tick, moving)
                 val labelRoom = zone - 10.dp - 6.dp - 18.dp - crewExtraWidth(crew)
-                if (!small && labelRoom >= 44.dp) Text(label, Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (needsYou) Attention else Label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (!small && labelRoom >= 44.dp) PillLabel(label, if (needsYou) Attention else Label, moving, Modifier.weight(1f))
             }
             Box(Modifier.width(gap))
             Row(Modifier.width(side).padding(end = 12.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
@@ -286,12 +370,27 @@ private fun CollapsedPill(
             val room = (wrap?.let { with(density) { it.labelMaxPx.toDp() } }?.coerceAtMost(180.dp) ?: 180.dp) - crewExtraWidth(crew)
             if (!small && room >= 40.dp) {
                 Box(Modifier.width(8.dp))
-                Text(label, Modifier.widthIn(max = room), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (needsYou) Attention else Label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                PillLabel(label, if (needsYou) Attention else Label, moving, Modifier.widthIn(max = room))
             }
             if (!small && trailing != null) Text(trailing, Modifier.padding(start = 8.dp), fontSize = 12.sp, color = Small, maxLines = 1)
             Box(Modifier.width(if (gap != null && wrap.contentLeft) gap + 6.dp else 12.dp))
         }
     }
+}
+
+/** The pill's words: a new label rises in as the old one lifts away, so a step change reads as progress. */
+@Composable
+private fun PillLabel(label: String, color: Color, moving: Boolean, modifier: Modifier) {
+    androidx.compose.animation.AnimatedContent(
+        label, modifier,
+        transitionSpec = {
+            if (!moving) androidx.compose.animation.EnterTransition.None togetherWith androidx.compose.animation.ExitTransition.None
+            else (androidx.compose.animation.slideInVertically(spring(dampingRatio = 0.86f, stiffness = 520f)) { it / 2 } + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(160))) togetherWith
+                (androidx.compose.animation.slideOutVertically(androidx.compose.animation.core.tween(140)) { -it / 2 } + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100))) using
+                androidx.compose.animation.SizeTransform(clip = true)
+        },
+        label = "pill-label",
+    ) { text -> Text(text, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis) }
 }
 
 /**
@@ -317,11 +416,13 @@ private fun CapsuleCard(
     failed: app.umbra.core.session.Session?,
     allApprovals: List<app.umbra.core.safety.ApprovalRequest>,
     questions: List<app.umbra.core.orchestrator.QuestionBroker.Pending>,
+    suggestions: CapsuleSuggestionSnapshot,
 ) {
     val density = LocalDensity.current
-    val emergency by container.emergency.state.collectAsState()
-    val leases by container.inputLeases.all.collectAsState()
-    val prefs by container.settings.flow.collectAsState()
+    val emergency by container.emergency.state.onCapsuleSignal(container)
+    val leases by container.inputLeases.all.onCapsuleSignal(container)
+    val secureInput by container.credentialHandoff.pending.onCapsuleSignal(container)
+    val prefs by container.settings.flow.onCapsuleSignal(container)
     val notice by capsule.notice.collectAsState()
     val dismissed by capsule.dismissedFailures.collectAsState()
     val power = prefs.uiMode != UiMode.SIMPLE
@@ -329,7 +430,7 @@ private fun CapsuleCard(
     val maxBody = with(density) { (LocalResources.current.displayMetrics.heightPixels * 0.72f).toDp() }
     // At rest the card is the default agent's (Figma 11.6): its last words, its approvals, a field that talks to it.
     val agentMode = prefs.capsuleToAgent
-    val profiles by container.agents.store.profiles.collectAsState()
+    val profiles by container.agents.store.profiles.onCapsuleSignal(container)
     val agent = remember(profiles, prefs.defaultAgentId) { container.agents.defaultAgent() }
     val approvals = if (current == null && agentMode && agent?.sessionId != null) allApprovals.filter { it.sessionId != agent.sessionId } else allApprovals
     Column(
@@ -349,6 +450,16 @@ private fun CapsuleCard(
             RoundButton(PIcons.chevronDown, stringResource(R.string.cap_collapse), rotate = true) { capsule.expanded.value = false }
         }
         Column(Modifier.fillMaxWidth().heightIn(max = maxBody).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            secureInput?.let { request ->
+                Text("${stringResource(R.string.credential_title)} · ${request.target.packageName}", color = Label)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RoundButton(PIcons.hand, stringResource(R.string.credential_open), size = 40.dp) {
+                        container.context.startActivity(Intent(container.context, app.umbra.agent.credentials.CredentialHandoffActivity::class.java)
+                            .putExtra("request", request.id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                    Text(stringResource(R.string.credential_open), color = Small)
+                }
+            }
             if (current != null) {
                 Column {
                     Text(current.title, fontSize = 18.sp, fontWeight = FontWeight.Medium, color = Label, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -403,6 +514,8 @@ private fun CapsuleCard(
                     DarkButton(stringResource(R.string.cap_dismiss), null) { capsule.dismissedFailures.value = dismissed + f.id }
                 }
             }
+            if (!locked && suggestions.items.isNotEmpty()) CapsuleSuggestionRows(capsule, suggestions, compact = current != null || approvals.isNotEmpty() || questions.isNotEmpty())
+            if (suggestions.unavailable) Text(stringResource(R.string.cap_suggestions_unavailable), color = Attention, fontSize = 13.sp)
             if (current == null && agentMode) AgentBlock(capsule, container, agent, allApprovals)
             else if (current == null) RecentTasks(capsule, sessions)
         }
@@ -459,8 +572,8 @@ private fun RecentTasks(capsule: Capsule, sessions: List<app.umbra.core.session.
 @Composable
 private fun CardField(capsule: Capsule, container: AppContainer, target: String?, agent: app.umbra.agent.agents.AgentProfile? = null, agentMode: Boolean = false) {
     val context = LocalContext.current
-    val draft by container.ui.draft.collectAsState()
-    val chips by container.ui.draftContext.collectAsState()
+    val draft by container.ui.draft.onCapsuleSignal(container)
+    val chips by container.ui.draftContext.onCapsuleSignal(container)
     val focused by capsule.cardFocused.collectAsState()
     val busy by capsule.busy.collectAsState()
     val focus = remember { FocusRequester() }
@@ -495,6 +608,7 @@ private fun CardField(capsule: Capsule, container: AppContainer, target: String?
         if (draft.isBlank()) {
             RoundButton(PIcons.target, stringResource(R.string.cap_select_screen), size = 40.dp) { capsule.startSelection() }
             RoundButton(PIcons.record, stringResource(R.string.r_rec_start), size = 40.dp) { capsule.startRecording() }
+            agent?.let { owner -> RoundButton(PIcons.record, stringResource(R.string.teach_start), size = 40.dp) { capsule.startTeaching(owner.id) } }
             if (canListen) RoundButton(PIcons.mic, stringResource(R.string.cap_speak), size = 40.dp) {
                 context.startActivity(Intent(context, VoiceInputActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
@@ -540,16 +654,16 @@ internal fun RoundButton(icon: IconSpec, description: String, size: Dp = 32.dp, 
 @Composable
 internal fun QuickComposerView(capsule: Capsule, container: AppContainer, screenHeightPx: Int, navigationInsetPx: Int) {
     val context = LocalContext.current
-    val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsState(emptyList())
-    val draft by container.ui.draft.collectAsState()
-    val chips by container.ui.draftContext.collectAsState()
-    val target by container.ui.composerTarget.collectAsState()
-    val settings by container.settings.flow.collectAsState()
+    val sessions by remember(container) { container.capsuleSignals.content { container.sessionStore.list() } }.collectAsState(emptyList())
+    val draft by container.ui.draft.onCapsuleSignal(container)
+    val chips by container.ui.draftContext.onCapsuleSignal(container)
+    val target by container.ui.composerTarget.onCapsuleSignal(container)
+    val settings by container.settings.flow.onCapsuleSignal(container)
     val focused by capsule.composerFocused.collectAsState()
     val busy by capsule.busy.collectAsState()
     val notice by capsule.notice.collectAsState()
-    val homeProject by container.ui.homeProject.collectAsState()
-    val projects by container.projects.all.collectAsState()
+    val homeProject by container.ui.homeProject.onCapsuleSignal(container)
+    val projects by container.projects.all.onCapsuleSignal(container)
     val live = sessions.filter { it.state in LIVE }
     val targetSession = sessions.firstOrNull { it.id == target }
     val project = homeProject?.let { projects[it] }
@@ -655,7 +769,7 @@ internal fun SelectionView(capsule: Capsule, container: AppContainer, capture: S
     var region by remember { mutableStateOf<app.umbra.core.model.Rect?>(null) }
     var text by remember { mutableStateOf("") }
     val density = LocalDensity.current
-    val prefs by container.settings.flow.collectAsState()
+    val prefs by container.settings.flow.onCapsuleSignal(container)
     val focused by capsule.selectionFocused.collectAsState()
     val busy by capsule.busy.collectAsState()
     val focus = remember { FocusRequester() }

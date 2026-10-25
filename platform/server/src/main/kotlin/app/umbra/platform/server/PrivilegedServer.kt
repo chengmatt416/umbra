@@ -8,16 +8,17 @@ import app.umbra.platform.api.ShellEvent
 import app.umbra.platform.api.ShellIdentity
 import app.umbra.platform.api.ShellRequest
 import app.umbra.platform.privileged.Wire
+import app.umbra.platform.api.BoundedLineReader
+import app.umbra.platform.privileged.OwnedResources
 import app.umbra.platform.privileged.jsonOf
 import app.umbra.platform.shell.ProcessShell
-import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.IOException
-import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
@@ -26,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -49,8 +51,8 @@ class PrivilegedServer(private val port: Int, private val token: String) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val shell = ProcessShell(ShellIdentity.SHELL, listOf("sh", "-c"), "helper_shell")
     private val displays = VirtualDisplays()
-    private val streams = ConcurrentHashMap<String, Job>()
-    private val procs = ConcurrentHashMap<String, java.lang.Process>()
+    private val clients = ConcurrentHashMap.newKeySet<Socket>()
+    private val connectionSlots = java.util.concurrent.Semaphore(8)
     private val main = Handler(Looper.getMainLooper())
     private var server: ServerSocket? = null
 
@@ -68,13 +70,23 @@ class PrivilegedServer(private val port: Int, private val token: String) {
                 } catch (_: IOException) {
                     break
                 }
-                Thread({ serve(client) }, "umbra-conn").apply { isDaemon = true }.start()
+                val accepted = synchronized(clients) {
+                    if (s.isClosed || server !== s || !connectionSlots.tryAcquire()) false else { clients += client; true }
+                }
+                if (!accepted) { client.close(); continue }
+                Thread({
+                    try { serve(client) } finally { clients.remove(client); connectionSlots.release() }
+                }, "umbra-conn").apply { isDaemon = true }.start()
             }
         }, "umbra-accept").apply { isDaemon = true }.start()
     }
 
     fun stop() {
-        try { server?.close() } catch (_: IOException) {}
+        synchronized(clients) {
+            try { server?.close() } catch (_: IOException) {}
+            server = null
+            clients.forEach { try { it.close() } catch (_: IOException) {} }
+        }
         main.post { displays.destroyAll() }
         scope.cancel()
     }
@@ -82,7 +94,8 @@ class PrivilegedServer(private val port: Int, private val token: String) {
     // ---- connections ----
 
     private fun serve(socket: Socket) = socket.use {
-        val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+        socket.soTimeout = 10_000
+        val reader = BoundedLineReader(socket.getInputStream())
         val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8))
         val lock = Any()
         fun send(obj: JsonObject) = synchronized(lock) {
@@ -94,7 +107,7 @@ class PrivilegedServer(private val port: Int, private val token: String) {
 
         // The first line must be a hello with the right token.
         val hello = try {
-            Json.parseToJsonElement(reader.readLine() ?: return).jsonObject
+            Json.parseToJsonElement(reader.readLine(4096) ?: return).jsonObject
         } catch (_: Exception) {
             return
         }
@@ -111,51 +124,67 @@ class PrivilegedServer(private val port: Int, private val token: String) {
             ),
         )
 
-        val mine = Job()
-        val ownedProcs = ConcurrentHashMap.newKeySet<String>()
+        socket.soTimeout = 5_000
+        val mine = SupervisorJob(scope.coroutineContext[Job])
+        val streams = OwnedResources<Job>(16) { it.cancel() }
+        val procs = OwnedResources<java.lang.Process>(16, ::destroyProc)
+        val requests = java.util.concurrent.Semaphore(16)
+        var lastRead = System.currentTimeMillis()
         try {
             while (true) {
-                val line = reader.readLine() ?: break
+                val line = try { reader.readLine(MAX_FRAME_BYTES) } catch (_: SocketTimeoutException) {
+                    if (procs.isEmpty() && streams.isEmpty() && mine.children.none { it.isActive } && System.currentTimeMillis() - lastRead > 5 * 60_000L) break
+                    continue
+                } ?: break
+                lastRead = System.currentTimeMillis()
                 val request = try {
                     Json.parseToJsonElement(line).jsonObject
                 } catch (_: Exception) {
                     continue
                 }
+                if (!requests.tryAcquire()) {
+                    send(jsonOf("id" to request.string("id"), "ok" to false, "code" to "busy", "error" to "too many requests"))
+                    continue
+                }
                 scope.launch(mine) {
-                    val id = (request["id"] as? JsonPrimitive)?.content
-                    val reply = try {
-                        handle(request, ::send, ownedProcs)
-                    } catch (e: SecurityException) {
-                        jsonOf("ok" to false, "code" to "permission_denied", "error" to (e.message ?: "permission denied"))
-                    } catch (e: Throwable) {
-                        jsonOf("ok" to false, "code" to "error", "error" to "${e::class.java.simpleName}: ${e.message}")
-                    }
-                    send(JsonObject(buildMap { id?.let { put("id", JsonPrimitive(it)) }; putAll(reply) }))
+                    try {
+                        val id = (request["id"] as? JsonPrimitive)?.content
+                        val reply = try {
+                            handle(request, ::send, procs, streams, mine)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: SecurityException) {
+                            jsonOf("ok" to false, "code" to "permission_denied", "error" to (e.message ?: "permission denied"))
+                        } catch (e: Throwable) {
+                            jsonOf("ok" to false, "code" to "error", "error" to "${e::class.java.simpleName}: ${e.message}")
+                        }
+                        send(JsonObject(buildMap { id?.let { put("id", JsonPrimitive(it)) }; putAll(reply) }))
+                    } finally { requests.release() }
                 }
             }
         } catch (_: IOException) {
         } finally {
             mine.cancel()
             // Streams belong to the connection that started them.
-            streams.values.forEach { it.cancel() }
+            streams.close()
             // So do processes: one that lost its owner would run on with nobody to read it.
-            ownedProcs.toList().forEach { killProc(it) }
+            procs.close()
         }
     }
 
     // ---- operations ----
 
-    private suspend fun handle(request: JsonObject, push: (JsonObject) -> Unit, ownedProcs: MutableSet<String>): JsonObject {
+    private suspend fun handle(request: JsonObject, push: (JsonObject) -> Unit, procs: OwnedResources<java.lang.Process>, streams: OwnedResources<Job>, connectionJob: Job): JsonObject {
         val op = (request["op"] as? JsonPrimitive)?.content ?: return jsonOf("ok" to false, "code" to "error", "error" to "missing op")
         return when (op) {
             Wire.HELLO -> jsonOf("ok" to true)
             Wire.EXEC -> exec(request)
-            Wire.STREAM_START -> startStream(request, push)
+            Wire.STREAM_START -> startStream(request, push, streams, connectionJob)
             Wire.STREAM_CANCEL -> {
-                streams.remove(request.string("stream"))?.cancel()
+                streams.cancel(request.string("stream"))
                 jsonOf("ok" to true)
             }
-            Wire.PROC_START -> startProc(request, push, ownedProcs)
+            Wire.PROC_START -> startProc(request, push, procs)
             Wire.PROC_WRITE -> {
                 val process = procs[request.string("proc")] ?: return jsonOf("ok" to false, "code" to "not_found", "error" to "no such process")
                 val bytes = Wire.unb64(request.string("data").orEmpty())
@@ -172,7 +201,7 @@ class PrivilegedServer(private val port: Int, private val token: String) {
                 jsonOf("ok" to true)
             }
             Wire.PROC_KILL -> {
-                killProc(request.string("proc").orEmpty())
+                procs.cancel(request.string("proc"))
                 jsonOf("ok" to true)
             }
             Wire.DISPLAY_CREATE -> {
@@ -217,14 +246,22 @@ class PrivilegedServer(private val port: Int, private val token: String) {
         }
     }
 
-    private fun shellRequest(r: JsonObject) = ShellRequest(
-        command = r.string("command") ?: throw IllegalArgumentException("command required"),
-        cwd = r.string("cwd"),
-        env = (r["env"] as? JsonObject)?.mapValues { (it.value as JsonPrimitive).content }.orEmpty(),
-        stdin = r.string("stdin")?.let { String(Wire.unb64(it), Charsets.UTF_8) },
-        timeoutMs = r.long("timeoutMs") ?: 30_000,
-        maxOutputBytes = r.int("maxOutputBytes") ?: 64 * 1024,
-    )
+    private fun shellRequest(r: JsonObject, streaming: Boolean = false): ShellRequest {
+        val requestedTimeout = r.long("timeoutMs") ?: 30_000
+        val timeout = if (streaming && requestedTimeout == Int.MAX_VALUE.toLong()) Long.MAX_VALUE else requestedTimeout
+        val outputLimit = r.int("maxOutputBytes") ?: 64 * 1024
+        require(timeout in 1..3_600_000L || (streaming && timeout == Long.MAX_VALUE)) { "timeoutMs is out of range" }
+        val maxOutput = if (r.bool("binary") == true) 32 * 1024 * 1024 else 8 * 1024 * 1024
+        require(outputLimit in 1..maxOutput) { "maxOutputBytes is out of range" }
+        return ShellRequest(
+            command = r.string("command") ?: throw IllegalArgumentException("command required"),
+            cwd = r.string("cwd"),
+            env = (r["env"] as? JsonObject)?.mapValues { (it.value as JsonPrimitive).content }.orEmpty(),
+            stdin = r.string("stdin")?.let { String(Wire.unb64(it), Charsets.UTF_8) },
+            timeoutMs = timeout,
+            maxOutputBytes = outputLimit,
+        )
+    }
 
     private suspend fun exec(r: JsonObject): JsonObject {
         val request = shellRequest(r)
@@ -241,10 +278,11 @@ class PrivilegedServer(private val port: Int, private val token: String) {
         }
     }
 
-    private fun startStream(r: JsonObject, push: (JsonObject) -> Unit): JsonObject {
+    private fun startStream(r: JsonObject, push: (JsonObject) -> Unit, streams: OwnedResources<Job>, connectionJob: Job): JsonObject {
         val id = r.string("stream") ?: return jsonOf("ok" to false, "code" to "error", "error" to "stream id required")
-        val request = shellRequest(r)
-        streams[id] = scope.launch {
+        val request = shellRequest(r, streaming = true)
+        val reservation = streams.reserve(id) ?: return jsonOf("ok" to false, "code" to "conflict", "error" to "stream id is in use or the resource limit was reached")
+        val job = scope.launch(connectionJob, start = CoroutineStart.LAZY) {
             try {
                 shell.stream(request).collect { event ->
                     when (event) {
@@ -254,25 +292,28 @@ class PrivilegedServer(private val port: Int, private val token: String) {
                     }
                 }
             } finally {
-                streams.remove(id)
+                streams.release(reservation)
             }
         }
+        if (!streams.attach(reservation, job)) return jsonOf("ok" to false, "code" to "disconnected", "error" to "connection closed")
+        job.start()
         return jsonOf("ok" to true)
     }
 
-    private fun startProc(r: JsonObject, push: (JsonObject) -> Unit, owned: MutableSet<String>): JsonObject {
+    private fun startProc(r: JsonObject, push: (JsonObject) -> Unit, procs: OwnedResources<java.lang.Process>): JsonObject {
         val id = r.string("proc") ?: return jsonOf("ok" to false, "code" to "error", "error" to "proc id required")
         val command = r.string("command") ?: return jsonOf("ok" to false, "code" to "error", "error" to "command required")
         val builder = ProcessBuilder("sh", "-c", command)
         r.string("cwd")?.let { builder.directory(java.io.File(it)) }
         (r["env"] as? JsonObject)?.forEach { (k, v) -> builder.environment()[k] = (v as JsonPrimitive).content }
+        val reservation = procs.reserve(id) ?: return jsonOf("ok" to false, "code" to "conflict", "error" to "process id is in use or the resource limit was reached")
         val process = try {
             builder.start()
         } catch (e: IOException) {
+            procs.release(reservation)
             return jsonOf("ok" to false, "code" to "error", "error" to "cannot start: ${e.message}")
         }
-        procs[id] = process
-        owned += id
+        if (!procs.attach(reservation, process)) return jsonOf("ok" to false, "code" to "disconnected", "error" to "connection closed")
         // Output is forwarded as it comes, in chunks, as bytes: the caller decides what a line is.
         fun pump(input: java.io.InputStream, kind: String) = Thread({
             val buffer = ByteArray(16 * 1024)
@@ -290,14 +331,12 @@ class PrivilegedServer(private val port: Int, private val token: String) {
             val code = try { process.waitFor() } catch (_: InterruptedException) { -1 }
             readers.forEach { it.join(3_000) }
             push(jsonOf("proc" to id, "exit" to code))
-            procs.remove(id)
-            owned -= id
+            procs.release(reservation)
         }, "umbra-proc-wait").apply { isDaemon = true; start() }
         return jsonOf("ok" to true, "pid" to (app.umbra.platform.shell.ProcessTree.pidOf(process) ?: -1))
     }
 
-    private fun killProc(id: String) {
-        val process = procs.remove(id) ?: return
+    private fun destroyProc(process: java.lang.Process) {
         val pid = app.umbra.platform.shell.ProcessTree.pidOf(process)
         if (pid != null) app.umbra.platform.shell.ProcessTree.killDescendantsOf(pid)
         process.destroyForcibly()
@@ -324,6 +363,7 @@ class PrivilegedServer(private val port: Int, private val token: String) {
 
     private companion object {
         const val FIRST_FRAME_WAIT_MS = 4_000L
+        const val MAX_FRAME_BYTES = 16 * 1024 * 1024
     }
 
     private fun JsonObject.string(name: String): String? = (this[name] as? JsonPrimitive)?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content

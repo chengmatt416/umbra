@@ -117,8 +117,8 @@ private fun DisplayCard(container: AppContainer, d: DisplayInfo, tick: Int) {
             }
         }
         image?.let { Image(it, stringResource(R.string.disp_preview, d.id), Modifier.fillMaxWidth().aspectRatio(d.width.toFloat() / d.height.coerceAtLeast(1)).clip(RoundedCornerShape(14.dp)), contentScale = ContentScale.Fit) }
-        if (userHolds) PButton(stringResource(R.string.r_task_give_back), { container.inputLeases.release(resource, Principal.User, "returned by the user") }, Modifier.fillMaxWidth(), style = ButtonStyle.Alt)
-        else PButton(stringResource(R.string.r_task_take_over), { container.inputLeases.takeBack(resource) }, Modifier.fillMaxWidth(), icon = PIcons.hand)
+        if (userHolds) PButton(stringResource(R.string.r_task_give_back), { container.returnControl(resource) }, Modifier.fillMaxWidth(), style = ButtonStyle.Alt)
+        else PButton(stringResource(R.string.r_task_take_over), { container.takeOver(resource) }, Modifier.fillMaxWidth(), icon = PIcons.hand)
     }
 }
 
@@ -167,8 +167,9 @@ private fun LinuxDesktop() {
                                 val img = image ?: return@detectTapGestures
                                 if (size.width == 0) return@detectTapGestures
                                 val p = Point((at.x / size.width * img.width).toInt(), (at.y / size.height * img.height).toInt())
-                                if (!userHolds) container.inputLeases.takeBack("gui:0")
-                                scope.launch { runCatching { container.linuxGui.tap(null, p) }.onFailure { error = it.message } }
+                                if (!userHolds) container.takeOver("gui:0")
+                                scope.launch { runCatching { container.userInput("gui:0") { container.linuxGui.tap(null, p) } }.onFailure { error = it.message } }
+                                container.demonstrations.linuxDesktopInput("CLICK", p.x, p.y, img.width, img.height)
                             }
                         },
                 ) {
@@ -179,13 +180,17 @@ private fun LinuxDesktop() {
                     PButton(stringResource(R.string.cap_send), {
                         val t = text
                         text = ""
-                        scope.launch { runCatching { container.linuxGui.typeText(null, t); container.linuxGui.key(null, "Return") }.onFailure { error = it.message } }
+                        scope.launch { runCatching { container.userInput("gui:0") { container.linuxGui.typeText(null, t); container.linuxGui.key(null, "Return") } }.onFailure { error = it.message } }
+                        image?.let { img ->
+                            container.demonstrations.linuxDesktopInput("TYPE", 0, 0, img.width, img.height)
+                            container.demonstrations.linuxDesktopInput("KEY", 0, 0, img.width, img.height, key = "Enter")
+                        }
                     }, Modifier.fillMaxWidth(), enabled = text.isNotEmpty(), icon = PIcons.send)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PButton(stringResource(R.string.r_screens_keyboard), { typing = !typing }, Modifier.weight(1f), style = ButtonStyle.Alt, icon = PIcons.terminal)
-                    if (userHolds) PButton(stringResource(R.string.r_task_give_back), { container.inputLeases.release("gui:0", Principal.User, "returned by the user") }, Modifier.weight(1f), style = ButtonStyle.Alt)
-                    else PButton(stringResource(R.string.r_task_take_over), { container.inputLeases.takeBack("gui:0") }, Modifier.weight(1f), icon = PIcons.hand)
+                    PButton(stringResource(R.string.r_screens_keyboard), { if (!typing && !userHolds) container.takeOver("gui:0"); typing = !typing }, Modifier.weight(1f), style = ButtonStyle.Alt, icon = PIcons.terminal)
+                    if (userHolds) PButton(stringResource(R.string.r_task_give_back), { container.returnControl("gui:0") }, Modifier.weight(1f), style = ButtonStyle.Alt)
+                    else PButton(stringResource(R.string.r_task_take_over), { container.takeOver("gui:0") }, Modifier.weight(1f), icon = PIcons.hand)
                 }
             }
         }

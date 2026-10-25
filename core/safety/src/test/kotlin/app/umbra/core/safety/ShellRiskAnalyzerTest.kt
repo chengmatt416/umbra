@@ -267,8 +267,6 @@ class ShellRiskAnalyzerTest {
         "getprop ro.build.version.sdk",
         "settings get global adb_enabled",
         "settings put global window_animation_scale 0",
-        "input tap 100 200",
-        "input text hello",
         "ps -A",
         "wm size",
         "kill -9 4242",
@@ -343,5 +341,14 @@ class ShellRiskAnalyzerTest {
     fun lowSeverityRootNoteDoesNotRaiseTheLevelToMedium() {
         val findings = assess("kill 4242", root = true)
         assertEquals(LOW, findings.maxLevel())
+    }
+
+    @Test
+    fun shellScreenInputNeedsApprovalLikeTheStructuredScreenTools() {
+        for (command in listOf("input tap 540 1800", "input text hello", "/system/bin/input keyevent 66", "cmd input tap 1 2", "sendevent /dev/input/event0 1 330 1", "monkey -p com.bank 1", "uiautomator runtest x.jar", "sh -c 'input tap 1 2'")) {
+            val a = assess(command)
+            assertTrue(a.any { it.level >= RiskLevel.HIGH }, "$command -> $a")
+        }
+        assertTrue(assess("echo input").none { it.level >= RiskLevel.HIGH })
     }
 }

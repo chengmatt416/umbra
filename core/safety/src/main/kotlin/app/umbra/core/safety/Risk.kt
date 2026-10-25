@@ -33,6 +33,7 @@ enum class RiskCategory(val inSpec: Boolean, val title: String) {
     PLACES_CALL(false, "Places a phone call"),
     DYNAMIC_COMMAND(false, "Runs a command that cannot be statically analysed"),
     PROMPT_INJECTION(true, "Possible instructions injected through untrusted content"),
+    SECRET_EXFILTRATION(false, "Attempts to transmit protected credentials or identity/payment data"),
 
     /** Targets the agent's own app, approvals, or ledger. Always denied, never asked. */
     SELF_PROTECTION(false, "Targets the agent's own safety system"),
@@ -91,6 +92,11 @@ data class ActionContext(
     val actionDescription: String? = null,
     /** A bounded sample of recent tool output, treated as data rather than user authority. */
     val untrustedContent: String? = null,
+    val userIntent: String? = null,
+    val toolName: String? = null,
+    val recipientOrDomain: String? = null,
+    val amountUsd: Double? = null,
+    val outboundText: String? = null,
 ) {
     companion object {
         val DEFAULT_STAGING_ROOTS = listOf("/data/local/tmp/umbra")

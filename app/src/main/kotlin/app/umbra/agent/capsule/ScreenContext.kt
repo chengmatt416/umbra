@@ -27,6 +27,7 @@ import java.io.FileOutputStream
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 
 /** Why the screen could not be used, in words for the user. */
@@ -43,6 +44,7 @@ class ScreenContext(private val context: Context, private val container: AppCont
 
     /** Takes the picture and reads the tree. Umbra's own windows are hidden first by the caller. */
     suspend fun capture(): Capture = withContext(Dispatchers.IO) {
+        check(container.credentialHandoff.pending.value == null) { context.getString(R.string.credential_finish_first) }
         val tree = if (UmbraAccessibilityService.connected.value) runCatching { container.accessibility.snapshot(SnapshotOptions(displayId = 0)) }.getOrNull() else null
         val shot = screenshot()
         val image = BitmapFactory.decodeByteArray(shot.bytes, 0, shot.bytes.size)
@@ -115,6 +117,7 @@ class ScreenContext(private val context: Context, private val container: AppCont
 
     /** One line about the screen now (the app in front, its window, its first words), or null when it cannot be read. */
     suspend fun glance(): String? = withContext(Dispatchers.IO) {
+        if (container.credentialHandoff.pending.value != null) return@withContext null
         if (!UmbraAccessibilityService.connected.value) return@withContext null
         val snapshot = runCatching { container.accessibility.snapshot(SnapshotOptions(displayId = 0)) }.getOrNull() ?: return@withContext null
         val front = frontApp(snapshot) ?: return@withContext null
@@ -153,26 +156,25 @@ class ScreenContext(private val context: Context, private val container: AppCont
         browser: String? = null,
         reportTo: String? = null,
         toAgent: String? = null,
-    ): String {
+    ): String = container.scope.async {
         val chips = container.ui.draftContext.value
-        val blocks = ArrayList<String>()
-        chips.forEach { chip ->
-            val time = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(chip.capturedAtMs))
-            chip.text?.let { blocks += "[${chip.label}, captured $time" + (if (chip.imagePath != null) "; its picture is attached" else "") + "]\n$it" }
-        }
-        // Live Context belongs to the Capsule, which floats over other apps; inside Umbra there is nothing else in front.
-        if (fromCapsule && container.settings.value.liveContext) blocks += "[Live context]\n" + live()
-        val message = if (blocks.isEmpty()) text else text + "\n\n" + blocks.joinToString("\n\n")
-        val images = withContext(Dispatchers.IO) {
-            chips.mapNotNull { chip -> chip.imagePath?.let { File(it) }?.takeIf { it.isFile }?.let { ContentBlock.Image(Base64.encodeToString(it.readBytes(), Base64.NO_WRAP), "image/jpeg") } }
-        }
-        // The field empties as the message leaves (starting an agent can take a while); it comes back if sending fails.
-        val draft = container.ui.draft.value
-        container.ui.saveDraft("")
+        val draft = container.ui.takeDraftForSend(text)
         val id = try {
+            val blocks = ArrayList<String>()
+            chips.forEach { chip ->
+                val time = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(chip.capturedAtMs))
+                chip.text?.let { blocks += "[${chip.label}, captured $time" + (if (chip.imagePath != null) "; its picture is attached" else "") + "]\n$it" }
+            }
+            // Live Context belongs to the Capsule, which floats over other apps; inside Umbra there is nothing else in front.
+            if (fromCapsule && container.settings.value.liveContext) blocks += "[Live context]\n" + live()
+            val message = if (blocks.isEmpty()) text else text + "\n\n" + blocks.joinToString("\n\n")
+            val images = withContext(Dispatchers.IO) {
+                chips.mapNotNull { chip -> chip.imagePath?.let { File(it) }?.takeIf { it.isFile }?.let { ContentBlock.Image(Base64.encodeToString(it.readBytes(), Base64.NO_WRAP), "image/jpeg") } }
+            }
             if (toAgent != null) {
                 // To an agent: its conversation takes the words (with what was selected), the agent decides the rest.
                 container.agents.talk(toAgent, message, images)
+                if (fromCapsule) container.capsule.awaitAgentReply(toAgent)
                 container.agents.store.get(toAgent)?.sessionId ?: toAgent
             } else if (sessionId != null) {
                 container.supervisor.send(sessionId, message, images)
@@ -188,12 +190,12 @@ class ScreenContext(private val context: Context, private val container: AppCont
                 ).id
             }
         } catch (e: Exception) {
-            if (container.ui.draft.value.isEmpty()) container.ui.saveDraft(draft)
+            container.ui.restoreDraftAfterFailedSend(draft)
             throw e
         }
         container.ui.clearSent(chips)
-        return id
-    }
+        id
+    }.await()
 
     private companion object {
         const val MAX_SIDE = 1600

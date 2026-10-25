@@ -101,6 +101,25 @@ class ProcessShellTest {
     }
 
     @Test
+    fun streamingOutputIsBoundedBeforeANewlineArrives(): Unit = runBlocking {
+        val events = withTimeout(5_000) {
+            sh.stream(ShellRequest("head -c 200000 /dev/zero | tr '\\000' x; sleep 20", maxOutputBytes = 1024)).toList()
+        }
+        assertTrue(events.filterIsInstance<ShellEvent.Out>().all { it.line.toByteArray().size <= 1024 })
+        assertTrue(events.filterIsInstance<ShellEvent.Err>().any { "1024" in it.line }, events.toString())
+        assertTrue((events.last() as ShellEvent.Exit).code != 0)
+    }
+
+    @Test
+    fun aStreamHonorsItsDeadlineWhileAnExplicitLogMonitorMayStayOpen(): Unit = runBlocking {
+        val events = withTimeout(5_000) { sh.stream(ShellRequest("echo started; sleep 20", timeoutMs = 150)).toList() }
+        assertEquals(ShellEvent.Out("started"), events.first())
+        assertEquals(ShellEvent.Exit(ProcessShell.TIMEOUT_EXIT_CODE), events.last())
+        val first = withTimeout(5_000) { sh.stream(ShellRequest("echo alive; sleep 20", timeoutMs = Long.MAX_VALUE)).first() }
+        assertEquals(ShellEvent.Out("alive"), first)
+    }
+
+    @Test
     fun cancellingAStreamStopsTheCommandAndItsChildren(): Unit = runBlocking {
         val marker = "sleep 31.${System.nanoTime() % 1000}"
         val first = withTimeout(10_000) { sh.stream(ShellRequest("echo started; $marker")).first() }

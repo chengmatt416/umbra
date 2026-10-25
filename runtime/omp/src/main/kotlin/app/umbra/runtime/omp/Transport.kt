@@ -1,10 +1,9 @@
 package app.umbra.runtime.omp
 
-import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
 import java.io.IOException
-import java.io.InputStreamReader
+import app.umbra.platform.api.BoundedLineReader
 import java.io.OutputStreamWriter
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
@@ -43,7 +42,7 @@ class ProcessTransport private constructor(
     /** Operating-system process id of the launched command, or -1 where the platform cannot tell. */
     val pid: Long = try { process.pid() } catch (_: Throwable) { -1 }
 
-    private val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8), 64 * 1024)
+    private val reader = BoundedLineReader(process.inputStream)
     private val writer = BufferedWriter(OutputStreamWriter(process.outputStream, Charsets.UTF_8), 64 * 1024)
     private val tail = ArrayDeque<String>()
     private val maxTail = stderrLines
@@ -52,13 +51,16 @@ class ProcessTransport private constructor(
         // stderr must be drained or a chatty child blocks on a full pipe.
         Thread({
             try {
-                BufferedReader(InputStreamReader(process.errorStream, Charsets.UTF_8)).forEachLine { line ->
+                val stderr = BoundedLineReader(process.errorStream, strictUtf8 = false)
+                while (true) {
+                    val line = stderr.readLine(64 * 1024) ?: break
                     synchronized(tail) {
-                        tail.addLast(line)
+                        tail.addLast(line.take(16 * 1024))
                         while (tail.size > maxTail) tail.removeFirst()
                     }
                 }
             } catch (_: IOException) {
+                process.destroyForcibly()
             }
         }, "omp-stderr").apply { isDaemon = true }.start()
     }
@@ -69,8 +71,9 @@ class ProcessTransport private constructor(
 
     override suspend fun readLine(): String? = withContext(Dispatchers.IO) {
         try {
-            reader.readLine()
+            reader.readLine(2 * 1024 * 1024)
         } catch (e: IOException) {
+            process.destroyForcibly()
             null
         }
     }

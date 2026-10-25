@@ -31,4 +31,13 @@ class CommandPrefixesTest {
         assertFalse(rule.matches(command.copy(operation = Operation.Shell("git push origin main", stdin = "program")), null, 0, "/work/a"))
         assertFalse(rule.covers(RiskFinding(RiskCategory.SENDS_MESSAGE, RiskLevel.CRITICAL, "critical")))
     }
+
+    @Test
+    fun screenInputNeverEarnsAPersistentPrefix() {
+        for (command in listOf("input tap 1 2", "/system/bin/input text x", "cmd input keyevent 3", "monkey -p a 1", "sendevent a 1 2 3", "uiautomator dump")) {
+            assertNull(CommandPrefixes.offered(Operation.Shell(command)), command)
+        }
+        val old = AllowRule("r", "*", setOf(RiskCategory.DYNAMIC_COMMAND), operation = "shell", commandPrefix = "input", literalCommand = true)
+        assertFalse(old.matches(request(Operation.Shell("input tap 1 2")), null, 0), "grants saved before this rule stop applying")
+    }
 }

@@ -55,16 +55,18 @@ class AgentService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_TEACH_STOP) scope.launch { container.demonstrations.stop() }
         if (!started) {
             started = true
             startForeground(ONGOING_ID, ongoing(emptyList(), emptyList(), 0), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
             observe()
-            container.capsule.start()
+            container.capsuleSignals.start(scope)
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        container.capsuleSignals.stop()
         container.capsule.stop()
         holdAwake(false)
         scope.cancel()
@@ -73,6 +75,17 @@ class AgentService : Service() {
 
     private fun observe() {
         val container = container
+        scope.launch {
+            container.demonstrations.active.collect { recording ->
+                if (recording == null) manager.cancel(TEACH_ID)
+                else manager.notify(TEACH_ID, Notification.Builder(this@AgentService, CHANNEL_STATUS)
+                    .setSmallIcon(R.drawable.ic_stat_umbra).setContentTitle(getString(R.string.teach_recording))
+                    .setContentText(getString(R.string.teach_stop)).setOngoing(true).setOnlyAlertOnce(true)
+                    .setContentIntent(openPage("agents", TEACH_ID))
+                    .addAction(Notification.Action.Builder(null, getString(R.string.teach_stop), PendingIntent.getService(this@AgentService, TEACH_ID,
+                        Intent(this@AgentService, AgentService::class.java).setAction(ACTION_TEACH_STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)).build()).build())
+            }
+        }
         scope.launch {
             combine(container.sessionStore.sessionsFlow(), container.approvals.pending, container.questions.pending) { sessions, approvals, questions -> Triple(sessions, approvals, questions.size) }
                 .collect { (sessions, approvals, questionCount) ->
@@ -105,6 +118,7 @@ class AgentService : Service() {
                     container.approvals.pending.value.isNotEmpty() || container.questions.pending.value.isNotEmpty() ||
                     // An agent runs all the time: its wake loop lives in this process.
                     (container.agents.profiles().any { it.running } || container.telegram.active) ||
+                    container.settings.value.layaWanted || container.demonstrations.active.value != null || container.credentialHandoff.pending.value != null ||
                     // The capsule is on screen: the process must stay for it to stay.
                     (container.settings.value.overlayEnabled && (android.provider.Settings.canDrawOverlays(this@AgentService) || app.umbra.platform.android.UmbraAccessibilityService.connected.value))
                 if (busy) idleSince = System.currentTimeMillis()
@@ -264,6 +278,8 @@ class AgentService : Service() {
         const val EXTRA_SESSION = "session"
         const val PAGE_STOP_ALL = "stop-all"
         private const val ONGOING_ID = 1
+        private const val TEACH_ID = 4109
+        private const val ACTION_TEACH_STOP = "app.umbra.agent.TEACH_STOP"
         private const val NEXT_ID_BASE = 1_000
         private const val RESULT_BASE = 100_000
         private const val IDLE_STOP_MS = 90_000L

@@ -176,7 +176,7 @@ private fun colorsFor(spec: ThemeSpec): androidx.compose.material3.ColorScheme {
     val scheme = if (spec.dark) androidx.compose.material3.darkColorScheme() else lightColorScheme()
     return scheme.copy(
         primary = t.accent2,
-        onPrimary = if (spec.dark && spec.liquid) t.base else Color.White,
+        onPrimary = if (spec.dark && (spec.liquid || spec.mono)) t.base else Color.White,
         primaryContainer = t.accent3,
         onPrimaryContainer = t.ink,
         secondary = t.accent,
@@ -187,7 +187,7 @@ private fun colorsFor(spec: ThemeSpec): androidx.compose.material3.ColorScheme {
         onBackground = t.ink,
         surface = t.base,
         onSurface = t.ink,
-        surfaceVariant = spec.adapt(0xFFE3EBE0),
+        surfaceVariant = if (spec.mono) (if (spec.dark) Color(0xFF1C1C1C) else Color(0xFFEEEEEE)) else spec.adapt(0xFFE3EBE0),
         onSurfaceVariant = t.sub,
         surfaceContainerLowest = t.highlight,
         surfaceContainerLow = spec.adapt(0xFFF2F6EF),
@@ -306,7 +306,7 @@ fun Subtle(text: String, modifier: Modifier = Modifier, maxLines: Int = Int.MAX_
 enum class CardStyle { Ceramic, Soft, Dark }
 
 @Composable
-private fun Modifier.ceramicSurface(shape: Shape, style: CardStyle, elevation: Dp): Modifier = if (Theme.apple) when (style) {
+private fun Modifier.ceramicSurface(shape: Shape, style: CardStyle, elevation: Dp): Modifier = if (Theme.mono) inkSurface(shape, style) else if (Theme.apple) when (style) {
     // content stays solid under Apple, glass or not: glass is for the functional layer (HIG), never glass on glass
     CardStyle.Ceramic -> this.clip(shape).background(AppleColors.card(Theme.dark))
     CardStyle.Soft -> this.clip(shape).background(AppleColors.fill(Theme.dark))
@@ -357,14 +357,14 @@ fun PCard(
     }
     Box(
         modifier.fillMaxWidth()
-            .let { if (onClick != null && Theme.liquid) it.jelly(press, 0.35f, glow = shape) else it }
+            .let { if (onClick != null && Theme.liquid) it.jelly(press, 0.35f, glow = shape) else if (onClick != null && Theme.mono) it.inkPress(press, 0.98f) else it }
             .ceramicSurface(shape, style, 10.dp)
             .let { if (onClick != null) it.clickable(interactionSource = press, indication = androidx.compose.foundation.LocalIndication.current, onClick = onClick) else it },
     ) {
         CompositionLocalProvider(LocalContentColor provides color, LocalGlassSurface provides surface) {
             Column(Modifier.padding(padding).animateContentSize(), content = content)
         }
-        if (fold && !Theme.apple) {
+        if (fold && !Theme.apple && !Theme.mono) {
             Canvas(Modifier.align(Alignment.BottomEnd).size(40.dp)) {
                 val path = androidx.compose.ui.graphics.Path().apply {
                     moveTo(size.width, 0f)
@@ -394,10 +394,11 @@ fun PObject(
     Row(
         modifier
             .fillMaxWidth()
-            .let { if (onClick != null) it.liquidPress(press, 0.5f) else it }
+            .let { if (onClick != null) (if (Theme.mono) it.inkPress(press, 0.98f) else it.liquidPress(press, 0.5f)) else it }
             .clip(shape)
             .then(
-                if (Theme.apple) Modifier.background(if (selected) P.accent3 else AppleColors.card(Theme.dark))
+                if (Theme.mono) Modifier.background(P.highlight).border(1.dp, if (selected) P.ink else P.line2, shape)
+                else if (Theme.apple) Modifier.background(if (selected) P.accent3 else AppleColors.card(Theme.dark))
                 else Modifier.background(if (selected) pc(0xFFE6EFE1) else pc(0xCCF2F6EF)).border(1.dp, if (selected) pc(0xFF82A185) else pc(0x6EBFD1BB), shape),
             )
             .let { if (onClick != null) it.clickable(interactionSource = press, indication = androidx.compose.foundation.LocalIndication.current, role = Role.Button, onClick = onClick) else it }
@@ -405,7 +406,7 @@ fun PObject(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
-        if (icon != null) PIcon(icon, size = 19.dp, tint = pc(0xFF6A866B))
+        if (icon != null) PIcon(icon, size = 19.dp, tint = if (Theme.mono) P.ink else pc(0xFF6A866B))
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (!subtitle.isNullOrBlank()) Text(subtitle, Modifier.padding(top = 3.dp), style = MaterialTheme.typography.bodySmall, color = P.muted, maxLines = 3, overflow = TextOverflow.Ellipsis)
@@ -504,6 +505,7 @@ fun PButton(
     val liquid = Theme.liquid
     val apple = Theme.apple
     if (apple) return AppleButton(text, onClick, modifier, style, tiny, enabled, icon, contentDescription)
+    if (Theme.mono) return InkButton(text, onClick, modifier, style, tiny, enabled, icon, contentDescription)
     val shape = RoundedCornerShape(if (tiny) 10.dp else 13.dp)
     val fg = when (style) {
         ButtonStyle.Primary, ButtonStyle.Danger, ButtonStyle.Warn -> if (liquid && style != ButtonStyle.Primary && Theme.dark) Theme.current.tokens.base else Color.White
@@ -544,6 +546,7 @@ fun PButton(
 @Composable
 fun PIconButton(icon: IconSpec, contentDescription: String, onClick: () -> Unit, modifier: Modifier = Modifier, size: Dp = 40.dp, tint: Color = P.accent2) {
     if (Theme.apple) return AppleIconButton(icon, contentDescription, onClick, modifier, size, tint)
+    if (Theme.mono) return InkIconButton(icon, contentDescription, onClick, modifier, size, tint)
     val shape = RoundedCornerShape(12.dp)
     val press = rememberPress()
     Box(
@@ -566,6 +569,7 @@ fun PIconButton(icon: IconSpec, contentDescription: String, onClick: () -> Unit,
 fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit, modifier: Modifier = Modifier, fill: Boolean = false) {
     if (Theme.liquid) return LiquidSegmented(options, selected, onSelect, modifier, fill)
     if (Theme.apple) return AppleSegmented(options, selected, onSelect, modifier, fill)
+    if (Theme.mono) return InkSegmented(options, selected, onSelect, modifier, fill)
     val shape = RoundedCornerShape(15.dp)
     Row(
         modifier.then(if (fill) Modifier.fillMaxWidth() else Modifier).clip(shape).background(pc(0xFFDCE7D9)).border(1.dp, pc(0xA1FFFFFF), shape).padding(4.dp),
@@ -590,7 +594,7 @@ fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> 
 @Composable
 fun PBar(fraction: Float, modifier: Modifier = Modifier, tone: Tone = Tone.Good) {
     val fill = when (tone) {
-        Tone.Good, Tone.Neutral -> Brush.horizontalGradient(listOf(pc(0xFFB6CDB0), pc(0xFF5D8064)))
+        Tone.Good, Tone.Neutral -> if (Theme.mono) Brush.horizontalGradient(listOf(P.ink, P.ink)) else Brush.horizontalGradient(listOf(pc(0xFFB6CDB0), pc(0xFF5D8064)))
         Tone.Warn -> Brush.horizontalGradient(listOf(pc(0xFFE0CEAE), P.amber))
         Tone.Danger -> Brush.horizontalGradient(listOf(pc(0xFFE4C3BF), P.danger))
     }
@@ -702,6 +706,7 @@ fun BadgeIcon(icon: IconSpec, modifier: Modifier = Modifier, size: Dp = 39.dp) {
     if (Theme.apple) return Box(modifier.size(size).clip(RoundedCornerShape(size * 0.24f)).background(Theme.current.accentColor), contentAlignment = Alignment.Center) {
         PIcon(icon, size = size * 0.56f, tint = Color.White)
     }
+    if (Theme.mono) return InkBadgeIcon(icon, modifier, size)
     val surface = if (Theme.liquid) Modifier.liquidGlass(shape, GlassKind.Control, 5.dp) else Modifier.shadow(4.dp, shape, spotColor = pcHue(0x33455F49)).clip(shape).background(P.ceramic)
     Box(modifier.size(size).then(surface), contentAlignment = Alignment.Center) {
         PIcon(icon, size = size * 0.5f, tint = P.accent)
@@ -722,7 +727,7 @@ fun PIcon(icon: IconSpec, modifier: Modifier = Modifier, size: Dp = 18.dp, tint:
         val k = this.size.minDimension / 24f
         scale(k, k, pivot = Offset.Zero) {
             list.forEach { (path, fill) ->
-                if (fill) drawPath(path, pc(0xFFEAF0E6), style = Fill)
+                if (fill) drawPath(path, if (Theme.mono) tint.copy(alpha = 0.12f) else pc(0xFFEAF0E6), style = Fill)
                 drawPath(path, tint, style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
         }

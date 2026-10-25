@@ -50,9 +50,12 @@ internal class NodeScreenConnection(private val nodes: NodeConnections, private 
         val pixels = rfb.update()
         Bitmap.createBitmap(pixels, rfb.width, rfb.height, Bitmap.Config.ARGB_8888)
     } }
-    suspend fun pointer(x: Int, y: Int, buttons: Int) = withContext(Dispatchers.IO) { mutex.withLock { client?.let { it.pointer(x.coerceIn(0, it.width - 1), y.coerceIn(0, it.height - 1), buttons) } } }
-    suspend fun text(text: String) = withContext(Dispatchers.IO) { mutex.withLock { text.codePoints().forEach { c -> val key = if (c in 32..255) c else 0x01000000 or c; client?.key(key, true); client?.key(key, false) } } }
-    suspend fun key(code: Int) = withContext(Dispatchers.IO) { mutex.withLock { client?.key(code, true); client?.key(code, false) } }
+    suspend fun pointer(x: Int, y: Int, buttons: Int) = withContext(Dispatchers.IO) { mutex.withLock { app.umbra.platform.api.DispatchFence.checkCurrent(); client?.let { it.pointer(x.coerceIn(0, it.width - 1), y.coerceIn(0, it.height - 1), buttons) } } }
+    suspend fun text(text: String) = withContext(Dispatchers.IO) { mutex.withLock {
+        require(text.length <= 16_000)
+        for (c in text.codePoints().toArray()) { app.umbra.platform.api.DispatchFence.checkCurrent(); val key = if (c in 32..255) c else 0x01000000 or c; client?.key(key, true); client?.key(key, false) }
+    } }
+    suspend fun key(code: Int) = withContext(Dispatchers.IO) { mutex.withLock { app.umbra.platform.api.DispatchFence.checkCurrent(); client?.key(code, true); client?.key(code, false) } }
     override fun close() { closed = true; runCatching { socket?.close() } }
 }
 
@@ -60,10 +63,10 @@ internal class NodeScreenConnection(private val nodes: NodeConnections, private 
 internal fun NodeScreenPreview(nodeId: String) { RemoteNodeImage(nodeId, preview = true) }
 
 @Composable
-internal fun RemoteNodeViewer(nodeId: String, initiallyControlling: Boolean = false) { RemoteNodeImage(nodeId, preview = false, initiallyControlling) }
+internal fun RemoteNodeViewer(nodeId: String, initiallyControlling: Boolean = false, embedded: Boolean = false) { RemoteNodeImage(nodeId, preview = false, initiallyControlling, embedded) }
 
 @Composable
-private fun RemoteNodeImage(nodeId: String, preview: Boolean, initiallyControlling: Boolean = false) {
+private fun RemoteNodeImage(nodeId: String, preview: Boolean, initiallyControlling: Boolean = false, embedded: Boolean = false) {
     val c = LocalContext.current.container
     val nodes by c.nodes.all.collectAsStateWithLifecycle()
     val node = nodes[nodeId]
@@ -74,14 +77,14 @@ private fun RemoteNodeImage(nodeId: String, preview: Boolean, initiallyControlli
     DisposableEffect(connection) { onDispose { connection.close() } }
     var bitmap by remember(nodeId) { mutableStateOf<Bitmap?>(null) }
     var error by remember(nodeId) { mutableStateOf<String?>(null) }
-    var control by remember(nodeId) { mutableStateOf(initiallyControlling) }
+    var control by remember(nodeId) { mutableStateOf(initiallyControlling || c.inputLeases.current("node:$nodeId")?.owner == app.umbra.core.control.Principal.User) }
     var trackpad by remember(nodeId) { mutableStateOf(false) }
     var keyboard by remember { mutableStateOf(false) }
     var typed by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     DisposableEffect(nodeId, active) {
         if (active && control) c.nodeConnections.userScreen(nodeId, true)
-        onDispose { c.nodeConnections.userScreen(nodeId, false) }
+        onDispose { c.nodeConnections.userScreen(nodeId, false, returnToAgent = false) }
     }
     LaunchedEffect(connection, active, node?.info?.screen?.available) {
         if (!active) return@LaunchedEffect
@@ -92,8 +95,9 @@ private fun RemoteNodeImage(nodeId: String, preview: Boolean, initiallyControlli
         catch (e: Exception) { error = e.message }
         finally { connection.close() }
     }
-    fun act(block: suspend () -> Unit) { scope.launch { try { block() } catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message } } }
-    Column(Modifier.fillMaxWidth().then(if (preview) Modifier else Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    fun act(block: suspend () -> Unit) { scope.launch { try { c.userInput("node:$nodeId", block) } catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message } } }
+    // Embedded in a scrolling page (teaching), the viewer must not scroll itself in the same direction.
+    Column(Modifier.fillMaxWidth().then(if (preview || embedded) Modifier else Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         val image = bitmap
         if (!preview && control) Callout(stringResource(R.string.rn_you_control), Tone.Good)
         Box(Modifier.fillMaxWidth().then(if (preview) Modifier.height(180.dp) else if (image != null) Modifier.aspectRatio(image.width.toFloat() / image.height) else Modifier.height(300.dp)).clip(RoundedCornerShape(12.dp)).background(P.night), contentAlignment = Alignment.Center) {
@@ -104,6 +108,7 @@ private fun RemoteNodeImage(nodeId: String, preview: Boolean, initiallyControlli
                         val down = awaitFirstDown()
                         if (!trackpad) { px = down.position.x * image.width / size.width; py = down.position.y * image.height / size.height }
                         val start = down.position
+                        val fromX = px.toInt(); val fromY = py.toInt()
                         act { connection.pointer(px.toInt(), py.toInt(), if (trackpad) 0 else 1) }
                         var last = start
                         var moved = false
@@ -120,6 +125,9 @@ private fun RemoteNodeImage(nodeId: String, preview: Boolean, initiallyControlli
                         } while (event.changes.any { it.pressed })
                         val x = px.toInt(); val y = py.toInt()
                         act { if (trackpad && !moved) connection.pointer(x, y, 1); connection.pointer(x, y, 0) }
+                        // Teach on a computer: the gesture as the demonstration sees it (a trackpad glide is only a cursor move).
+                        if (!moved) c.demonstrations.remoteInput(nodeId, "CLICK", x, y, image.width, image.height)
+                        else if (!trackpad) c.demonstrations.remoteInput(nodeId, "DRAG", fromX, fromY, image.width, image.height, x, y)
                     }
                 } else Modifier))
             } else Text(stringResource(if (node?.info?.screen?.available == true) R.string.rn_connecting_screen else R.string.rn_screen_off), Modifier.padding(18.dp), color = P.codeText, fontSize = 13.sp)
@@ -137,7 +145,15 @@ private fun RemoteNodeImage(nodeId: String, preview: Boolean, initiallyControlli
     if (keyboard) AlertDialog(onDismissRequest = { keyboard = false }, title = { Text(stringResource(R.string.rn_keyboard)) }, text = {
         Column {
             OutlinedTextField(typed, { typed = it }, label = { Text(stringResource(R.string.rn_type)) })
-            Row { PButton("↵", { act { connection.key(0xff0d) } }, tiny = true); PButton("⌫", { act { connection.key(0xff08) } }, tiny = true); PButton("Esc", { act { connection.key(0xff1b) } }, tiny = true) }
+            fun key(code: Int, name: String) {
+                act { connection.key(code) }
+                bitmap?.let { c.demonstrations.remoteInput(nodeId, "KEY", 0, 0, it.width, it.height, key = name) }
+            }
+            Row { PButton("↵", { key(0xff0d, "Enter") }, tiny = true); PButton("⌫", { key(0xff08, "Backspace") }, tiny = true); PButton("Esc", { key(0xff1b, "Escape") }, tiny = true) }
         }
-    }, confirmButton = { PButton(stringResource(R.string.rn_send_keys), { val value = typed; typed = ""; act { connection.text(value) } }, enabled = typed.isNotEmpty()) }, dismissButton = { PButton(stringResource(R.string.action_cancel), { keyboard = false }, style = ButtonStyle.Ghost) })
+    }, confirmButton = { PButton(stringResource(R.string.rn_send_keys), {
+        val value = typed; typed = ""; act { connection.text(value) }
+        // Only that text was typed, never what: a remote screen gives no password-field signal.
+        bitmap?.let { c.demonstrations.remoteInput(nodeId, "TYPE", 0, 0, it.width, it.height) }
+    }, enabled = typed.isNotEmpty()) }, dismissButton = { PButton(stringResource(R.string.action_cancel), { keyboard = false }, style = ButtonStyle.Ghost) })
 }

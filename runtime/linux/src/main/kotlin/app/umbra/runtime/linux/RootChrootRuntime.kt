@@ -299,6 +299,7 @@ class RootChrootRuntime(
         asRoot: Boolean,
         envFile: String?,
         pidFile: String?,
+        secretsOnStdin: Boolean,
     ): String {
         require(argv.isNotEmpty()) { "empty command" }
         val environment = linkedMapOf(
@@ -319,6 +320,7 @@ class RootChrootRuntime(
             // Android's root shells keep whatever umask they were started with (an adb shell's is 0), which would make
             // every file and folder made in the guest writable by anyone in it. Debian's habit is 022.
             append("umask 022; ")
+            if (secretsOnStdin) append(SecretStdin.PREAMBLE)
             if (envFile != null) append("set -a; . ${quote(envFile)}; set +a; rm -f ${quote(envFile)}; ")
             if (pidFile != null) append("echo \$\$ > ${quote(pidFile)}; ")
             // Root starts in `/`, never in the agent's workspace: nothing in a folder the agent can fill should be near root.
@@ -344,8 +346,7 @@ class RootChrootRuntime(
 
     /**
      * Like [exec], for commands that need credentials in their environment. The values travel in a
-     * private file that the command sources and deletes before it starts, so they never appear in a
-     * command line or process listing.
+     * command's stdin ([SecretStdin]), so they never appear in a command line, process listing or file.
      */
     override suspend fun execWithSecrets(
         argv: List<String>,
@@ -356,23 +357,14 @@ class RootChrootRuntime(
         maxOutputBytes: Int,
     ): ShellResult {
         if (secrets.isEmpty()) return exec(argv, env, cwd, timeoutMs = timeoutMs, maxOutputBytes = maxOutputBytes)
-        val file = "/tmp/umbra-exec-${System.nanoTime().toString(36)}.env"
-        writeFile(file, secrets.entries.joinToString("\n", postfix = "\n") { (k, v) ->
-            require(k.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "bad environment variable name '$k'" }
-            "export $k=${quote(v)}"
-        })
-        try {
-            return root.exec(ShellRequest(hostCommand(argv, env, cwd, envFile = file), timeoutMs = timeoutMs, maxOutputBytes = maxOutputBytes))
-        } finally {
-            sh("rm -f ${quote(hostPath(file))}")
-        }
+        return root.exec(ShellRequest(hostCommand(argv, env, cwd, secretsOnStdin = true), stdin = SecretStdin.payload(secrets), timeoutMs = timeoutMs, maxOutputBytes = maxOutputBytes))
     }
 
 
     // ---- files and processes ----
 
     /** Where a guest path is on the host (valid while the guest is mounted, and for paths that are not mount points). */
-    override fun hostPath(guestPath: String): String = layout.rootfs.trimEnd('/') + "/" + guestPath.trimStart('/')
+    override fun hostPath(guestPath: String): String = layout.rootfs.trimEnd('/') + guestPath(guestPath)
 
     /**
      * Writes a file inside the guest, owned by the app user (the guest has to be mounted). [mode] is an
@@ -380,18 +372,22 @@ class RootChrootRuntime(
      * even briefly.
      */
     override suspend fun writeFile(guestPath: String, content: String, mode: String) {
-        val host = quote(hostPath(guestPath))
-        val owner = "${layout.uid}:${layout.gid}"
-        // Directories created on the way belong to the app user too, or the agent could not write beside the file.
+        val path = quote(guestPath(guestPath))
+        fileMode(mode)
+        // Do not perform root redirection or chown through a path the agent can replace with a symlink.
         val script = """
-            host=$host; dir=${'$'}(dirname "${'$'}host"); new=""; d="${'$'}dir"
-            while [ ! -d "${'$'}d" ]; do new="${'$'}d ${'$'}new"; d=${'$'}(dirname "${'$'}d"); done
+            set -eu
+            host=$path; dir=${'$'}(dirname -- "${'$'}host")
+            umask 022
             mkdir -p "${'$'}dir" || exit 1
-            for x in ${'$'}new; do chown $owner "${'$'}x"; chmod 755 "${'$'}x"; done
-            ( umask 077; cat > "${'$'}host" ) || exit 1
-            chown $owner "${'$'}host" && chmod $mode "${'$'}host"
+            umask 077
+            tmp=${'$'}(mktemp -- "${'$'}dir/.umbra-write.XXXXXXXXXX")
+            trap 'rm -f -- "${'$'}tmp"' EXIT
+            cat > "${'$'}tmp"
+            chmod $mode "${'$'}tmp"
+            mv -fT -- "${'$'}tmp" "${'$'}host"
         """.trimIndent()
-        val result = root.exec(ShellRequest(script, stdin = content, timeoutMs = 30_000))
+        val result = exec(listOf("/bin/bash", "-c", script), stdin = content, timeoutMs = 30_000)
         if (!result.ok) throw BackendException(ErrorCode.COMMAND_FAILED, "writing $guestPath failed (exit ${result.exitCode}): ${result.combined.take(300)}")
     }
 
@@ -401,14 +397,35 @@ class RootChrootRuntime(
      * step, so a program that is running it is not disturbed.
      */
     override suspend fun installRootFile(guestPath: String, content: String, mode: String) {
-        require(mode.matches(Regex("[0-7]{3,4}"))) { "bad mode '$mode'" }
-        val host = quote(hostPath(guestPath))
+        val path = guestPath(guestPath)
+        require(path.startsWith("/opt/umbra/")) { "System files must be installed under /opt/umbra" }
+        fileMode(mode)
         val script = """
-            umask 022; host=$host; mkdir -p "${'$'}(dirname "${'$'}host")" || exit 1
-            ( umask 077; cat > "${'$'}host.new" ) || exit 1
-            chown 0:0 "${'$'}host.new" && chmod $mode "${'$'}host.new" && mv -f "${'$'}host.new" "${'$'}host"
+            set -eu
+            umask 022
+            host=${quote(path)}; dir=${'$'}(dirname -- "${'$'}host")
+            trusted_dir() {
+                [ ! -L "${'$'}1" ] && [ -d "${'$'}1" ] || return 1
+                [ "${'$'}(stat -c %u -- "${'$'}1")" = 0 ] || return 1
+                perm=${'$'}(stat -c %a -- "${'$'}1")
+                [ ${'$'}(( 8#${'$'}perm & 0022 )) = 0 ]
+            }
+            trusted_dir / || exit 1
+            current=""
+            IFS=/ read -ra parts <<< "${'$'}{dir#/}"
+            for part in "${'$'}{parts[@]}"; do
+                current="${'$'}current/${'$'}part"
+                if [ ! -e "${'$'}current" ] && [ ! -L "${'$'}current" ]; then mkdir -- "${'$'}current"; fi
+                trusted_dir "${'$'}current" || exit 1
+            done
+            umask 077
+            tmp=${'$'}(mktemp -- "${'$'}dir/.umbra-install.XXXXXXXXXX")
+            trap 'rm -f -- "${'$'}tmp"' EXIT
+            cat > "${'$'}tmp"
+            chmod $mode "${'$'}tmp"
+            mv -fT -- "${'$'}tmp" "${'$'}host"
         """.trimIndent()
-        val result = root.exec(ShellRequest(script, stdin = content, timeoutMs = 30_000))
+        val result = exec(listOf("/bin/bash", "-c", script), asRoot = true, stdin = content, timeoutMs = 30_000)
         if (!result.ok) throw BackendException(ErrorCode.COMMAND_FAILED, "installing $guestPath failed (exit ${result.exitCode}): ${result.combined.take(300)}")
     }
 

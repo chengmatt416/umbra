@@ -42,16 +42,22 @@ class UmbraToolHost(
     private val specs = HostToolRegistry.all.filterNot { exclude(it.name) }
     private val byName = specs.associateBy { it.name }
     private val extraByName = extra.associateBy { it.name }
+    private val screenPlan = if (decisions != null && !exclude(ScreenPlanTool.NAME) && !exclude("android_tap")) ScreenPlanTool(pipeline, decisions, state, sessionId) else null
 
-    val toolNames: List<String> = specs.map { it.name } + extra.map { it.name }
+    val toolNames: List<String> = specs.map { it.name } + extra.map { it.name } + if (screenPlan != null) listOf(ScreenPlanTool.NAME) else emptyList()
 
     fun definitions(): List<HostToolDefinition> =
         specs.map { HostToolDefinition(it.name, it.description, it.schema, loadMode = loadMode(it.name)) } +
-            extra.map { it.definition.copy(loadMode = loadMode(it.name)) }
+            extra.map { it.definition.copy(loadMode = loadMode(it.name)) } +
+            if (screenPlan != null) listOf(ScreenPlanTool.definition.copy(loadMode = loadMode(ScreenPlanTool.NAME))) else emptyList()
 
     val handler: HostToolHandler = HostToolHandler { call, progress -> handle(call, progress) }
 
     suspend fun handle(call: HostToolCall, progress: HostToolProgress): HostToolPayload {
+        if (call.toolName == ScreenPlanTool.NAME && screenPlan != null) {
+            return try { screenPlan.run(call, progress) } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { HostToolPayload.error("Screen plan could not run: ${e.message ?: e::class.simpleName}") }
+        }
         extraByName[call.toolName]?.let { tool ->
             return try {
                 tool.run(call, progress)

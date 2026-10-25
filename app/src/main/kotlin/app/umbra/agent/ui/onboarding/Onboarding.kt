@@ -59,6 +59,7 @@ import app.umbra.agent.ui.accounts.AccountSheet
 import app.umbra.agent.ui.accounts.Monogram
 import app.umbra.agent.ui.accounts.accounts
 import app.umbra.agent.ui.accounts.connection
+import app.umbra.agent.ui.models.ModelPicker
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.ModalBottomSheet
 import app.umbra.agent.ui.porcelain.P
@@ -67,12 +68,13 @@ import app.umbra.agent.ui.porcelain.PIcons
 import app.umbra.agent.ui.porcelain.pc
 import app.umbra.agent.ui.shell.RowGroup
 import app.umbra.agent.ui.shell.SwitchRow
+import app.umbra.agent.ui.shell.NavRow
 import app.umbra.platform.android.UmbraAccessibilityService
 import kotlinx.coroutines.launch
 
 /**
- * First-run setup, four short steps: how much of the app to show, an account to work with, Laya (asked once), and the
- * three permissions the app needs. The Linux environment that comes with the app is set up behind them from the start,
+ * First-run setup, five short steps: how much of the app to show, an account to work with, Laya (asked once), how
+ * proactive agents are (and the anonymous usage counts), and the three permissions the app needs. The Linux environment that comes with the app is set up behind them from the start,
  * since signing in and Laya both run in it.
  */
 @Composable
@@ -87,8 +89,9 @@ fun Onboarding(onAccounts: () -> Unit) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (step) {
                     0 -> ModeStep { step = 1 }
-                    1 -> ConnectStep { step = 2 }
+                    1 -> ConnectStep(onAccounts) { step = 2 }
                     2 -> LayaStep { step = 3 }
+                    3 -> ProactiveStep { step = 4 }
                     else -> PermissionStep { container.settings.update { it.copy(onboarded = true) } }
                 }
             }
@@ -99,7 +102,7 @@ fun Onboarding(onAccounts: () -> Unit) {
 @Composable
 private fun Progress(step: Int, modifier: Modifier) {
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        repeat(4) { i -> Box(Modifier.height(8.dp).width(if (i == step) 28.dp else 8.dp).clip(RoundedCornerShape(4.dp)).background(if (i <= step) P.accent2 else P.line)) }
+        repeat(5) { i -> Box(Modifier.height(8.dp).width(if (i == step) 28.dp else 8.dp).clip(RoundedCornerShape(4.dp)).background(if (i <= step) P.accent2 else P.line)) }
     }
 }
 
@@ -143,10 +146,11 @@ private fun Choice(title: String, body: String, on: Boolean, onClick: () -> Unit
 }
 
 @Composable
-private fun ConnectStep(onNext: () -> Unit) {
+private fun ConnectStep(onAccounts: () -> Unit, onNext: () -> Unit) {
     val container = LocalContext.current.container
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf<Account?>(null) }
+    var visionPicker by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         Title(stringResource(R.string.r_ob_connect), Modifier.padding(top = 28.dp, bottom = 20.dp))
         RowGroup {
@@ -164,6 +168,9 @@ private fun ConnectStep(onNext: () -> Unit) {
                 }
             }
         }
+        RowGroup {
+            NavRow(PIcons.eye, stringResource(R.string.backup_vision_title), stringResource(R.string.backup_vision_body), value = prefs.backupVisionModel?.modelId ?: stringResource(R.string.backup_vision_off)) { visionPicker = true }
+        }
         Spacer(Modifier.weight(1f))
         BottomActions {
             if (prefs.providers.isEmpty()) PButton(stringResource(R.string.r_ob_later), onNext, Modifier.fillMaxWidth(), style = ButtonStyle.Ghost)
@@ -171,6 +178,31 @@ private fun ConnectStep(onNext: () -> Unit) {
         }
     }
     open?.let { a -> AccountSheet(a, onDismiss = { open = null }) }
+    if (visionPicker) ModelPicker(onDismiss = { visionPicker = false }, onConnect = { visionPicker = false; onAccounts() },
+        picked = prefs.backupVisionModel, onPick = { ref -> container.settings.update { it.copy(backupVisionModel = ref) } }, imagesOnly = true)
+}
+
+/**
+ * How much agents do on their own and when their briefs arrive (the defaults every new agent starts with), plus the
+ * anonymous usage counts, which are on unless switched off here or later in Settings.
+ */
+@Composable
+private fun ProactiveStep(onNext: () -> Unit) {
+    val container = LocalContext.current.container
+    val prefs by container.settings.flow.collectAsStateWithLifecycle()
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Title(stringResource(R.string.r_ob_proactive), Modifier.padding(top = 28.dp))
+            Text(stringResource(R.string.r_ob_proactive_body), Modifier.padding(horizontal = 8.dp), fontSize = 14.5.sp, lineHeight = 22.sp, color = P.sub)
+            app.umbra.agent.ui.agents.ProactiveDefaultsEditor(prefs.proactiveDefaults) { next -> container.settings.update { it.copy(proactiveDefaults = next) } }
+            app.umbra.agent.ui.shell.RowGroup {
+                app.umbra.agent.ui.shell.SwitchRow(PIcons.gauge, stringResource(R.string.usage_counts_title), stringResource(R.string.usage_counts_body), prefs.shareUsageCounts) { on ->
+                    container.settings.update { it.copy(shareUsageCounts = on) }
+                }
+            }
+        }
+        BottomActions { PButton(stringResource(R.string.r_ob_continue), onNext, Modifier.fillMaxWidth()) }
+    }
 }
 
 @Composable

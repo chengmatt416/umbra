@@ -6,6 +6,8 @@ answer when it is done; the task's chat shows it. The Capsule is an overlay wind
 import time
 from lib import *
 
+import sys
+AGENT = sys.argv[1] if len(sys.argv) > 1 else None        # the default agent's id, when the Capsule talks to an agent
 b = umbractl.Bridge(); umbractl.setup()
 model = ScriptedModel([
     paced(tool("android_observe", {}), 2.5),
@@ -16,18 +18,18 @@ model = ScriptedModel([
 b.control("provider.set", {"id": "scripted", "base_url": model.url_for_emulator, "model": "scripted-model", "key": "", "images": "true"})
 b.control("approval_mode", {"mode": "autonomous"})
 b.control("capsule.set", {"on": False}); time.sleep(1.5)            # a fresh Capsule (no selection left open)
-b.control("capsule.set", {"on": True})
-ui_set(b, mode="simple", onboarded=True, effort="auto")
+b.control("capsule.set", {"on": True, "placement": "centre"})   # the emulator's camera is off-centre: a centred pill reads better
+ui_set(b, mode="simple", onboarded=True, effort="auto", homeAgents=False)
 sh("input", "keyevent", "3"); time.sleep(1)
 sh("am", "force-stop", "com.android.settings")
 sh("am", "start", "-a", "android.settings.DEVICE_INFO_SETTINGS"); time.sleep(3)
-CAPSULE = (520, 65)
+CAPSULE = (360, 66)                                       # centred pill (placement "centre")
 before = {s["id"] for s in b.control("session.list", {})}
 
 rec = Recorder("scene_b").start()
 rec.mark("app"); time.sleep(2.2)
 mtap(*CAPSULE); rec.mark("card"); time.sleep(3.2)          # the card opens where the Capsule is
-mtap(460, 345); rec.mark("select"); time.sleep(2.4)        # Select on screen: the glow, the controls in the card
+mtap(150, 1014); rec.mark("select"); time.sleep(2.4)        # Select on screen (0.6 card: below the suggestion and the agent)
 mdrag(circle(300, 1500, 250, 64), step=0.022); rec.mark("circled"); time.sleep(2.6)
 p = None                                                   # overlay text is not in uiautomator dumps
 mtap(*(p or (280, 166))); rec.mark("asked")
@@ -39,14 +41,19 @@ for _ in range(60):                                        # the task runs; the 
         sid = new[0]["id"]
         if b.control("session.get", {"id": sid})["state"] in ("COMPLETED", "FAILED", "STOPPED"):
             break
+    elif len(model.agent_requests) >= 2:                   # 0.6: the Capsule asks the default agent, in its own chat
+        time.sleep(4); break
 rec.mark("done"); time.sleep(4.5)                          # the finished task peeks in the Capsule
-sh("am", "start", "-n", "app.umbra.agent/.MainActivity", "--es", "session", sid); time.sleep(2.0)
-for _ in range(2):
-    swipe(360, 1150, 360, 520, 600); time.sleep(0.7)
+if sid:
+    sh("am", "start", "-n", "app.umbra.agent/.MainActivity", "--es", "session", sid); time.sleep(2.0)
+    for _ in range(2):
+        swipe(360, 1150, 360, 520, 600); time.sleep(0.7)
+elif AGENT:
+    sh("am", "start", "-n", "app.umbra.agent/.MainActivity", "--es", "page", "agent/" + AGENT); time.sleep(2.5)
 time.sleep(3.5)
 rec.mark("answer")
 sh("input", "keyevent", "3")                               # end the still on a change, so the recording keeps it
 time.sleep(1.5)
 rec.stop(); model.stop()
 b.control("capsule.set", {"on": False})
-print("session", sid, b.control("session.get", {"id": sid})["state"])
+print("session", sid, sid and b.control("session.get", {"id": sid})["state"])

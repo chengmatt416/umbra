@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Agents, connectors, the Telegram bot (docs/design/agents-2026-10.md). -->
 <resources>
+    <string name="proactive_instruction">執行指示</string>
+    <string name="ag_active_work">進行中的任務（%1$d）</string>
+    <string name="proactive_no_suggestions">目前沒有建議。來自已連接來源的建議會顯示在此供您審閱。</string>
+    <string name="proactive_no_briefs">目前沒有簡報。執行中且等級為 L1 以上的代理會在您選擇的時間準備簡報。</string>
+    <string name="proactive_morning">晨報</string>
+    <string name="proactive_evening">晚報</string>
+    <string name="proactive_brief_time">%1$s時間</string>
     <string name="ag_add">新增</string>
     <string name="ag_add_queue">排一件事</string>
     <string name="ag_add_rule">新增規則</string>
@@ -227,4 +234,11 @@
     <string name="tg_voice_heard">（語音）%1$s</string>
     <string name="tg_voice_sub">先轉成文字再給 %1$s</string>
     <string name="tg_voice_unheard">（一則語音，手機上沒辦法轉成文字。）</string>
+    <string name="tg_album_more">（相簿裡還有 %1$d 張照片；如果需要，請要求以檔案傳送。）</string>
+    <string name="tg_sticker">（一張貼圖：%1$s）</string>
+    <string name="tg_reaction_note">使用者對你的訊息按了 %1$s：「%2$s」。請把它當作回饋。只有在它要求什麼時才回覆；否則請只以 %3$s 結束這一輪。</string>
+    <string name="tg_reaction_note_unknown">使用者對你先前的一則訊息按了 %1$s。請把它當作回饋。只有在它要求什麼時才回覆；否則請只以 %2$s 結束這一輪。</string>
+    <string name="tg_file_not_sent">「%1$s」無法在這裡傳送：%2$s 請在 Umbra 開啟。</string>
+    <string name="tg_reactions">表情回應</string>
+    <string name="tg_reactions_sub">你對它訊息的表情回應會成為給 %1$s 的回饋</string>
 </resources>

@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.inbox
 
+import app.umbra.agent.ui.porcelain.inkItem
 import app.umbra.agent.ui.sessionsFlow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
@@ -49,16 +50,16 @@ fun InboxScreen(onOpenSession: (String) -> Unit, onHistory: () -> Unit) {
             Eyebrow(stringResource(R.string.inbox_eyebrow))
             SerifTitle(stringResource(R.string.inbox_title), Modifier.padding(top = 8.dp), size = 28)
         }
-        items(approvals, key = { it.id }) { request ->
+        items(approvals, key = { it.id }) { request -> androidx.compose.foundation.layout.Box(inkItem()) {
             ApprovalPanel(request, titles[request.sessionId], onDecision = { container.approvals.resolve(request.id, it) })
             Gap(4.dp)
             PButton(stringResource(R.string.inbox_open_session), { onOpenSession(request.sessionId) }, style = ButtonStyle.Ghost, tiny = true)
-        }
-        items(questions, key = { it.request.id }) { pending ->
+        } }
+        items(questions, key = { it.request.id }) { pending -> androidx.compose.foundation.layout.Box(inkItem()) {
             QuestionPanel(pending, titles[pending.sessionId], onAnswer = { container.questions.answer(pending.request.id, it) })
             Gap(4.dp)
             PButton(stringResource(R.string.inbox_open_session), { onOpenSession(pending.sessionId) }, style = ButtonStyle.Ghost, tiny = true)
-        }
+        } }
         item { PButton(stringResource(R.string.inbox_history), onHistory, style = ButtonStyle.Alt, tiny = true, icon = PIcons.check) }
     }
 }

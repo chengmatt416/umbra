@@ -40,6 +40,9 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -95,6 +98,7 @@ fun interface IncomingSource {
 class AgentRuntime(private val container: AppContainer) {
     private val context: Context get() = container.context
     val store = AgentStore(File(container.context.filesDir, "agents"))
+    val proactive by lazy { app.umbra.agent.agents.proactive.ProactiveRuntime(container, this) }
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val sources = CopyOnWriteArrayList<IncomingSource>()
     private var started = false
@@ -172,22 +176,33 @@ class AgentRuntime(private val container: AppContainer) {
         channels: List<String> = listOf("notifications"),
         heartbeatMinutes: Int = AgentProfile.DEFAULT_HEARTBEAT_MIN,
         usageLimit: app.umbra.core.session.AiUsageLimit? = null,
+        running: Boolean = true,
     ): AgentProfile {
         val now = System.currentTimeMillis()
         val id = "ag" + now.toString(36) + (1..4).map { "abcdefghijkmnpqrstuvwxyz23456789".random() }.joinToString("")
         val clean = name.trim().ifEmpty { context.getString(R.string.ag_default_name) }
-        var profile = AgentProfile(id, clean, avatar, template, model, effort, heartbeatMinutes, createdAtMs = now, channels = channels, usageLimit = usageLimit)
-        store.save(profile)
-        store.setSoul(id, soul.ifBlank { Templates.soul(template, clean) })
-        if (store.memory(id).entries().isEmpty()) store.memory(id).setRaw(Memory.HEADER + "\n")
         val session = container.supervisor.create(
             request = "The conversation of the agent $clean.", title = clean, model = model, effort = effort,
             kind = SessionKind.AGENT, handle = uniqueHandle(clean), agentId = id,
         )
-        profile = store.update(id) { it.copy(sessionId = session.id) } ?: profile
-        store.setState(id, AgentState(lastWakeMs = now, seenUntilMs = now))
+        val defaults = container.settings.value.proactiveDefaults
+        val profile = AgentProfile(id, clean, avatar, template, model, effort, heartbeatMinutes, sessionId = session.id,
+            createdAtMs = now, channels = channels, usageLimit = usageLimit, running = running,
+            proactivityLevel = defaults.level.coerceIn(0, 4), morningBriefMinute = defaults.morningMinute, eveningBriefMinute = defaults.eveningMinute)
+        try {
+            store.setSoul(id, soul.ifBlank { Templates.soul(template, clean) })
+            store.memory(id).setRaw(Memory.HEADER + "\n")
+            store.setState(id, AgentState(lastWakeMs = now, seenUntilMs = now))
+            store.save(profile)
+        } catch (e: Exception) {
+            withContext(NonCancellable) {
+                runCatching { store.delete(id) }
+                runCatching { container.supervisor.delete(session.id) }
+            }
+            throw e
+        }
         if (container.settings.value.defaultAgentId == null) container.settings.update { it.copy(defaultAgentId = id) }
-        runCatching { AgentService.start(context) }
+        if (running) runCatching { AgentService.start(context) }
         reschedule()
         return profile
     }
@@ -213,9 +228,12 @@ class AgentRuntime(private val container: AppContainer) {
 
     suspend fun setRunning(agentId: String, running: Boolean) {
         val p = store.update(agentId) { it.copy(running = running) } ?: return
-        if (!running) p.sessionId?.let { sid ->
-            if (container.sessionStore.get(sid)?.state?.isActive == true) runCatching { container.supervisor.pause(sid) }
-            runCatching { container.supervisor.releaseIfIdle(sid, 0) }
+        if (!running) {
+            container.sessionStore.list().filter { it.agentId == agentId }.forEach { session ->
+                if (session.queuedAtMs != null) runCatching { container.supervisor.dequeue(session.id) }
+                else if (session.state.isActive) runCatching { container.supervisor.pause(session.id, "The owning agent was stopped") }
+                runCatching { container.supervisor.releaseIfIdle(session.id, 0) }
+            }
         } else {
             store.setState(agentId, store.state(agentId).copy(lastWakeMs = System.currentTimeMillis()))
             runCatching { AgentService.start(context) }
@@ -225,6 +243,7 @@ class AgentRuntime(private val container: AppContainer) {
 
     suspend fun delete(agentId: String) {
         val p = store.get(agentId) ?: return
+        setRunning(agentId, false)
         p.sessionId?.let { runCatching { container.supervisor.delete(it) } }
         store.delete(agentId)
         if (container.settings.value.defaultAgentId == agentId) container.settings.update { it.copy(defaultAgentId = store.profiles.value.firstOrNull()?.id) }
@@ -240,11 +259,17 @@ class AgentRuntime(private val container: AppContainer) {
         for (p in store.profiles.value) {
             val sid = p.sessionId
             if (sid != null && container.sessionStore.get(sid) != null) continue
-            val session = container.supervisor.create(
-                request = "The conversation of the agent ${p.name}.", title = p.name, model = p.model, effort = p.effort,
-                kind = SessionKind.AGENT, handle = uniqueHandle(p.name), agentId = p.id,
-            )
-            store.update(p.id) { it.copy(sessionId = session.id) }
+            try {
+                val session = container.supervisor.create(
+                    request = "The conversation of the agent ${p.name}.", title = p.name, model = p.model, effort = p.effort,
+                    kind = SessionKind.AGENT, handle = uniqueHandle(p.name), agentId = p.id,
+                )
+                store.update(p.id) { it.copy(sessionId = session.id) }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                Log.w(TAG, "An agent conversation could not be restored", e)
+                runCatching { store.update(p.id) { it.copy(running = false) } }
+            }
         }
     }
 
@@ -263,14 +288,18 @@ class AgentRuntime(private val container: AppContainer) {
 
     /** One look at every running agent: due timers wake at once; a heartbeat when its interval has passed. */
     suspend fun tick() {
+        if (container.emergency.lockdownReason() != null) return
         val now = System.currentTimeMillis()
-        for (p in store.profiles.value.filter { it.running && it.sessionId != null }) {
+        proactive.tick(now)
+        for (p in store.profiles.value.filter { it.running && it.sessionId != null && it.proactivityLevel >= 1 }) {
             val due = store.timers(p.id).filter { it.nextMs <= now }
             val state = store.state(p.id)
             val interval = intervalMs(p)
             when {
                 due.isNotEmpty() -> wake(p.id, Reason.TIMER, timers = due)
-                interval != null && now - state.lastWakeMs >= interval -> wake(p.id, Reason.HEARTBEAT)
+                p.proactivityLevel >= 3 && interval != null && now - state.lastWakeMs >= interval -> wake(p.id, Reason.HEARTBEAT)
+                // Work held back by the wake budget runs as soon as the budget allows, whatever the level.
+                state.deferred.isNotEmpty() && WakeBudget.allows(state.backgroundRuns, now) -> wake(p.id, Reason.HEARTBEAT)
             }
         }
     }
@@ -315,7 +344,7 @@ class AgentRuntime(private val container: AppContainer) {
         val mutex = locks.getOrPut(agentId) { Mutex() }
         mutex.withLock {
             val p = store.get(agentId) ?: return
-            if (!p.running) return
+            if (!p.running || reason != Reason.MANUAL && p.proactivityLevel < 1) return
             val sid = p.sessionId ?: return
             val now = System.currentTimeMillis()
             var state = store.state(agentId).let { s -> if (s.day != LocalDate.now().toString()) s.copy(day = LocalDate.now().toString(), wakesToday = 0, runsToday = 0, activeMsToday = 0) else s }
@@ -347,17 +376,34 @@ class AgentRuntime(private val container: AppContainer) {
             val now_ = routed.filter { verdicts[it] == Verdict.NOW }
             val later = routed.filter { verdicts[it] == Verdict.LATER }.map { it.line() }
 
-            val runNow = timers.isNotEmpty() || fired.isNotEmpty() || now_.isNotEmpty() || freshQueue.isNotEmpty() || reason == Reason.MANUAL
+            val runNow = timers.isNotEmpty() || fired.isNotEmpty() || now_.isNotEmpty() || freshQueue.isNotEmpty() || reason == Reason.MANUAL || state.deferred.isNotEmpty()
+            // A background run (not the user) is bounded: one at a time, and within the wake budget. What it would have
+            // handled is kept and handed to the next allowed run, so a timer or a message is delayed, never lost.
+            val background = reason != Reason.MANUAL && freshQueue.none { it.addedBy == "user" }
+            if (runNow && background) {
+                val busy = runCatching { container.sessionStore.list() }.getOrDefault(emptyList()).any {
+                    it.agentId == agentId && it.spawnedBy == sid && it.turnMode == app.umbra.core.session.ProactiveTurnMode.READ_ONLY_DISCOVERY && !it.state.isTerminal
+                }
+                if (busy || !WakeBudget.allows(state.backgroundRuns, now)) {
+                    val held = timers.map { "Timer: ${it.note}" } + fired.map { (r, i) -> "Rule ${r.id}: ${i.line()}" } + now_.map { it.line() }
+                    store.setState(agentId, state.copy(seenUntilMs = newSeen, later = (state.later + later).takeLast(MAX_LATER),
+                        deferred = (state.deferred + held).takeLast(WakeBudget.MAX_DEFERRED)))
+                    Log.i(TAG, "${p.name}: woke (${reason.word}), held back (${if (busy) "previous background run still working" else "wake budget"}): ${held.size} items")
+                    return
+                }
+            }
             if (!runNow) {
                 store.setState(agentId, state.copy(seenUntilMs = newSeen, later = (state.later + later).takeLast(MAX_LATER)))
                 Log.i(TAG, "${p.name}: woke (${reason.word}), nothing to do (${arrived.size} new, ${later.size} for later)")
                 return
             }
-            val digest = digest(p, reason, timers, fired, now_, freshQueue, state.later + later)
-            store.setState(agentId, state.copy(seenUntilMs = newSeen, later = emptyList(), lastRunMs = now, runsToday = state.runsToday + 1))
+            val digest = digest(p, reason, timers, fired, now_, freshQueue, state.later + later + state.deferred)
+            store.setState(agentId, state.copy(seenUntilMs = newSeen, later = emptyList(), deferred = emptyList(), lastRunMs = now, runsToday = state.runsToday + 1,
+                backgroundRuns = if (background) WakeBudget.record(state.backgroundRuns, now) else state.backgroundRuns))
             Log.i(TAG, "${p.name}: runs (${reason.word}): ${timers.size} timers, ${fired.size} rules, ${now_.size} now, ${freshQueue.size} queued")
             runCatching { AgentService.start(context) }
-            container.supervisor.send(sid, digest, whileRunning = StreamingBehavior.FOLLOW_UP)
+            if (reason == Reason.MANUAL || freshQueue.any { it.addedBy == "user" }) container.supervisor.send(sid, digest, whileRunning = StreamingBehavior.FOLLOW_UP)
+            else proactive.discovery(p, digest)
         }
     }
 
@@ -365,7 +411,8 @@ class AgentRuntime(private val container: AppContainer) {
     suspend fun onIncoming(item: Incoming) {
         val targets = if (item.kind == Incoming.Kind.MESSAGE) recipients(item)
             else store.profiles.value.filter { it.running && watches(it, item) }.map { it.id }.toSet()
-        for (p in store.profiles.value.filter { it.running && it.id in targets }) {
+        for (p in store.profiles.value.filter { it.running && it.id in targets && it.proactivityLevel >= 2 }) {
+            if (proactive.onIncoming(p, item)) continue
             val rules = store.rules(p.id).filter { r -> r.enabled && matches(r, item) }
             if (rules.isNotEmpty()) {
                 wake(p.id, Reason.RULE, fired = rules.map { it to item }, extra = listOf(item), skipTriage = true)
@@ -462,7 +509,7 @@ class AgentRuntime(private val container: AppContainer) {
             val s = (change as? StoreChange.SessionChanged)?.session ?: return@collect
             if (s.kind != SessionKind.AGENT) return@collect
             val p = s.agentId?.let { store.get(it) } ?: return@collect
-            if (s.state == SessionState.RUNNING) { started.putIfAbsent(s.id, System.currentTimeMillis()); return@collect }
+            if (s.state == SessionState.RUNNING) { started.putIfAbsent(s.id, System.currentTimeMillis()); notified.remove(s.id); return@collect }
             if (s.state != SessionState.COMPLETED && s.state != SessionState.FAILED) return@collect
             // How long the model worked this turn: today's total feeds the battery estimate.
             started.remove(s.id)?.let { from ->
@@ -476,7 +523,13 @@ class AgentRuntime(private val container: AppContainer) {
             container.scope.launch {
                 // Tell the user what the agent said, unless they are looking at its chat or it had nothing to say.
                 val text = container.supervisor.finalText(s.id).trim()
-                if (text.isNotEmpty() && !text.startsWith(QUIET) && onScreen.value != p.id && !repliesOnTelegram(p.id)) notify(p, text, urgent = false)
+                val handled = try { proactive.onCompleted(p, s, text) }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) {
+                    proactive.store.stage(p.id, app.umbra.agent.agents.proactive.AttentionItem("result-error:${s.id}", "Result needs review", "The result is saved in task ${s.id}; automatic follow-up could not be completed.", .5, .8, 1.0, "runtime", System.currentTimeMillis(), linkedSessionId = s.id))
+                    true
+                }
+                if (!handled && text.isNotEmpty() && !text.startsWith(QUIET) && onScreen.value != p.id && !repliesOnTelegram(p.id)) notify(p, text, urgent = false)
                 // Yield memory to delegated work immediately, including on phones that admit only one turn.
                 val delegated = container.sessionStore.list().any { it.agentId == p.id && it.kind == SessionKind.CODING && !it.state.isTerminal }
                 if (delegated) runCatching { container.supervisor.releaseIfIdle(s.id, 0) }
@@ -519,9 +572,9 @@ class AgentRuntime(private val container: AppContainer) {
         catch (_: app.umbra.core.session.SessionNotFoundException) { false }
     }
 
-    suspend fun notify(p: AgentProfile, text: String, urgent: Boolean) {
-        if (repliesOnTelegram(p.id)) {
-            container.telegram.notifyAgent(text)
+    suspend fun notify(p: AgentProfile, text: String, urgent: Boolean, suggestionId: String? = null) {
+        if (repliesOnTelegram(p.id) || suggestionId != null && container.telegram.receivesSuggestions(p.id)) {
+            container.telegram.notifyAgent(text, p.id, suggestionId)
             return
         }
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -554,6 +607,7 @@ class AgentRuntime(private val container: AppContainer) {
         val now = System.currentTimeMillis()
         var next = Long.MAX_VALUE
         for (p in store.profiles.value.filter { it.running }) {
+            proactive.nextDue(p, now)?.let { next = minOf(next, it) }
             store.timers(p.id).minOfOrNull { it.nextMs }?.let { next = minOf(next, it) }
             intervalMs(p)?.let { next = minOf(next, store.state(p.id).lastWakeMs + it) }
             val mine = minOf(store.timers(p.id).minOfOrNull { it.nextMs } ?: Long.MAX_VALUE, intervalMs(p)?.let { store.state(p.id).lastWakeMs + it } ?: Long.MAX_VALUE)

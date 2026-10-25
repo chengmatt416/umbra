@@ -11,7 +11,7 @@ import kotlinx.serialization.json.JsonElement
 @Serializable
 sealed interface SessionEvent {
     @Serializable @SerialName("user_message")
-    data class UserMessage(val text: String, val imageCount: Int = 0) : SessionEvent
+    data class UserMessage(val text: String, val imageCount: Int = 0, val source: String = "user") : SessionEvent
 
     @Serializable @SerialName("agent_message")
     data class AgentMessage(val text: String, val messageId: String? = null, val agentId: String? = null) : SessionEvent
@@ -42,7 +42,14 @@ sealed interface SessionEvent {
     ) : SessionEvent
 
     @Serializable @SerialName("observation")
-    data class Observation(val summary: String, val displayId: Int? = null, val screenshotPath: String? = null) : SessionEvent
+    data class Observation(
+        val summary: String,
+        val displayId: Int? = null,
+        val screenshotPath: String? = null,
+        val screenshotSha256: String? = null,
+        val screenshotSizeBytes: Long? = null,
+        val screenshotMimeType: String? = null,
+    ) : SessionEvent
 
     @Serializable @SerialName("approval")
     data class Approval(

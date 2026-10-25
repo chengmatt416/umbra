@@ -5,6 +5,7 @@ plugins {
 
 dependencies {
     api(project(":core:model"))
+    implementation(project(":platform:api"))
     api(libs.kotlinx.coroutines.core)
 
     // Integration tests run the real omp binary against a scripted OpenAI-compatible server.

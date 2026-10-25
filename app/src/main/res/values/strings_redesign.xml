@@ -23,6 +23,10 @@
     <!-- home -->
     <string name="r_home_title">Tasks</string>
     <string name="r_home_empty">What should your phone do for you?</string>
+    <string name="r_home_empty_body">A task runs on the phone or in its Linux: it can use apps, write and run code, and asks before anything that matters.</string>
+    <string name="r_home_starter_1">Summarise my unread notifications</string>
+    <string name="r_home_starter_2">Build a small web page and show it to me</string>
+    <string name="r_home_starter_3">Turn on Do Not Disturb until 8 AM</string>
     <string name="r_home_recent">Recent</string>
     <string name="r_home_all">All %1$d</string>
     <string name="r_home_needs">Needs you %1$d</string>
@@ -199,7 +203,7 @@
     <string name="r_voice_nothing">Didn’t catch that. Try again.</string>
     <string name="r_voice_needs_mic">Umbra needs the microphone to hear you.</string>
     <string name="r_voice_offline">Speech recognition needs a connection right now.</string>
-    <string name="r_voice_language">Speech recognition doesn’t support this language on this phone.</string>
+    <string name="r_voice_language">This language is unavailable. Install its speech pack in your phone’s speech recognition settings, then try again.</string>
     <string name="r_voice_busy">The speech recognizer is busy. Try again in a moment.</string>
     <string name="r_voice_stopped">Speech recognition stopped. Try again.</string>
     <string name="r_voice_unavailable">This phone has no speech recognition.</string>

@@ -84,6 +84,8 @@ interface LinuxRuntime {
         asRoot: Boolean = false,
         envFile: String? = null,
         pidFile: String? = null,
+        /** The command's stdin starts with [SecretStdin] lines, which the wrapper exports before running [argv]. */
+        secretsOnStdin: Boolean = false,
     ): String
 
     suspend fun exec(
@@ -160,8 +162,8 @@ class DelegatingLinuxRuntime(private val current: () -> LinuxRuntime) : LinuxRun
     override suspend fun secure() = d.secure()
     override suspend fun mount() = d.mount()
     override suspend fun unmount() = d.unmount()
-    override fun hostCommand(argv: List<String>, env: Map<String, String>, cwd: String?, asRoot: Boolean, envFile: String?, pidFile: String?) =
-        d.hostCommand(argv, env, cwd, asRoot, envFile, pidFile)
+    override fun hostCommand(argv: List<String>, env: Map<String, String>, cwd: String?, asRoot: Boolean, envFile: String?, pidFile: String?, secretsOnStdin: Boolean) =
+        d.hostCommand(argv, env, cwd, asRoot, envFile, pidFile, secretsOnStdin)
     override suspend fun exec(argv: List<String>, env: Map<String, String>, cwd: String?, asRoot: Boolean, stdin: String?, timeoutMs: Long, maxOutputBytes: Int) =
         d.exec(argv, env, cwd, asRoot, stdin, timeoutMs, maxOutputBytes)
     override suspend fun execWithSecrets(argv: List<String>, secrets: Map<String, String>, env: Map<String, String>, cwd: String?, timeoutMs: Long, maxOutputBytes: Int) =

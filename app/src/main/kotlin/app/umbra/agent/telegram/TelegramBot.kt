@@ -24,7 +24,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -40,10 +39,7 @@ import kotlinx.serialization.json.long
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Reaching the agents from Telegram (docs/design/agents-2026-10.md §11, Figma 14.3–14.5): the user makes a bot with
@@ -71,6 +67,8 @@ class TelegramBot(private val container: AppContainer) {
         val voice: Boolean = true,
         val approvals: Boolean = true,
         val switching: Boolean = true,
+        /** The user's reactions to the bot's messages reach the agent as feedback. */
+        val reactions: Boolean = true,
     )
 
     enum class Link { NONE, TOKEN, LINKING, LINKED }
@@ -84,12 +82,31 @@ class TelegramBot(private val container: AppContainer) {
     val health: StateFlow<String?> = mutableHealth.asStateFlow()
 
     private val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(75, TimeUnit.SECONDS).writeTimeout(60, TimeUnit.SECONDS).build()
+    private val api = TelegramApi(http, ::token)
     private var poller: Job? = null
     private var watchers: Job? = null
     /** Approvals already shown in the chat (request id -> message id). */
     private val shown = ConcurrentHashMap<String, Long>()
     private val prefixConfirmations = ConcurrentHashMap.newKeySet<String>()
     private val criticalConfirmations = ConcurrentHashMap.newKeySet<String>()
+    private val proactive by lazy { ProactiveTelegram(container, ::send) }
+    /** Recent messages the bot sent (message id -> excerpt), so a reaction can say what it was about. */
+    private val sent = object : LinkedHashMap<Long, String>(64, .75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, String>?) = size > 300
+    }
+    /** Pictures and files of one album arrive as separate messages; they reach the agent as one. */
+    private val albums = ConcurrentHashMap<String, Album>()
+    private class Album(val chatId: Long, val agentId: String) {
+        val images = ArrayList<ContentBlock.Image>()
+        val notes = ArrayList<String>()
+        val captions = ArrayList<String>()
+        val messageIds = ArrayList<Long>()
+        var flush: Job? = null
+    }
+    /** Deliverable bundles already sent to the chat (session id:turn). */
+    private val deliveredBundles = java.util.Collections.newSetFromMap(object : LinkedHashMap<String, Boolean>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > 200
+    })
     /** The agent waiting for the user's words after "Edit" on an approval. */
     @Volatile private var editing: String? = null
 
@@ -124,6 +141,11 @@ class TelegramBot(private val container: AppContainer) {
                     add(command("agents", container.context.getString(R.string.tg_cmd_agents)))
                     add(command("status", container.context.getString(R.string.tg_cmd_status)))
                     add(command("stop", container.context.getString(R.string.tg_cmd_stop)))
+                    add(command("goals", "View goals and milestone progress"))
+                    add(command("routines", "View authorized routines and recent runs"))
+                    add(command("brief", "Read the latest daily brief"))
+                    add(command("skills", "View reusable skills and their review state"))
+                    add(command("suggestions", "Review and adopt prepared next steps"))
                 }
             })
         }
@@ -181,20 +203,21 @@ class TelegramBot(private val container: AppContainer) {
                 val updates = call("getUpdates", buildJsonObject {
                     put("offset", mutable.value.offset)
                     put("timeout", 50)
-                    putJsonArray("allowed_updates") { add(JsonPrimitive("message")); add(JsonPrimitive("callback_query")) }
+                    putJsonArray("allowed_updates") { add(JsonPrimitive("message")); add(JsonPrimitive("callback_query")); add(JsonPrimitive("message_reaction")) }
                 }, token).jsonArray
                 mutableHealth.value = null
                 failures = 0
                 for (u in updates) {
                     val id = u.jsonObject["update_id"]?.jsonPrimitive?.long ?: continue
+                    handle(u.jsonObject)
                     save(mutable.value.copy(offset = id + 1))
-                    runCatching { handle(u.jsonObject) }.onFailure { Log.w(TAG, "update $id", it) }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 failures++
-                mutableHealth.value = e.message ?: e::class.simpleName
+                mutableHealth.value = "Telegram connection failed. Retrying."
+                Log.w(TAG, "Polling failed: ${e::class.simpleName}")
                 // The network is down or Doze holds it: wait a little longer each time, at most two minutes.
                 delay((5_000L * failures).coerceAtMost(120_000))
             }
@@ -203,10 +226,12 @@ class TelegramBot(private val container: AppContainer) {
 
     private suspend fun handle(update: JsonObject) {
         update["callback_query"]?.jsonObject?.let { onCallback(it); return }
+        update["message_reaction"]?.jsonObject?.let { onReaction(it); return }
         val message = update["message"]?.jsonObject ?: return
         val from = message["from"]?.jsonObject ?: return
         val userId = from["id"]?.jsonPrimitive?.long ?: return
         val chatId = message["chat"]?.jsonObject?.get("id")?.jsonPrimitive?.long ?: return
+        if (message["chat"]?.jsonObject?.get("type")?.jsonPrimitive?.contentOrNull != "private") return
         val text = message["text"]?.jsonPrimitive?.contentOrNull ?: message["caption"]?.jsonPrimitive?.contentOrNull
         val s = mutable.value
 
@@ -221,7 +246,7 @@ class TelegramBot(private val container: AppContainer) {
             return
         }
         // Everyone else gets nothing back.
-        if (userId != s.userId) return
+        if (userId != s.userId || chatId != s.chatId) return
 
         when {
             text == "/agents" -> { if (s.switching) showAgents(chatId); return }
@@ -230,37 +255,117 @@ class TelegramBot(private val container: AppContainer) {
             text?.startsWith("/start") == true -> { send(chatId, container.context.getString(R.string.tg_linked_hello, currentAgent()?.name ?: "")); return }
         }
         val agent = currentAgent() ?: run { send(chatId, container.context.getString(R.string.tg_no_agent)); return }
+        if (proactive.command(chatId, text, agent)) return
         if (!s.messages) return
+        val messageId = message["message_id"]?.jsonPrimitive?.longOrNull
+        react(chatId, messageId, "👀")
 
-        // What the message carries: words, a picture, a file, a voice note.
+        // What the message carries: words, pictures, files, video, a sticker, a voice note.
         val images = ArrayList<ContentBlock.Image>()
         val notes = ArrayList<String>()
-        message["photo"]?.jsonArray?.lastOrNull()?.jsonObject?.get("file_id")?.jsonPrimitive?.contentOrNull?.let { fileId ->
-            download(fileId)?.let { images += ContentBlock.Image(Base64.encodeToString(it, Base64.NO_WRAP), "image/jpeg") }
+        try {
+            if (!attachments(message, agent.id, s, images, notes)) return
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            react(chatId, messageId, "👎")
+            send(chatId, container.context.getString(R.string.tg_attachment_failed))
+            return
         }
-        message["document"]?.jsonObject?.let { doc ->
-            val fileId = doc["file_id"]?.jsonPrimitive?.contentOrNull ?: return@let
-            val name = doc["file_name"]?.jsonPrimitive?.contentOrNull ?: "file"
+        // Album parts come one by one, a moment apart: wait for the rest and deliver them together.
+        message["media_group_id"]?.jsonPrimitive?.contentOrNull?.let { group ->
+            val album = albums.getOrPut(group) { Album(chatId, agent.id) }
+            synchronized(album) {
+                album.images += images; album.notes += notes
+                text?.takeIf { it.isNotBlank() }?.let { album.captions += it }
+                messageId?.let { album.messageIds += it }
+                album.flush?.cancel()
+                album.flush = container.scope.launch { delay(ALBUM_WAIT_MS); albums.remove(group)?.let { deliverAlbum(it) } }
+            }
+            return
+        }
+        deliver(chatId, agent.id, listOfNotNull(text?.takeIf { it.isNotBlank() }) + notes, images, listOfNotNull(messageId))
+    }
+
+    private suspend fun deliverAlbum(album: Album) {
+        val (words, images, ids) = synchronized(album) { Triple(album.captions + album.notes, album.images.take(MAX_IMAGES), album.messageIds.toList()) }
+        val extra = synchronized(album) { album.images.size } - images.size
+        deliver(album.chatId, album.agentId, if (extra > 0) words + container.context.getString(R.string.tg_album_more, extra) else words, images, ids)
+    }
+
+    private suspend fun deliver(chatId: Long, agentId: String, words: List<String>, images: List<ContentBlock.Image>, messageIds: List<Long>) {
+        if (words.isEmpty() && images.isEmpty()) return
+        // "Edit" on an approval: the next words say how to change it.
+        val edit = editing
+        val body = if (edit == agentId) { editing = null; container.context.getString(R.string.tg_edit_prefix) + " " + words.joinToString("\n") } else words.joinToString("\n").ifEmpty { "(picture)" }
+        typing(chatId)
+        try {
+            container.agents.talk(agentId, body, images, via = "Telegram")
+            messageIds.forEach { react(chatId, it, "👍") }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            messageIds.forEach { react(chatId, it, "👎") }
+            send(chatId, container.context.getString(R.string.tg_delivery_failed))
+        }
+    }
+
+    /** Reads what [message] carries into [images] and [notes]; false when it should be dropped (voice is off). */
+    private suspend fun attachments(message: JsonObject, agentId: String, s: State, images: MutableList<ContentBlock.Image>, notes: MutableList<String>): Boolean {
+        message["photo"]?.jsonArray?.lastOrNull()?.jsonObject?.get("file_id")?.jsonPrimitive?.contentOrNull?.let { fileId ->
+            images += app.umbra.agent.ui.current.encodePicture(api.download(fileId)) ?: error("This picture could not be read")
+        }
+        // Documents, videos, animations and video notes: pictures go to the model, the rest into the agent's files.
+        for ((key, fallback) in listOf("document" to "file", "video" to "video.mp4", "animation" to "animation.mp4", "video_note" to "video-note.mp4")) {
+            val doc = message[key]?.jsonObject ?: continue
+            val fileId = doc["file_id"]?.jsonPrimitive?.contentOrNull ?: continue
+            val name = doc["file_name"]?.jsonPrimitive?.contentOrNull ?: fallback
             val mime = doc["mime_type"]?.jsonPrimitive?.contentOrNull.orEmpty()
-            val bytes = download(fileId) ?: return@let
-            if (mime.startsWith("image/") && bytes.size < 8_000_000) images += ContentBlock.Image(Base64.encodeToString(bytes, Base64.NO_WRAP), mime)
-            else saveForAgent(agent.id, name, bytes)?.let { notes += container.context.getString(R.string.tg_file_saved, name, it) }
+            val bytes = api.download(fileId)
+            val image = if (mime.startsWith("image/")) app.umbra.agent.ui.current.encodePicture(bytes) else null
+            if (image != null) images += image
+            else notes += container.context.getString(R.string.tg_file_saved, name, saveForAgent(agentId, name, bytes))
+        }
+        message["sticker"]?.jsonObject?.let { sticker ->
+            notes += container.context.getString(R.string.tg_sticker, sticker["emoji"]?.jsonPrimitive?.contentOrNull ?: "🙂")
         }
         val voiceId = (message["voice"] ?: message["audio"])?.jsonObject?.get("file_id")?.jsonPrimitive?.contentOrNull
         if (voiceId != null) {
-            if (!s.voice) return
-            val bytes = download(voiceId)
-            val heard = bytes?.let { runCatching { VoiceTranscriber(container.context).transcribe(it) }.getOrNull() }
+            if (!s.voice) return false
+            val heard = VoiceTranscriber(container.context).transcribe(api.download(voiceId))
             notes += if (!heard.isNullOrBlank()) container.context.getString(R.string.tg_voice_heard, heard) else container.context.getString(R.string.tg_voice_unheard)
         }
-        val words = listOfNotNull(text?.takeIf { it.isNotBlank() }) + notes
-        if (words.isEmpty() && images.isEmpty()) return
+        return true
+    }
 
-        // "Edit" on an approval: the next words say how to change it.
-        val edit = editing
-        val body = if (edit == agent.id) { editing = null; container.context.getString(R.string.tg_edit_prefix) + " " + words.joinToString("\n") } else words.joinToString("\n").ifEmpty { "(picture)" }
-        typing(chatId)
-        runCatching { container.agents.talk(agent.id, body, images, via = "Telegram") }.onFailure { send(chatId, it.message ?: "error") }
+    /** A reaction the user puts on one of the bot's messages: feedback for the agent, which answers only if needed. */
+    private suspend fun onReaction(r: JsonObject) {
+        val s = mutable.value
+        val chat = r["chat"]?.jsonObject ?: return
+        val chatId = chat["id"]?.jsonPrimitive?.long ?: return
+        val userId = r["user"]?.jsonObject?.get("id")?.jsonPrimitive?.long ?: return
+        if (chat["type"]?.jsonPrimitive?.contentOrNull != "private" || s.userId == null || userId != s.userId || chatId != s.chatId) return
+        if (!s.messages || !s.reactions) return
+        val messageId = r["message_id"]?.jsonPrimitive?.long ?: return
+        val added = reactionEmojis(r["new_reaction"]) - reactionEmojis(r["old_reaction"]).toSet()
+        if (added.isEmpty()) return
+        val agent = currentAgent()?.takeIf { it.running } ?: return
+        val about = synchronized(sent) { sent[messageId] }
+        val body = if (about != null) container.context.getString(R.string.tg_reaction_note, added.joinToString(" "), about, AgentRuntime.QUIET)
+            else container.context.getString(R.string.tg_reaction_note_unknown, added.joinToString(" "), AgentRuntime.QUIET)
+        try { container.agents.talk(agent.id, body, via = "Telegram") }
+        catch (e: CancellationException) { throw e }
+        catch (_: Exception) { /* A reaction is optional feedback; a stopped agent simply misses it. */ }
+    }
+
+    private fun reactionEmojis(list: JsonElement?): List<String> = (list as? JsonArray).orEmpty().mapNotNull { item ->
+        val o = item as? JsonObject ?: return@mapNotNull null
+        when (o["type"]?.jsonPrimitive?.contentOrNull) {
+            "emoji" -> o["emoji"]?.jsonPrimitive?.contentOrNull
+            "custom_emoji" -> "(custom emoji)"
+            "paid" -> "⭐"
+            else -> null
+        }
     }
 
     private fun currentAgent() = mutable.value.agentId?.let { container.agents.store.get(it) }?.takeIf { it.running } ?: container.agents.defaultAgent()
@@ -286,8 +391,7 @@ class TelegramBot(private val container: AppContainer) {
 
     private suspend fun stopCurrent(chatId: Long) {
         val agent = currentAgent() ?: return
-        val sid = agent.sessionId ?: return
-        if (container.sessionStore.get(sid)?.state == SessionState.RUNNING) runCatching { container.supervisor.pause(sid) }
+        container.agents.setRunning(agent.id, false)
         send(chatId, container.context.getString(R.string.tg_stopped, agent.name))
     }
 
@@ -298,7 +402,8 @@ class TelegramBot(private val container: AppContainer) {
         val message = q["message"]?.jsonObject
         val chatId = message?.get("chat")?.jsonObject?.get("id")?.jsonPrimitive?.long
         val messageId = message?.get("message_id")?.jsonPrimitive?.long
-        if (userId == null || userId != mutable.value.userId) { answer(id, null); return }
+        if (userId == null || userId != mutable.value.userId || chatId != mutable.value.chatId || message?.get("chat")?.jsonObject?.get("type")?.jsonPrimitive?.contentOrNull != "private") { answer(id, null); return }
+        if (data.startsWith("op:")) { answer(id, proactive.callback(chatId!!, data)); return }
         when {
             data.startsWith("ag:") -> {
                 val agentId = data.removePrefix("ag:")
@@ -402,6 +507,8 @@ class TelegramBot(private val container: AppContainer) {
             val session = (change as? StoreChange.SessionChanged)?.session ?: return@collect
             val p = session.agentId?.let { container.agents.store.get(it) }?.takeIf { it.sessionId == session.id } ?: return@collect
             if (session.state != SessionState.COMPLETED && session.state != SessionState.FAILED) return@collect
+            if (app.umbra.core.orchestrator.CompletionEvidence.awaitingDelegates(session,
+                    container.sessionStore.list(app.umbra.core.session.SessionFilter(limit = Int.MAX_VALUE)))) return@collect
             if (sentFor[session.id]?.let { session.updatedAtMs - it < 1_500 } == true) return@collect
             sentFor[session.id] = session.updatedAtMs
             val chatId = mutable.value.chatId ?: return@collect
@@ -412,11 +519,53 @@ class TelegramBot(private val container: AppContainer) {
             if (text.isEmpty() || text.startsWith(AgentRuntime.QUIET)) return@collect
             // Answers to Telegram always; the agent's own news only while the user is not looking at its chat.
             if (asked || container.agents.onScreen.value != p.id) runCatching { send(chatId, if (asked) text else "${p.name}: $text") }
+            if (asked && session.state == SessionState.COMPLETED) sendDeliverables(chatId, session)
         }
     }
 
-    suspend fun notifyAgent(text: String) {
-        val chatId = mutable.value.chatId ?: error("Telegram is not linked")
+    /** Files the agent published for this turn go to the chat as documents, each checked against its receipt. */
+    private suspend fun sendDeliverables(chatId: Long, session: app.umbra.core.session.Session) {
+        val recipient = mutable.value
+        if (recipient.userId == null || recipient.chatId != chatId || !recipient.messages) return
+        val bundle = session.attachments[app.umbra.core.orchestrator.CompletionEvidence.KEY] as? JsonObject ?: return
+        val turn = (bundle["turnStartSeq"] as? JsonPrimitive)?.longOrNull ?: return
+        if (!deliveredBundles.add("${session.id}:$turn")) return
+        val artifacts = (bundle["artifacts"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.take(10)
+        val dir = File(container.context.cacheDir, "telegram/out")
+        for (artifact in artifacts) {
+            val title = artifact["title"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            var copy: File? = null
+            try {
+                copy = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    app.umbra.agent.data.DeliverableFiles.copyVerified(container, session, artifact, dir, TelegramApi.MAX_UPLOAD_BYTES)
+                }
+                val guard = app.umbra.core.safety.OutboundDlpGuard(4) { container.protectedValues() }
+                val upload = requireNotNull(copy)
+                kotlinx.coroutines.withContext(Dispatchers.IO) { upload.reader(Charsets.UTF_8).use { guard.requireSafe(it, TelegramApi.MAX_UPLOAD_BYTES) } }
+                val current = mutable.value
+                check(current.userId == recipient.userId && current.chatId == recipient.chatId && current.botId == recipient.botId && current.messages) { "Telegram delivery settings changed" }
+                api.sendDocument(chatId, upload, upload.name, artifact["mimeType"]?.jsonPrimitive?.contentOrNull.orEmpty(), guard.redact(title))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                runCatching { send(chatId, container.context.getString(R.string.tg_file_not_sent, title.ifBlank { "file" }, e.message ?: "")) }
+            } finally {
+                copy?.let { f -> f.delete(); f.parentFile?.delete() }
+            }
+        }
+    }
+
+    fun receivesSuggestions(agentId: String): Boolean = mutable.value.let {
+        it.userId != null && it.chatId != null && it.messages && currentAgent()?.id == agentId
+    }
+
+    suspend fun notifyAgent(text: String, agentId: String? = null, suggestionId: String? = null) {
+        val state = mutable.value
+        val chatId = state.chatId ?: error("Telegram is not linked")
+        if (agentId != null && suggestionId != null && state.userId != null && state.messages) {
+            val profile = container.agents.store.get(agentId)
+            if (profile?.running == true && proactive.offer(chatId, profile, suggestionId)) return
+        }
         send(chatId, text)
     }
 
@@ -426,13 +575,16 @@ class TelegramBot(private val container: AppContainer) {
 
     suspend fun send(chatId: Long, text: String, markup: JsonObject? = null) {
         // Telegram takes 4096 characters a message.
-        val parts = telegramMessageParts(text)
+        val guard = app.umbra.core.safety.OutboundDlpGuard(4) { container.protectedValues() }
+        markup?.let { app.umbra.core.safety.ModelPayloadGuard(guard).requireSafe(it) }
+        val parts = telegramMessageParts(guard.redact(text))
         parts.forEachIndexed { i, part ->
-            call("sendMessage", buildJsonObject {
+            val result = call("sendMessage", buildJsonObject {
                 put("chat_id", chatId)
                 put("text", part)
                 if (markup != null && i == parts.lastIndex) put("reply_markup", markup)
             })
+            (result as? JsonObject)?.get("message_id")?.jsonPrimitive?.longOrNull?.let { id -> synchronized(sent) { sent[id] = part.take(300) } }
         }
     }
 
@@ -442,39 +594,30 @@ class TelegramBot(private val container: AppContainer) {
         call("answerCallbackQuery", buildJsonObject { put("callback_query_id", callbackId); if (text != null) put("text", text.take(190)) })
     }
 
-    private suspend fun download(fileId: String): ByteArray? = withContext(Dispatchers.IO) {
-        val token = token() ?: return@withContext null
-        val path = runCatching { call("getFile", buildJsonObject { put("file_id", fileId) }).jsonObject["file_path"]?.jsonPrimitive?.contentOrNull }.getOrNull() ?: return@withContext null
-        runCatching {
-            http.newCall(Request.Builder().url("https://api.telegram.org/file/bot$token/$path").build()).execute().use { r -> if (r.isSuccessful) r.body.bytes().takeIf { it.size <= 20_000_000 } else null }
-        }.getOrNull()
+    private suspend fun react(chatId: Long, messageId: Long?, emoji: String) {
+        if (messageId == null) return
+        try { api.react(chatId, messageId, emoji) } catch (e: CancellationException) { throw e } catch (_: Exception) { /* Reactions are optional in Telegram chats. */ }
     }
 
     /** A file the user sent: into the agent's workspace, where its tools can read it. Returns the path the agent sees. */
-    private suspend fun saveForAgent(agentId: String, name: String, bytes: ByteArray): String? {
-        val sid = container.agents.store.get(agentId)?.sessionId ?: return null
-        val session = container.sessionStore.get(sid) ?: return null
+    private suspend fun saveForAgent(agentId: String, name: String, bytes: ByteArray): String {
+        val sid = requireNotNull(container.agents.store.get(agentId)?.sessionId) { "No agent session" }
+        val session = requireNotNull(container.sessionStore.get(sid)) { "No agent session" }
         val dir = session.workspaceId?.let { container.workspaceLayout.projectDir(it) } ?: container.workspaceLayout.sessionDir(sid).resolve("files")
-        val target = dir.resolve("telegram").resolve(name.replace(Regex("[^A-Za-z0-9._-]"), "_").take(80)).toFile()
-        target.parentFile?.mkdirs()
-        target.writeBytes(bytes)
-        return container.workspaceLayout.toGuest(target.toPath())
+        val target = requireNotNull(container.workspaceLayout.toGuest(dir.resolve("telegram").resolve(TelegramApi.attachmentName(name)))) { "The agent workspace is unavailable" }
+        val quote = app.umbra.platform.shell.ProcessShell.Companion::quote
+        val result = container.guest.runtime.exec(listOf("bash", "-c", "umask 077; mkdir -p -- ${quote(target.substringBeforeLast('/'))} && (set -C; base64 -d > ${quote(target)})"),
+            stdin = Base64.encodeToString(bytes, Base64.NO_WRAP), timeoutMs = 60_000, maxOutputBytes = 1024)
+        check(result.ok) { "The attachment could not be saved" }
+        return target
     }
 
-    private suspend fun call(method: String, body: JsonObject, token: String? = token()): JsonElement = withContext(Dispatchers.IO) {
-        val key = token ?: error("no bot token")
-        val request = Request.Builder().url("https://api.telegram.org/bot$key/$method")
-            .post(UmbraJson.encodeToString(JsonObject.serializer(), body).toRequestBody(JSON)).build()
-        http.newCall(request).execute().use { r ->
-            val parsed = runCatching { UmbraJson.parseToJsonElement(r.body.string()).jsonObject }.getOrNull()
-            if (parsed?.get("ok")?.jsonPrimitive?.contentOrNull != "true") {
-                throw IllegalStateException(parsed?.get("description")?.jsonPrimitive?.contentOrNull ?: "Telegram answered ${r.code}")
-            }
-            parsed["result"] ?: JsonObject(emptyMap())
-        }
-    }
+    private suspend fun call(method: String, body: JsonObject, token: String? = token()): JsonElement = api.call(method, body, token)
 
     private fun save(s: State) {
+        val previous = mutable.value
+        if (s.botId != previous.botId || s.userId != previous.userId || s.chatId != previous.chatId || previous.messages && !s.messages)
+            proactive.clearReviews()
         mutable.value = s
         file.parentFile?.mkdirs()
         val tmp = File(file.path + ".tmp")
@@ -486,8 +629,9 @@ class TelegramBot(private val container: AppContainer) {
 
     companion object {
         private const val TAG = "TelegramBot"
+        private const val ALBUM_WAIT_MS = 1_500L
+        private const val MAX_IMAGES = 8
         const val SECRET = "TELEGRAM_BOT_TOKEN"
         private val TOKEN = Regex("""^\d{5,16}:[A-Za-z0-9_-]{30,64}$""")
-        private val JSON = "application/json".toMediaType()
     }
 }

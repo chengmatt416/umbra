@@ -13,6 +13,7 @@ import app.umbra.agent.ui.porcelain.PorcelainTheme
 import app.umbra.agent.ui.porcelain.Theme
 import app.umbra.agent.ui.porcelain.ThemeRevealHost
 import app.umbra.agent.ui.shell.PorcelainApp
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private var requestedSession by mutableStateOf<String?>(null)
@@ -46,6 +47,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         container.ui.appVisible.value = true
+        container.scope.launch(kotlinx.coroutines.Dispatchers.IO) { container.usageCounts.recordOpen() }
     }
 
     override fun onStop() {

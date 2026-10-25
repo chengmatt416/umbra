@@ -34,11 +34,11 @@ internal class SystemExecutor(private val env: PipelineEnv) {
 
     suspend fun execute(c: OpContext): OpOutcome = when (val op = c.request.operation) {
         is Operation.Shell -> shell(c, op)
-        is Operation.Packages -> packages(op)
+        is Operation.Packages -> packages(c, op)
         is Operation.SysInfo -> sysinfo(op)
         is Operation.Logs -> logs(c, op)
-        is Operation.File -> file(op)
-        is Operation.Process -> process(op)
+        is Operation.File -> file(c, op)
+        is Operation.Process -> process(c, op)
         else -> OpOutcome.unsupported("${op.name} is not a system operation")
     }
 
@@ -54,6 +54,7 @@ internal class SystemExecutor(private val env: PipelineEnv) {
                 ?: return OpOutcome.unavailable("No shell is available.")
         }
         val result = try {
+            c.checkDispatch()
             shell.exec(ShellRequest(op.command, op.cwd, op.env, op.stdin, c.request.timeoutMs, op.maxOutputBytes))
         } catch (e: BackendException) {
             return OpOutcome.fail(e.code, e.message ?: "shell failed", e.retryable)
@@ -79,8 +80,9 @@ internal class SystemExecutor(private val env: PipelineEnv) {
 
     // ---- packages ----
 
-    private suspend fun packages(op: Operation.Packages): OpOutcome {
+    private suspend fun packages(c: OpContext, op: Operation.Packages): OpOutcome {
         val pm = backends.packages?.takeIf { it.isAvailable() } ?: return OpOutcome.unavailable("Package management needs shell access (Shizuku or root).")
+        c.checkDispatch()
         return try {
             when (op.action) {
                 PackageAction.LIST -> {
@@ -184,10 +186,11 @@ internal class SystemExecutor(private val env: PipelineEnv) {
 
     // ---- files ----
 
-    private suspend fun file(op: Operation.File): OpOutcome {
+    private suspend fun file(c: OpContext, op: Operation.File): OpOutcome {
         val fs = backends.files?.takeIf { it.isAvailable() } ?: return OpOutcome.unavailable("File access is not available.")
         // The agent names files the way Linux sees them; the phone's file system knows them by their real path.
         val path = env.config.pathMapper(op.path)
+        c.checkDispatch()
         return try {
             when (op.action) {
                 FileAction.READ -> {
@@ -230,7 +233,7 @@ internal class SystemExecutor(private val env: PipelineEnv) {
 
     // ---- processes ----
 
-    private suspend fun process(op: Operation.Process): OpOutcome {
+    private suspend fun process(c: OpContext, op: Operation.Process): OpOutcome {
         val p = backends.processes?.takeIf { it.isAvailable() } ?: return OpOutcome.unavailable("Process access needs shell access (Shizuku or root).")
         return try {
             when (op.action) {
@@ -246,7 +249,7 @@ internal class SystemExecutor(private val env: PipelineEnv) {
                 ProcessAction.KILL -> {
                     val pids = op.pid?.let { listOf(it) } ?: op.name_?.let { n -> p.list(n).map { it.pid } }.orEmpty()
                     if (pids.isEmpty()) return OpOutcome.fail(ErrorCode.NOT_FOUND, "No matching process to kill.")
-                    pids.forEach { p.kill(it, op.signal ?: 15) }
+                    pids.forEach { c.checkDispatch(); p.kill(it, op.signal ?: 15) }
                     OpOutcome.ok("Sent signal ${op.signal ?: 15} to ${pids.joinToString()}", backend = p.name)
                 }
             }
@@ -257,13 +260,14 @@ internal class SystemExecutor(private val env: PipelineEnv) {
 }
 
 /** Virtual displays and their leases (spec §9, §21). */
-internal class DisplayExecutor(private val env: PipelineEnv) {
+internal class DisplayExecutor(private val env: PipelineEnv, private val dispatch: suspend (app.umbra.core.model.action.ActionRequest, SessionToolState) -> ExecutionResult) {
     private val counter = AtomicInteger()
 
     suspend fun execute(c: OpContext, op: Operation.Display): OpOutcome {
         val displays = env.backends.displays?.takeIf { it.isAvailable() }
             ?: return OpOutcome.unavailable("Background displays need Shizuku or root (a shell-identity helper).")
         val session = c.request.sessionId ?: "-"
+        c.checkDispatch()
         return try {
             when (op.action) {
                 DisplayAction.LIST -> {
@@ -281,14 +285,19 @@ internal class DisplayExecutor(private val env: PipelineEnv) {
                         width = op.width ?: 1080, height = op.height ?: 2400, densityDpi = op.dpi ?: 420, ownerSessionId = c.request.sessionId,
                     )
                     val info = displays.create(spec)
+                    c.checkDispatch()
                     env.leases.acquire(session, info.id)
+                    c.checkDispatch()
                     c.state.activeDisplay = info.id
                     val launch = op.packageName?.let { pkg ->
-                        env.backends.apps?.launch(AppLaunch(packageName = pkg, activity = op.activity, displayId = info.id))
+                        dispatch(c.request.copy(id = c.request.id + ".launch", operation = Operation.LaunchApp(pkg, activity = op.activity, waitForForeground = false),
+                            target = c.request.target.copy(display = info.id, app = pkg)), c.state).result
                     }
+                    if (launch != null && !launch.isOk) return OpOutcome(launch.status, "Created display ${info.id}; app launch stopped: ${launch.summary}",
+                        data = buildJsonObject { put("display", info.id) }, error = launch.error, backend = displays.name)
                     OpOutcome.ok(
                         "Created display ${info.id} (${info.width}x${info.height}, ${info.densityDpi}dpi) and leased it to this session." +
-                            (launch?.let { if (it.started) " Launched ${op.packageName} on it." else " Could not launch ${op.packageName}: ${it.message}" } ?: "") +
+                            (if (launch != null) " Launched ${op.packageName} on it." else "") +
                             " Pass display=${info.id} to the android_* tools to work on it in the background.",
                         buildJsonObject { put("display", info.id) }, displays.name,
                     )
@@ -305,16 +314,12 @@ internal class DisplayExecutor(private val env: PipelineEnv) {
                     OpOutcome.ok("Destroyed display $id" + if (c.state.activeDisplay == 0) "; back on the main display" else "", backend = displays.name)
                 }
                 DisplayAction.LAUNCH -> {
-                    val id = op.displayId ?: return OpOutcome.fail(ErrorCode.INVALID_ARGUMENTS, "launch needs display_id.")
-                    val pkg = op.packageName ?: return OpOutcome.fail(ErrorCode.INVALID_ARGUMENTS, "launch needs a package.")
-                    env.leases.acquire(session, id, env.config.leaseWaitMs)
-                    val apps = env.backends.apps?.takeIf { it.isAvailable() } ?: return OpOutcome.unavailable("Launching apps needs shell access.")
-                    val r = apps.launch(AppLaunch(packageName = pkg, activity = op.activity, displayId = id))
-                    if (r.started) OpOutcome.ok("Launched $pkg on display $id", backend = apps.name) else OpOutcome.fail(ErrorCode.NOT_FOUND, "Could not launch $pkg on display $id: ${r.message}")
+                    OpOutcome.fail(ErrorCode.INVALID_ARGUMENTS, "launch needs display_id and package.")
                 }
                 DisplayAction.LEASE -> {
                     val id = op.displayId ?: return OpOutcome.fail(ErrorCode.INVALID_ARGUMENTS, "lease needs display_id.")
                     env.leases.acquire(session, id, env.config.leaseWaitMs)
+                    c.checkDispatch()
                     OpOutcome.ok("Display $id is leased to this session (released automatically when it is idle or the session ends).")
                 }
                 DisplayAction.RELEASE -> {
@@ -335,6 +340,7 @@ internal class GuiExecutor(private val env: PipelineEnv) {
     suspend fun execute(c: OpContext): OpOutcome {
         val gui = env.backends.linuxGui?.takeIf { it.isAvailable() }
             ?: return OpOutcome.unavailable("There is no Linux desktop to use: the Linux environment must be running with the Desktop apps add-on installed (Set up). Use the shell for command-line work.")
+        c.checkDispatch()
         return try {
             when (val op = c.request.operation) {
                 is Operation.Window -> when (op.action) {

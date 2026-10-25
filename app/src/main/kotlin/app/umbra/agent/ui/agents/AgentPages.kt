@@ -159,6 +159,7 @@ fun AgentProfileScreen(agentId: String, onBack: () -> Unit, onGo: (String) -> Un
             }
             RowGroup {
                 NavRow(PIcons.clock, stringResource(R.string.ag_timers), stringResource(R.string.ag_timers_sub, timers.size, rules.size)) { onGo("agent/$agentId/timers") }
+                NavRow(PIcons.zap, stringResource(R.string.proactive_title), stringResource(R.string.proactive_profile_body)) { onGo("agent/$agentId/proactivity") }
                 NavRow(PIcons.arrowUp, stringResource(R.string.ag_telegram), bot?.let { stringResource(R.string.ag_telegram_linked, it) } ?: stringResource(R.string.ag_telegram_not)) { onGo("agent/$agentId/telegram") }
                 NavRow(PIcons.gauge, stringResource(R.string.ag_model_effort), modelName(p.model) + " · " + effortText(p.effort)) { picker = true }
                 NavRow(PIcons.gauge, stringResource(R.string.ai_usage_limit), p.usageLimit?.maximum?.toString() ?: stringResource(R.string.ai_limit_none)) { usageLimitOpen = true }
@@ -192,7 +193,7 @@ fun AgentProfileScreen(agentId: String, onBack: () -> Unit, onGo: (String) -> Un
     )
     if (confirmDelete) AlertDialog(
         onDismissRequest = { confirmDelete = false },
-        title = { Text(stringResource(R.string.ag_delete_title, p.name), fontFamily = P.serif, fontSize = 22.sp, color = P.ink) },
+        title = { Text(stringResource(R.string.ag_delete_title, p.name), fontFamily = P.serif, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, letterSpacing = (-0.2).sp, fontSize = 22.sp, color = P.ink) },
         text = { Text(stringResource(R.string.ag_delete_body), fontSize = 14.sp, color = P.sub) },
         confirmButton = { PButton(stringResource(R.string.ag_delete), { confirmDelete = false; scope.launch { container.agents.delete(agentId); onDeleted() } }, style = ButtonStyle.Danger) },
         dismissButton = { PButton(stringResource(R.string.action_cancel), { confirmDelete = false }, style = ButtonStyle.Ghost) },
@@ -265,7 +266,7 @@ fun MemoryScreen(agentId: String, onBack: () -> Unit) {
         val you = stringResource(R.string.ag_source_you)
         AlertDialog(
             onDismissRequest = { adding = false; editing = null },
-            title = { Text(stringResource(if (editing != null) R.string.ag_memory_edit else R.string.ag_memory_add), fontFamily = P.serif, fontSize = 22.sp, color = P.ink) },
+            title = { Text(stringResource(if (editing != null) R.string.ag_memory_edit else R.string.ag_memory_add), fontFamily = P.serif, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, letterSpacing = (-0.2).sp, fontSize = 22.sp, color = P.ink) },
             text = { PField(text, { text = it }, minLines = 3) },
             confirmButton = {
                 PButton(stringResource(R.string.action_save), {
@@ -283,7 +284,7 @@ fun MemoryScreen(agentId: String, onBack: () -> Unit) {
         val valid = runCatching { LocalDate.parse(from) <= LocalDate.parse(to) }.getOrDefault(false)
         AlertDialog(
             onDismissRequest = { forgetting = false },
-            title = { Text(stringResource(R.string.ag_memory_forget), fontFamily = P.serif, fontSize = 22.sp, color = P.ink) },
+            title = { Text(stringResource(R.string.ag_memory_forget), fontFamily = P.serif, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, letterSpacing = (-0.2).sp, fontSize = 22.sp, color = P.ink) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(stringResource(R.string.ag_memory_forget_body), fontSize = 13.sp, color = P.sub)
@@ -396,7 +397,7 @@ fun TimersScreen(agentId: String, onBack: () -> Unit) {
         var text by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { addQueue = false },
-            title = { Text(stringResource(R.string.ag_add_queue), fontFamily = P.serif, fontSize = 22.sp, color = P.ink) },
+            title = { Text(stringResource(R.string.ag_add_queue), fontFamily = P.serif, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, letterSpacing = (-0.2).sp, fontSize = 22.sp, color = P.ink) },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(stringResource(R.string.ag_queue_body, p.name), fontSize = 13.sp, color = P.sub); PField(text, { text = it }, minLines = 2) } },
             confirmButton = {
                 PButton(stringResource(R.string.ag_add), {
@@ -467,7 +468,7 @@ private fun RuleDialog(onDismiss: () -> Unit, onAdd: (source: String?, text: Str
     var then by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.ag_add_rule), fontFamily = P.serif, fontSize = 22.sp, color = P.ink) },
+        title = { Text(stringResource(R.string.ag_add_rule), fontFamily = P.serif, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, letterSpacing = (-0.2).sp, fontSize = 22.sp, color = P.ink) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Label(stringResource(R.string.ag_rule_when))
@@ -494,7 +495,7 @@ private fun TimerDialog(onDismiss: () -> Unit, onAdd: (note: String, at: Long, c
     val parsed = Regex("""^(\d{1,2}):(\d{2})$""").find(time.trim())?.let { m -> m.groupValues[1].toInt().takeIf { it < 24 }?.let { h -> m.groupValues[2].toInt().takeIf { it < 60 }?.let { h to it } } }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.ag_add_timer), fontFamily = P.serif, fontSize = 22.sp, color = P.ink) },
+        title = { Text(stringResource(R.string.ag_add_timer), fontFamily = P.serif, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, letterSpacing = (-0.2).sp, fontSize = 22.sp, color = P.ink) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 PField(note, { note = it }, label = stringResource(R.string.ag_timer_note), singleLine = true)
@@ -614,7 +615,7 @@ private fun QuietDialog(p: AgentProfile, onDismiss: () -> Unit, onSave: (Int?, I
     val is24 = android.text.format.DateFormat.is24HourFormat(context)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.ag_quiet), fontFamily = P.serif, fontSize = 22.sp, color = P.ink) },
+        title = { Text(stringResource(R.string.ag_quiet), fontFamily = P.serif, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, letterSpacing = (-0.2).sp, fontSize = 22.sp, color = P.ink) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.ag_quiet_sub), fontSize = 13.sp, color = P.sub)

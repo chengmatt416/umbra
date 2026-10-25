@@ -33,8 +33,11 @@ class UiRiskAnalyzer {
             if (matches(label, FACTORY_RESET_WORDS)) out += finding(FACTORY_RESET, CRITICAL, label, "resets the device")
             if (matches(label, DELETE_ACCOUNT_WORDS)) out += finding(IMPORTANT_DATA_DELETION, CRITICAL, label, "deletes an account")
             if (matches(label, ACCOUNT_SECURITY_WORDS)) out += finding(ACCOUNT_SECURITY_CHANGE, HIGH, label, "changes account security")
-            if (matches(label, FINANCIAL_WORDS)) out += finding(FINANCIAL_TRANSACTION, HIGH, label, "moves money")
-            if (matches(label, PURCHASE_WORDS)) out += finding(PURCHASE, HIGH, label, "completes a purchase or subscription")
+            if (matches(label, FINANCIAL_WORDS)) out += finding(FINANCIAL_TRANSACTION, CRITICAL, label, "moves money")
+            if (matches(label, PURCHASE_WORDS)) {
+                out += finding(PURCHASE, CRITICAL, label, "completes a purchase or subscription")
+                out += finding(FINANCIAL_TRANSACTION, CRITICAL, label, "submits a binding checkout")
+            }
             if (matches(label, DEVICE_SECURITY_WORDS)) out += finding(DEVICE_SECURITY_COMPROMISE, HIGH, label, "weakens device security")
             if (matches(label, DELETE_ALL_WORDS)) out += finding(IMPORTANT_DATA_DELETION, HIGH, label, "deletes data")
             else if (matches(label, DELETE_WORDS)) out += finding(IMPORTANT_DATA_DELETION, MEDIUM, label, "deletes data")
@@ -56,7 +59,8 @@ class UiRiskAnalyzer {
             }
             // A generic confirm button on a checkout screen is the purchase button.
             if (matches(label, CONFIRM_WORDS) && looksLikeCheckout(ctx.screenTexts)) {
-                out += finding(PURCHASE, HIGH, label, "confirms a payment screen showing a price")
+                out += finding(PURCHASE, CRITICAL, label, "confirms a payment screen showing a price")
+                out += finding(FINANCIAL_TRANSACTION, CRITICAL, label, "submits a binding checkout")
             }
         }
         if (isSensitiveApp(pkg)) {
@@ -69,6 +73,7 @@ class UiRiskAnalyzer {
         val node = ctx.targetNode
         val out = mutableListOf<RiskFinding>()
         val pkg = ctx.foregroundPackage.orEmpty()
+        if (CheckoutGuard.isPaymentField(ctx)) out += RiskFinding(FINANCIAL_TRANSACTION, CRITICAL, "Payment-card entry requires native user takeover")
         if (node?.isPassword == true || secret) {
             out += RiskFinding(CREDENTIAL_SUBMISSION, HIGH, "types into a password field or a value marked secret")
         } else if (submit && ctx.passwordFieldVisible) {
@@ -130,6 +135,7 @@ class UiRiskAnalyzer {
             "buy now", "buy", "purchase", "place order", "place your order", "pay now", "pay", "checkout", "check out",
             "subscribe", "start subscription", "start free trial", "confirm purchase", "confirm order", "complete purchase",
             "order now", "get premium", "upgrade now", "confirm payment",
+            "submit binding reservation", "authorize payment", "授權扣款", "授权扣款",
             "支付", "付款", "購買", "购买", "立即購買", "立即购买", "結帳", "结账", "下單", "下单", "訂閱", "订阅", "確認付款", "确认付款",
         )
         val FINANCIAL_WORDS = listOf(

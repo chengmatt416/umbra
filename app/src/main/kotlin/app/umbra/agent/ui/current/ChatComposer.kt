@@ -241,18 +241,40 @@ private fun isCommand(text: String, commands: List<OmpSlashCommand>): Boolean {
 /** A picked picture, scaled to at most 1600 px and JPEG-encoded, as a prompt image. */
 internal suspend fun encodePicture(context: Context, uri: Uri): ContentBlock.Image? = withContext(Dispatchers.IO) {
     try {
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@withContext null
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readNBytes(20_000_001) } ?: return@withContext null
+        if (bytes.size > 20_000_000) return@withContext null
+        encodePicture(bytes)
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+}
+
+internal suspend fun encodePicture(bytes: ByteArray): ContentBlock.Image? = withContext(Dispatchers.IO) {
+    var bitmap: Bitmap? = null
+    var sized: Bitmap? = null
+    try {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
         var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 1600) sample *= 2
-        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return@withContext null
-        val scale = 1600f / maxOf(bitmap.width, bitmap.height)
-        val sized = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
-        val out = ByteArrayOutputStream()
-        sized.compress(Bitmap.CompressFormat.JPEG, 85, out)
-        ContentBlock.Image(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP), "image/jpeg")
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 3200) sample *= 2
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return@withContext null
+        bitmap = decoded
+        val scale = minOf(1f, 1600f / maxOf(decoded.width, decoded.height))
+        var current = if (scale < 1f) Bitmap.createScaledBitmap(decoded, maxOf(1, (decoded.width * scale).toInt()), maxOf(1, (decoded.height * scale).toInt()), true) else decoded
+        sized = current
+        repeat(6) {
+            val out = ByteArrayOutputStream()
+            if (!current.compress(Bitmap.CompressFormat.JPEG, if (it == 0) 85 else 65, out)) return@withContext null
+            if (out.size() <= 600_000) return@withContext ContentBlock.Image(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP), "image/jpeg")
+            val smaller = Bitmap.createScaledBitmap(current, maxOf(1, current.width * 3 / 4), maxOf(1, current.height * 3 / 4), true)
+            if (current !== decoded && current !== smaller) current.recycle()
+            current = smaller
+            sized = current
+        }
+        null
     } catch (_: Exception) {
         null
+    } finally {
+        if (sized !== bitmap) sized?.recycle()
+        bitmap?.recycle()
     }
 }

@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Agents, connectors, the Telegram bot (docs/design/agents-2026-10.md). -->
 <resources>
+    <string name="proactive_instruction">Instructions</string>
+    <string name="ag_active_work">Active tasks (%1$d)</string>
+    <string name="proactive_no_suggestions">No suggestions yet. Suggestions from your connected sources will appear here for review.</string>
+    <string name="proactive_no_briefs">No briefs yet. A running agent at level L1 or above prepares them at the times you choose.</string>
+    <string name="proactive_morning">Morning brief</string>
+    <string name="proactive_evening">Evening brief</string>
+    <string name="proactive_brief_time">%1$s time</string>
     <string name="ag_add">Add</string>
     <string name="ag_add_queue">Queue a task</string>
     <string name="ag_add_rule">Add rule</string>
@@ -227,4 +234,11 @@
     <string name="tg_voice_heard">(voice) %1$s</string>
     <string name="tg_voice_sub">Turned into text first, then to %1$s</string>
     <string name="tg_voice_unheard">(A voice note that could not be turned into text on the phone.)</string>
+    <string name="tg_album_more">(%1$d more pictures were in the album; ask for them as files if you need them.)</string>
+    <string name="tg_sticker">(a sticker: %1$s)</string>
+    <string name="tg_reaction_note">The user reacted %1$s to your message: “%2$s”. Treat it as feedback. Reply only if it asks for something; otherwise end your turn with exactly %3$s</string>
+    <string name="tg_reaction_note_unknown">The user reacted %1$s to an earlier message of yours. Treat it as feedback. Reply only if it asks for something; otherwise end your turn with exactly %2$s</string>
+    <string name="tg_file_not_sent">“%1$s” could not be sent here: %2$s Open it in Umbra.</string>
+    <string name="tg_reactions">Reactions</string>
+    <string name="tg_reactions_sub">Your reactions to its messages reach %1$s as feedback</string>
 </resources>

@@ -60,11 +60,14 @@ class NodeConnections(private val c: AppContainer, private val scope: CoroutineS
     private val screenSockets = ConcurrentHashMap<String, MutableSet<javax.net.ssl.SSLSocket>>()
     private val userScreens = ConcurrentHashMap.newKeySet<String>()
 
-    fun userScreen(nodeId: String, active: Boolean) {
+    fun userScreen(nodeId: String, active: Boolean, returnToAgent: Boolean = true) {
         if (active) {
-            userScreens.add(nodeId)
+            if (userScreens.add(nodeId)) c.takeOver("node:$nodeId")
             screenSockets[nodeId]?.let { sockets -> synchronized(sockets) { sockets.toList().forEach { runCatching { it.close() } }; sockets.clear() } }
-        } else userScreens.remove(nodeId)
+        } else {
+            userScreens.remove(nodeId)
+            if (returnToAgent) c.returnControl("node:$nodeId")
+        }
     }
 
     fun screenProblem(nodeId: String, agent: Boolean): String? {
@@ -73,7 +76,7 @@ class NodeConnections(private val c: AppContainer, private val scope: CoroutineS
             node.revocation != null -> "This node is revoked"
             node.info?.screen?.available != true -> "Screen access is unavailable; open setup on the computer"
             agent && (node.trust != app.umbra.core.control.NodeTrust.OWNED || !node.allowAgentScreen) -> "Allow agent screen access on this node first"
-            agent && nodeId in userScreens -> "The user has taken over this screen"
+            agent && (nodeId in userScreens || c.inputLeases.current("node:$nodeId")?.owner == app.umbra.core.control.Principal.User) -> "The user has taken over this screen"
             else -> null
         }
     }

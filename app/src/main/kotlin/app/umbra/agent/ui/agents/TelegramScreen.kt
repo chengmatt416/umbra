@@ -115,6 +115,7 @@ fun TelegramScreen(agentId: String, onBack: () -> Unit) {
                 RowGroup(stringResource(R.string.tg_can)) {
                     SwitchRow(PIcons.message, stringResource(R.string.tg_messages, agentName), stringResource(R.string.tg_messages_sub), state.messages) { on -> bot.setOptions { it.copy(messages = on) } }
                     SwitchRow(PIcons.mic, stringResource(R.string.tg_voice), stringResource(R.string.tg_voice_sub, agentName), state.voice) { on -> bot.setOptions { it.copy(voice = on) } }
+                    SwitchRow(PIcons.heart, stringResource(R.string.tg_reactions), stringResource(R.string.tg_reactions_sub, agentName), state.reactions) { on -> bot.setOptions { it.copy(reactions = on) } }
                     SwitchRow(PIcons.check, stringResource(R.string.tg_approvals), stringResource(R.string.tg_approvals_sub), state.approvals) { on -> bot.setOptions { it.copy(approvals = on) } }
                     SwitchRow(PIcons.users, stringResource(R.string.tg_switch), stringResource(R.string.tg_switch_sub), state.switching) { on -> bot.setOptions { it.copy(switching = on) } }
                 }

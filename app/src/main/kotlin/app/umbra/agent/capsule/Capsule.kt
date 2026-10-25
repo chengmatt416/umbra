@@ -22,12 +22,15 @@ import app.umbra.platform.android.UmbraOverlay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -59,6 +62,19 @@ class Capsule(internal val context: Context, private val container: AppContainer
     internal val dismissedFailures = MutableStateFlow<Set<String>>(emptySet())
     /** Where the capsule sits relative to the camera; null when there is no camera to wrap. */
     internal val hole = MutableStateFlow<Hole?>(null)
+    /** The card is folding back into the pill: the window stays wide until the card says it is done (or a moment passes). */
+    internal val collapsing = MutableStateFlow(false)
+    /** The card has been laid out: only then does the window widen, so the pill never sits stranded in a wide window. */
+    internal val cardShown = MutableStateFlow(false)
+    /** Another capsule app is expanded over the camera: Umbra's pill fades out of its way and takes no touches. */
+    internal val yielding = MutableStateFlow(false)
+    /** The other capsule app Umbra is making room for (Material Capsule, ...), or null. */
+    val neighbourName = MutableStateFlow<String?>(null)
+    /** In the top corner instead of around the camera (see [CapsuleNeighbours]). */
+    @Volatile private var corner = false
+    /** A plain pill centred in the status-bar row, independent of the camera (see [CapsuleNeighbours.centre]). */
+    @Volatile private var centre = false
+    @Volatile private var laidOutWide = false
 
     /** What the companions and the activity feed show (docs/design/capsule-companion.md). */
     internal val watch = CapsuleWatch(container, scope, ::feel)
@@ -86,6 +102,16 @@ class Capsule(internal val context: Context, private val container: AppContainer
     internal val selectionFocused = MutableStateFlow(false)
     private var selecting = false
     private var job: Job? = null
+    internal val isStarted: Boolean get() = job?.isActive == true
+    @Volatile internal var projectedSuggestions: Int = -1
+    @Volatile internal var suggestionExpirySignals: Long = 0
+    @Volatile internal var debugTapPoint: Point? = null
+    internal val debugSuggestionTargets = java.util.concurrent.ConcurrentHashMap<String, Point>()
+    internal fun noteDebugTarget(id: String?, point: Point) {
+        if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            if (id == null) debugTapPoint = point else debugSuggestionTargets[id] = point
+        }
+    }
     private var enabled = false
 
     private val density get() = context.resources.displayMetrics.density
@@ -104,13 +130,12 @@ class Capsule(internal val context: Context, private val container: AppContainer
         watch.start()
         job = scope.launch {
             launch {
-                combine(container.settings.flow.map { it.overlayEnabled }.distinctUntilChanged(), UmbraAccessibilityService.connected) { on, _ -> on }
-                    .collect { on -> enabled = on; sync() }
+                container.capsuleSignals.revision.collect { enabled = container.settings.value.overlayEnabled; sync() }
             }
             // A decision peeks in the capsule by itself, tucked or not; nothing switches the workspace (§3.1).
             launch {
                 var seen = emptySet<String>()
-                container.approvals.pending.collect { list ->
+                container.capsuleSignals.read(container.approvals.pending).collect { list ->
                     val ids = list.map { it.id }.toSet()
                     if ((ids - seen).isNotEmpty()) tucked.value = false
                     if ((ids - seen).isNotEmpty() && capsuleWindow != null && !container.ui.appVisible.value) expanded.value = true
@@ -120,7 +145,7 @@ class Capsule(internal val context: Context, private val container: AppContainer
             // News peeks too: a question waits open; a task that finished or failed shows for a moment.
             launch {
                 var seen = emptySet<String>()
-                container.questions.pending.collect { list ->
+                container.capsuleSignals.read(container.questions.pending).collect { list ->
                     val ids = list.map { "${it.sessionId}:${it.askedAtMs}" }.toSet()
                     list.lastOrNull { "${it.sessionId}:${it.askedAtMs}" !in seen }?.let { container.ui.focus(it.sessionId); peek(hold = true) }
                     seen = ids
@@ -129,27 +154,55 @@ class Capsule(internal val context: Context, private val container: AppContainer
             launch {
                 val last = HashMap<String, app.umbra.core.session.SessionState>()
                 container.sessionStore.list().forEach { last[it.id] = it.state }
-                container.sessionStore.changes.collect { change ->
-                    val session = (change as? app.umbra.core.session.StoreChange.SessionChanged)?.session ?: return@collect
-                    val before = last.put(session.id, session.state)
-                    val ended = session.state == app.umbra.core.session.SessionState.COMPLETED || session.state == app.umbra.core.session.SessionState.FAILED
-                    if (before != null && before != session.state && ended &&
-                        session.kind != app.umbra.core.session.SessionKind.AGENT && !container.ui.appVisible.value) {
-                        container.ui.focus(session.id)
-                        peek(hold = false)
+                container.capsuleSignals.revision.collect {
+                    container.sessionStore.list().forEach { session ->
+                        val before = last.put(session.id, session.state)
+                        val ended = session.state == app.umbra.core.session.SessionState.COMPLETED || session.state == app.umbra.core.session.SessionState.FAILED
+                        if (before != null && before != session.state && ended &&
+                            session.kind != app.umbra.core.session.SessionKind.AGENT && !container.ui.appVisible.value) {
+                            container.ui.focus(session.id)
+                            peek(hold = false)
+                        }
                     }
                 }
             }
-            launch { expanded.collect { if (!it) focusCard(false); place() } }
+            // Folding: the card shrinks toward the camera in the still-wide window, then the window becomes the pill.
+            launch {
+                expanded.collectLatest { open ->
+                    collapsing.value = false
+                    if (open) kotlinx.coroutines.withTimeoutOrNull(OPEN_WAIT_MS) { cardShown.first { it } }
+                    if (!open) {
+                        focusCard(false)
+                        if (laidOutWide) {
+                            collapsing.value = true
+                            kotlinx.coroutines.withTimeoutOrNull(COLLAPSE_MS) { collapsing.first { !it } }
+                            collapsing.value = false
+                        }
+                        cardShown.value = false
+                    }
+                    place()
+                }
+            }
+            launch { neighbours() }
             launch { tucked.collect { place() } }
-            launch { container.ui.appVisible.collect { visible -> if (visible) expanded.value = false; sync() } }
+            launch { container.capsuleSignals.read(container.ui.appVisible).collect { visible -> if (visible) expanded.value = false; sync() } }
         }
     }
 
     /** Starts a screen recording: the card folds away so it is not in the picture, the capsule becomes its stop button. */
     fun startRecording() {
+        if (container.demonstrations.active.value != null) return
         expanded.value = false
         container.recorder.request()
+    }
+
+    fun startTeaching(agentId: String) {
+        expanded.value = false
+        container.scope.launch {
+            try { container.demonstrations.start(agentId) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { android.widget.Toast.makeText(context, e.message ?: "Teaching could not start", android.widget.Toast.LENGTH_LONG).show() }
+        }
     }
 
     /** A recording became context: the card opens with it and its field, for what to do with it. */
@@ -161,6 +214,27 @@ class Capsule(internal val context: Context, private val container: AppContainer
     }
 
     private var peekJob: Job? = null
+    private var replyJob: Job? = null
+
+    /**
+     * After the Capsule asked an agent: the agent's next finished reply (not a quiet turn) opens the card for a moment,
+     * where it shows the agent's latest words, the way a finished task peeks. Waits at most ten minutes.
+     */
+    internal fun awaitAgentReply(agentId: String) {
+        val sid = container.agents.store.get(agentId)?.sessionId ?: return
+        val since = System.currentTimeMillis()
+        replyJob?.cancel()
+        replyJob = scope.launch {
+            val flow = runCatching { container.supervisor.conversation(sid) }.getOrNull() ?: return@launch
+            withTimeoutOrNull(10 * 60_000L) {
+                flow.first { state ->
+                    state.items.any { it is app.umbra.core.orchestrator.ChatItem.Assistant && it.timestamp >= since && !it.streaming &&
+                        it.text.isNotBlank() && !it.text.startsWith(app.umbra.agent.agents.AgentRuntime.QUIET) }
+                }
+            } ?: return@launch
+            if (!container.ui.appVisible.value) { feel(CapsuleWatch.Signal.DONE); peek(hold = false) }
+        }
+    }
 
     /**
      * Opens the card by itself for news, tucked or not, unless Umbra itself is in front (it shows the news there).
@@ -180,7 +254,53 @@ class Capsule(internal val context: Context, private val container: AppContainer
         }
     }
 
+    /**
+     * Keeps [neighbourName], [corner] and [yielding] current: from the enabled accessibility services (another capsule
+     * app's) and from the windows over the camera (with Umbra's own service on). Re-places the capsule when it moves.
+     */
+    private suspend fun neighbours() {
+        val servicesChanged = kotlinx.coroutines.flow.callbackFlow {
+            val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+                override fun onChange(selfChange: Boolean) { trySend(Unit) }
+            }
+            context.contentResolver.registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES), false, observer)
+            trySend(Unit)
+            awaitClose { context.contentResolver.unregisterContentObserver(observer) }
+        }
+        val placement = container.settings.flow.map { it.capsulePlacement }.distinctUntilChanged()
+        kotlinx.coroutines.flow.combine(servicesChanged, UmbraAccessibilityService.topOverlays, placement, expanded) { _, overlays, chosen, open -> Triple(overlays, chosen, open) }
+            .collect { (overlays, chosen, open) ->
+                val pm = context.packageManager
+                val services = runCatching {
+                    CapsuleNeighbours.services(Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES), context.packageName) { pkg ->
+                        runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }.getOrNull()
+                    }
+                }.getOrDefault(emptyList())
+                val wm = (UmbraAccessibilityService.instance ?: context).getSystemService(WindowManager::class.java)
+                val metrics = wm.currentWindowMetrics
+                val statusTop = metrics.windowInsets.getInsets(WindowInsets.Type.statusBars()).top
+                val island = CapsuleNeighbours.island(overlays, metrics.bounds.width(), statusTop, camera(metrics)?.centerX())
+                val windowOwner = overlays.firstNotNullOfOrNull { o -> o.packageName?.let { pkg -> runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }.getOrNull() } }
+                neighbourName.value = services.firstOrNull()?.second ?: windowOwner.takeIf { island != CapsuleNeighbours.Island.NONE }
+                val nextCorner = CapsuleNeighbours.corner(chosen, neighbourName.value != null)
+                val yield = island == CapsuleNeighbours.Island.EXPANDED && !open
+                if (yield != yielding.value) {
+                    yielding.value = yield
+                    capsuleWindow?.update { p ->
+                        p.flags = if (yield) p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                    }
+                }
+                val nextCentre = CapsuleNeighbours.centre(chosen, neighbourName.value != null)
+                if (nextCorner != corner || nextCentre != centre) { corner = nextCorner; centre = nextCentre; place() }
+            }
+    }
+
     fun stop() {
+        projectedSuggestions = -1
+        debugTapPoint = null
+        debugSuggestionTargets.clear()
+        peekJob?.cancel()
+        peekJob = null
         job?.cancel()
         job = null
         watch.stop()
@@ -253,6 +373,31 @@ class Capsule(internal val context: Context, private val container: AppContainer
         val statusTop = metrics.windowInsets.getInsets(WindowInsets.Type.statusBars()).top
         val camera = camera(metrics)
         val overStatusBar = capsuleType == WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        laidOutWide = expanded.value
+        if (centre) {
+            // The user's choice: a plain pill in the middle of the status-bar row, between the clock and the icons; the
+            // card unfolds from it. Over the status bar only with the accessibility window, else just below it.
+            hole.value = null
+            val pill = dp(PILL_DP)
+            val rowY = if (overStatusBar) (maxOf(statusTop, pill) - pill) / 2 else statusTop + dp(4)
+            window.update { p ->
+                p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                p.x = 0
+                p.y = rowY
+                p.width = if (expanded.value) width - dp(8) else WindowManager.LayoutParams.WRAP_CONTENT
+            }
+            return
+        }
+        if (corner) {
+            // Beside another capsule app: a plain pill just under the status bar, at the end away from the thumb's menu.
+            hole.value = null
+            window.update { p ->
+                p.y = statusTop + dp(6)
+                if (expanded.value) { p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; p.width = width - dp(8); p.x = 0 }
+                else { p.gravity = Gravity.TOP or (if (container.settings.value.leftHanded) Gravity.START else Gravity.END); p.width = WindowManager.LayoutParams.WRAP_CONTENT; p.x = dp(10) }
+            }
+            return
+        }
         val margin = dp(8)
         val pill = if (overStatusBar && camera != null) maxOf(dp(PILL_DP), camera.height() + dp(10)) else dp(PILL_DP)
         val y = when {
@@ -319,6 +464,7 @@ class Capsule(internal val context: Context, private val container: AppContainer
 
     /** Tapped: expand (a tucked capsule comes back first). */
     fun tap() {
+        if (container.demonstrations.active.value != null) { container.scope.launch { container.demonstrations.stop() }; return }
         // While the screen is being recorded, the capsule is its stop button.
         if (container.recorder.state.value is ScreenRecorder.State.Recording) { container.recorder.stop(); return }
         if (tucked.value) { tucked.value = false; return }
@@ -345,6 +491,9 @@ class Capsule(internal val context: Context, private val container: AppContainer
     private fun closeCapsule() {
         capsuleWindow?.close()
         capsuleWindow = null
+        projectedSuggestions = -1
+        debugTapPoint = null
+        debugSuggestionTargets.clear()
         expanded.value = false
         cardFocused.value = false
     }
@@ -567,6 +716,10 @@ class Capsule(internal val context: Context, private val container: AppContainer
         const val PILL_DP = 34
         /** How long news about a finished task stays open in the card when nobody touches it. */
         const val PEEK_MS = 6_000L
+        /** The longest the window waits for the card's fold-away animation before it becomes the pill anyway. */
+        const val COLLAPSE_MS = 420L
+        /** The longest the window waits for the card's first layout before it widens anyway. */
+        const val OPEN_WAIT_MS = 600L
         /** At most this wide on each side of the camera. */
         const val ZONE_DP = 104
         /** The card's first row, the one the camera sits in. */

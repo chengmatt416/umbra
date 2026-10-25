@@ -1,0 +1,11 @@
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; padding: 32px 24px; min-height: 100vh; min-height: 100svh; display: grid; place-items: center; background: #e9ede5; color: #1c2823; font: 18px/1.6 system-ui, sans-serif; }
+main { width: min(100%, 32rem); }
+.brand { margin: 0 0 28px; color: #476d54; font-weight: 700; letter-spacing: .06em; }
+h1 { margin: 0 0 18px; font-size: clamp(28px, 7vw, 40px); font-weight: 600; line-height: 1.2; }
+p { margin: 0 0 22px; }
+a { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; margin: 2px 0 24px; padding: 12px 22px; border-radius: 8px; background: #476d54; color: #fff; font-weight: 600; text-decoration: none; }
+a:hover { background: #365640; }
+a:focus-visible { outline: 3px solid #1c2823; outline-offset: 4px; }
+.hint { font-size: 15px; color: #43534a; }

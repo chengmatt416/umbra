@@ -14,8 +14,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
-import com.google.zxing.*
-import com.google.zxing.common.HybridBinarizer
 
 @Composable
 internal fun NodeQrCamera(onCode: (String) -> Unit, onError: (String) -> Unit) {
@@ -33,11 +31,14 @@ private class CameraPreview(context: Context, val onCode: (String) -> Unit, val 
     private var session: CameraCaptureSession? = null
     private var images: ImageReader? = null
     private var surface: Surface? = null
+    private var opening = false
+    private var lastDecoded: String? = null
+    private var lastDecodeAtMs = 0L
     @Volatile private var closed = false
-    private val decoder = MultiFormatReader().apply { setHints(mapOf(DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE), DecodeHintType.TRY_HARDER to true)) }
+    private val decoder = NodeQrDecoder()
     init {
         surfaceTextureListener = object : SurfaceTextureListener {
-            override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) { open(texture) }
+            override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) { worker.post { if (!closed) open(texture) } }
             override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
             override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean { close(); return true }
             override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
@@ -53,48 +54,58 @@ private class CameraPreview(context: Context, val onCode: (String) -> Unit, val 
             surface = Surface(texture)
             images = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2).apply {
                 setOnImageAvailableListener({ source ->
-                    source.acquireLatestImage()?.use { image ->
-                        if (closed) return@use
-                        val plane = image.planes[0]
-                        val data = ByteArray(image.width * image.height)
-                        for (row in 0 until image.height) {
-                            val start = row * plane.rowStride
-                            for (col in 0 until image.width) data[row * image.width + col] = plane.buffer.get(start + col * plane.pixelStride)
+                    if (closed) return@setOnImageAvailableListener
+                    try {
+                        source.acquireLatestImage()?.use { image ->
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            if (now - lastDecodeAtMs < 150) return@use
+                            lastDecodeAtMs = now
+                            val plane = image.planes[0]
+                            val result = decoder.decode(plane.buffer, image.width, image.height, plane.rowStride, plane.pixelStride)
+                            if (result != null && result != lastDecoded) {
+                                lastDecoded = result
+                                main.post { if (!closed) onCode(result) }
+                            }
                         }
-                        var luma: LuminanceSource = PlanarYUVLuminanceSource(data, image.width, image.height, 0, 0, image.width, image.height, false)
-                        repeat(4) {
-                            val result = runCatching { decoder.decodeWithState(BinaryBitmap(HybridBinarizer(luma))) }.getOrNull()
-                            decoder.reset()
-                            if (result != null) { main.post { if (!closed) onCode(result.text) }; return@use }
-                            if (luma.isRotateSupported) luma = luma.rotateCounterClockwise()
-                        }
-                    }
+                    } catch (e: Exception) { failed(e.message) }
                 }, worker)
             }
+            opening = true
             manager.openCamera(id, object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
-                    if (closed) { device.close(); return }
+                    opening = false
+                    if (closed) { device.close(); thread.quitSafely(); return }
                     camera = device
-                    val targets = listOf(surface!!, images!!.surface)
-                    @Suppress("DEPRECATION")
-                    device.createCaptureSession(targets, object : CameraCaptureSession.StateCallback() {
-                        override fun onConfigured(configured: CameraCaptureSession) {
-                            if (closed) { configured.close(); return }
-                            session = configured
-                            runCatching { configured.setRepeatingRequest(device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply { targets.forEach(::addTarget); set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE) }.build(), null, worker) }.onFailure { failed(it.message) }
-                        }
-                        override fun onConfigureFailed(configured: CameraCaptureSession) { failed("Camera preview unavailable; use manual pairing") }
-                    }, worker)
+                    try {
+                        val targets = listOf(surface!!, images!!.surface)
+                        @Suppress("DEPRECATION")
+                        device.createCaptureSession(targets, object : CameraCaptureSession.StateCallback() {
+                            override fun onConfigured(configured: CameraCaptureSession) {
+                                if (closed) { configured.close(); return }
+                                session = configured
+                                runCatching { configured.setRepeatingRequest(device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply { targets.forEach(::addTarget); set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE) }.build(), null, worker) }.onFailure { failed(it.message) }
+                            }
+                            override fun onConfigureFailed(configured: CameraCaptureSession) { failed("Camera preview unavailable; use manual pairing") }
+                        }, worker)
+                    } catch (e: Exception) { failed(e.message) }
                 }
-                override fun onDisconnected(device: CameraDevice) { device.close(); failed("Camera disconnected") }
-                override fun onError(device: CameraDevice, error: Int) { device.close(); failed("Camera unavailable ($error); use manual pairing") }
+                override fun onDisconnected(device: CameraDevice) { opening = false; device.close(); if (closed) thread.quitSafely() else failed("Camera disconnected") }
+                override fun onError(device: CameraDevice, error: Int) { opening = false; device.close(); if (closed) thread.quitSafely() else failed("Camera unavailable ($error); use manual pairing") }
             }, worker)
-        } catch (e: Exception) { failed(e.message) }
+        } catch (e: Exception) { opening = false; failed(e.message) }
     }
     private fun failed(message: String?) { main.post { if (!closed) onError(message ?: "Camera unavailable; use manual pairing") } }
     override fun close() {
+        if (closed) return
         closed = true
-        session?.close(); camera?.close(); images?.close(); surface?.release()
-        thread.quitSafely()
+        // A decoded QR removes this view while the worker may still read its current image.
+        // Release on that same worker so ImageReader cannot invalidate a buffer during decoding.
+        worker.post {
+            runCatching { session?.close() }; session = null
+            runCatching { camera?.close() }; camera = null
+            runCatching { images?.setOnImageAvailableListener(null, null); images?.close() }; images = null
+            runCatching { surface?.release() }; surface = null
+            if (!opening) thread.quitSafely()
+        }
     }
 }

@@ -17,6 +17,49 @@ class LeasesAndEmergencyTest {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    @Test fun returningControlRequiresAFreshObservationFromTheResumingAgent() {
+        val leases = InputLeases(ControlStore(dir))
+        val agent = Principal.agent("s1")
+        val old = leases.revision("display:0")
+        leases.takeBack("display:0", lastAgentId = agent.id)
+        assertTrue(!leases.observed("display:0", agent, leases.revision("display:0")), "a read during user control cannot count")
+        leases.release("display:0", Principal.User)
+        assertTrue(leases.current("display:0")!!.needsObservation)
+        assertTrue(!leases.observed("display:0", agent, old), "a read begun before takeover cannot count")
+        assertTrue(!leases.observed("display:0", Principal.agent("other"), leases.revision("display:0")))
+        assertTrue(leases.observed("display:0", agent, leases.revision("display:0")))
+        assertTrue(!leases.current("display:0")!!.needsObservation)
+    }
+
+    @Test
+    fun deletingTheOldTaskKeepsUserControlAndLetsANewTaskObserveAfterRelease() {
+        val leases = InputLeases(ControlStore(dir))
+        val old = Principal.agent("deleted")
+        leases.acquire("display:0", old).getOrThrow()
+        leases.takeBack("display:0")
+        val stale = leases.revision("display:0")
+        leases.forgetSession(old.id)
+        assertEquals(Principal.User, leases.current("display:0")!!.owner)
+        assertTrue(!leases.observed("display:0", Principal.agent("new"), leases.revision("display:0")))
+        leases.release("display:0", Principal.User)
+        assertTrue(!leases.observed("display:0", Principal.agent("new"), stale))
+        assertTrue(leases.observed("display:0", Principal.agent("new"), leases.revision("display:0")))
+    }
+
+    @Test
+    fun deletingAndRecreatingALeaseCannotReviveAnInFlightAction() {
+        val leases = InputLeases(ControlStore(dir))
+        val original = leases.revision("display:0")
+        leases.takeBack("display:0")
+        leases.release("display:0", Principal.User)
+        assertTrue(leases.revision("display:0") > original)
+        val returned = leases.revision("display:0")
+        leases.forget("display:0")
+        leases.acquire("display:0", Principal.agent("fresh"))
+        assertTrue(leases.revision("display:0") > returned)
+        assertEquals(0L, leases.revision("display:1"))
+    }
+
     @Test
     fun anAgentNeverTakesInputFromTheUserAndTakeBackFencesTheOldGeneration() {
         val leases = InputLeases(ControlStore(dir))

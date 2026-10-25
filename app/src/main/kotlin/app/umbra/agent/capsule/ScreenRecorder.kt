@@ -69,6 +69,10 @@ class ScreenRecorder(private val context: Context, private val container: AppCon
 
     /** Asks Android for the screen, then records. */
     fun request() {
+        if (container.credentialHandoff.pending.value != null) {
+            android.widget.Toast.makeText(context, R.string.credential_finish_first, android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
         if (mutable.value != State.Idle) return
         mutable.value = State.Asking
         context.startActivity(Intent(context, ScreenRecordActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

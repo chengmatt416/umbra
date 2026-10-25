@@ -26,16 +26,27 @@ class LayaSidecarTest {
         var starts = 0
         var kills = 0
         var installs = 0
+        var failInstall = false
+        override var installFailedAt: Long? = null
+        var clock: () -> Long = { 0L }
+        override fun wallNowMs() = clock()
+        var installCommand = ""
         var exit = CompletableDeferred<Unit>()
         override val name = "local-test-laya"
         override suspend fun ensureReady() = ready
         override suspend fun isAvailable() = available
         override suspend fun decide(request: DecisionRequest) = DecisionResponse(emptyMap(), name, 0)
-        override suspend fun exec(argv: List<String>, timeoutMs: Long, maxOutputBytes: Int): ShellResult {
+        override val apiKey = "fixture-key"
+        var startSecrets: Map<String, String>? = null
+        override suspend fun exec(argv: List<String>, timeoutMs: Long, maxOutputBytes: Int, secrets: Map<String, String>): ShellResult {
             val command = argv.last()
+            require("fixture-key" !in command) { "the key must never be part of a command line" }
             return when {
                 command.startsWith("test -x") -> ShellResult(if (installed) 0 else 1, "")
-                "pip install" in command -> { installs++; installed = true; ShellResult(0, "") }
+                "pip install" in command -> {
+                    installs++; installCommand = command
+                    if (failInstall) ShellResult(1, "ERROR: No space left on device") else { installed = true; ShellResult(0, "") }
+                }
                 command.startsWith("pkill") -> {
                     kills++
                     if (failStop) return ShellResult(2, "Guest temporarily unavailable")
@@ -44,6 +55,7 @@ class LayaSidecarTest {
                 }
                 "LAYA_PRELOAD=1" in command -> {
                     starts++
+                    startSecrets = secrets
                     if (failStart) ShellResult(1, "") else {
                         available = true
                         try { exit.await() } finally { available = false }
@@ -66,6 +78,7 @@ class LayaSidecarTest {
         assertEquals(1, host.installs)
         assertEquals(1, host.starts)
         assertEquals(1, host.kills, "healthy maintenance must not kill the resident process")
+        assertEquals(mapOf("LAYA_API_KEY" to "fixture-key"), host.startSecrets, "the server gets its bearer key through the secret channel")
     }
 
     @Test
@@ -81,6 +94,34 @@ class LayaSidecarTest {
         assertEquals(0, host.starts)
         assertFalse(laya.engine.isAvailable())
         assertEquals(1, host.kills)
+    }
+
+    @Test
+    fun aFailedInstallIsNotDownloadedAgainOnEveryTickAndLeavesNoPipTemp() = runTest {
+        val host = Host().apply { installed = false; failInstall = true }
+        host.clock = { testScheduler.currentTime }
+        val laya = LayaSidecar(host, backgroundScope, host) { testScheduler.currentTime }
+        laya.maintain()
+        assertEquals(LayaSidecar.State.FAILED, laya.state.value)
+        assertEquals(1, host.installs)
+        // pip works in a private temp folder removed afterwards, and old pip leftovers in /tmp are cleared first.
+        assertTrue("TMPDIR=" in host.installCommand && "pip-unpack-*" in host.installCommand && host.installCommand.trimEnd().endsWith("exit \$rc"))
+        assertTrue("download.pytorch.org/whl/cpu torch" in host.installCommand, "CPU-only PyTorch, not PyPI's CUDA build")
+        // The failure time survives a restart: a new sidecar on the same host does not download again.
+        val restarted = LayaSidecar(host, backgroundScope, host) { testScheduler.currentTime }
+        restarted.maintain()
+        assertEquals(1, host.installs)
+        repeat(12) { advanceTimeBy(5 * 60_000); laya.maintain() }
+        assertEquals(1, host.installs, "an hour of maintenance does not download the wheels again")
+        advanceTimeBy(24 * 60 * 60_000L)
+        laya.maintain()
+        assertEquals(2, host.installs, "it tries again by itself after a day")
+        host.failInstall = false
+        laya.download()                       // the person asks: at once (on the IO dispatcher, so wait in real time)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            kotlinx.coroutines.withTimeout(5_000) { while (host.installs < 3) kotlinx.coroutines.delay(10) }
+        }
+        assertEquals(3, host.installs)
     }
 
     @Test

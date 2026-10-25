@@ -16,6 +16,24 @@ internal object UsageBudgetExtension {
                     provider: ctx.model?.provider || '', totalCost, priced, costKnown, phase
                 }), { timeout: 25000 });
             }
+            async function auxiliary(ctx) {
+                try { return await check(ctx, 'auxiliary'); } catch { return false; }
+            }
+            pi.on('before_agent_start', async (_event, ctx) => {
+                let unrestricted = false;
+                try { unrestricted = await check(ctx, 'capabilities'); } catch {}
+                if (!unrestricted) pi.setThinkingLevel(pi.getThinkingLevel() || 'medium');
+            });
+            pi.on('tool_call', async (event, ctx) => {
+                if (event.toolName === 'read' && typeof event.input?.path === 'string' && /[?&]q=/i.test(event.input.path) && !await auxiliary(ctx))
+                    return { block: true, reason: 'Usage-limited tasks cannot run native image-question auxiliary inference. Read the image directly or use managed backup vision.' };
+            });
+            pi.on('session_before_compact', async (_event, ctx) => {
+                if (!await auxiliary(ctx)) return { cancel: true };
+            });
+            pi.on('session_before_tree', async (event, ctx) => {
+                if (event.preparation?.userWantsSummary && !await auxiliary(ctx)) return { cancel: true };
+            });
             pi.on('before_provider_request', async (_event, ctx) => {
                 let stopped = false;
                 function stop() {

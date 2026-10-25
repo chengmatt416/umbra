@@ -122,6 +122,7 @@ fun AppearanceScreen(onBack: () -> Unit) {
     val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
     val liquid = theme.style == ThemeStyle.LIQUID
     val apple = theme.style == ThemeStyle.APPLE
+    val mono = theme.style == ThemeStyle.MONO
 
     fun save(origin: Offset?, change: (ThemePrefs) -> ThemePrefs) {
         val next = change(container.settings.value.theme)
@@ -139,9 +140,16 @@ fun AppearanceScreen(onBack: () -> Unit) {
             Gap(16.dp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ThemeCard(
+                    stringResource(R.string.theme_mono), stringResource(R.string.theme_mono_body), selected = mono,
+                    onPick = { at -> save(at) { it.copy(style = ThemeStyle.MONO) } }, modifier = Modifier.weight(1f),
+                ) { MonoPreview(ThemeSpec.of(theme.copy(style = ThemeStyle.MONO), systemDark).dark) }
+                ThemeCard(
                     stringResource(R.string.theme_porcelain), stringResource(R.string.theme_porcelain_body), selected = theme.style == ThemeStyle.PORCELAIN,
                     onPick = { at -> save(at) { it.copy(style = ThemeStyle.PORCELAIN) } }, modifier = Modifier.weight(1f),
                 ) { PorcelainPreview() }
+            }
+            Gap(8.dp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ThemeCard(
                     stringResource(R.string.theme_liquid), stringResource(R.string.theme_liquid_body), selected = liquid,
                     onPick = { at -> save(at) { it.copy(style = ThemeStyle.LIQUID) } }, modifier = Modifier.weight(1f),
@@ -190,7 +198,7 @@ fun AppearanceScreen(onBack: () -> Unit) {
                 }
             }
 
-            AnimatedVisibility(liquid || apple, enter = fadeIn(tween(260)) + expandVertically(spring(dampingRatio = 1f, stiffness = 320f)), exit = fadeOut(tween(160)) + shrinkVertically(tween(240))) {
+            AnimatedVisibility(liquid || apple || mono, enter = fadeIn(tween(260)) + expandVertically(spring(dampingRatio = 1f, stiffness = 320f)), exit = fadeOut(tween(160)) + shrinkVertically(tween(240))) {
                 Column {
                     SectionHead(stringResource(R.string.app_mode), Modifier.padding(top = 18.dp))
                     var modeCenter by remember { mutableStateOf<Offset?>(null) }
@@ -244,6 +252,15 @@ private fun ThemeCard(title: String, body: String, selected: Boolean, onPick: (O
         }
         Text(title, Modifier.padding(start = 4.dp, top = 9.dp), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = P.ink, maxLines = 1)
         Text(body, Modifier.padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 6.dp), fontSize = 11.sp, lineHeight = 15.sp, color = P.muted)
+    }
+}
+
+/** A tiny Ink page: near-white (or black) page, a bordered white (or charcoal) card, an ink capsule. */
+@Composable
+private fun MonoPreview(dark: Boolean) {
+    val t = Tokens.mono(dark)
+    Box(Modifier.fillMaxSize().background(t.page).padding(12.dp)) {
+        MiniPage(card = t.ceramic, cardRim = t.line, bar = t.ink.copy(alpha = 0.22f), button = t.primaryButton)
     }
 }
 

@@ -1,15 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Umbra's moon: the brand mark (website logo, favicon, Capsule) as the launcher icon. A full disc of radius 21 (nudged up and right so the crescent's weight sits centred)
+  in the 108 dp canvas, minus a disc of radius 15.75 offset up and to the right, leaves a crescent that stays inside the
+  adaptive icon's 66 dp safe zone. The path is the outer arc (the long way round, through the lit lower left) and the
+  bite's inner arc between their two intersections, so no even-odd sliver appears outside the moon.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Outer ring -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M54,22C36.33,22 22,36.33 22,54s14.33,32 32,32 32,-14.33 32,-32S71.67,22 54,22zM54,78c-13.25,0 -24,-10.75 -24,-24s10.75,-24 24,-24 24,10.75 24,24 -10.75,24 -24,24z" />
-    <!-- Eclipsing disc -->
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M60,54m-14,0a14,14 0,1 1,28 0a14,14 0,1 1,-28 0" />
+        android:fillColor="#FFF3F3F1"
+        android:pathData="M58.37,31.70A21,21 0,1 0,76.18 56.18A15.75,15.75 0,1 1,58.37 31.70Z" />
 </vector>

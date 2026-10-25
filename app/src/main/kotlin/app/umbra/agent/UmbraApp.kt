@@ -13,6 +13,10 @@ class UmbraApp : Application() {
         super.onCreate()
         hideFromTheLinuxEnvironment()
         keepRunningWhenABackendGoesAway()
+        if (getProcessName() == "$packageName:transforms") {
+            android.webkit.WebView.setDataDirectorySuffix("json-transforms")
+            return
+        }
         container = AppContainer(this)
         container.start()
         // The saved look, before the first frame (the activity and the Capsule both draw in it).

@@ -86,6 +86,7 @@ class ApprovalPolicy(
         if (assessment.isSelfProtectionViolation) {
             return PolicyDecision.Deny(assessment, "This action targets the agent's own app, approvals or data and is never allowed.")
         }
+        if (RiskCategory.SECRET_EXFILTRATION in assessment.categories) return PolicyDecision.Deny(assessment, "Protected credentials and identity/payment data require secure native handoff.")
         val denied = assessment.findings.firstOrNull { it.category in denyCategories }
         if (denied != null) {
             return PolicyDecision.Deny(assessment, "Blocked by your settings: ${denied.category.title}. ${denied.reason}")

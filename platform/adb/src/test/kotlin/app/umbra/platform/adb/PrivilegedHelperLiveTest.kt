@@ -39,7 +39,7 @@ class PrivilegedHelperLiveTest {
         val token = ByteArray(16).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
         val apk = shell.exec("pm path app.umbra.agent").stdout.trim().removePrefix("package:")
         shell.exec("pkill -f app.umbra.platform.server.ServerMain; rm -f /data/local/tmp/umbra-helper-test.log")
-        val command = "CLASSPATH=$apk setsid nohup app_process /system/bin app.umbra.platform.server.ServerMain --port $port --token $token${if (viaRoot) " --uid 2000" else ""} >/data/local/tmp/umbra-helper-test.log 2>&1 &"
+        val command = "UMBRA_HELPER_TOKEN=$token CLASSPATH=$apk setsid nohup app_process /system/bin app.umbra.platform.server.ServerMain --port $port${if (viaRoot) " --uid 2000" else ""} >/data/local/tmp/umbra-helper-test.log 2>&1 &"
         shell.exec(if (viaRoot) "su 0 sh -c '$command'" else command)
         repeat(60) {
             if ("listening" in shell.exec("cat /data/local/tmp/umbra-helper-test.log").stdout) {

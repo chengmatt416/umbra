@@ -52,3 +52,19 @@ document.querySelectorAll('video[data-autoplay]').forEach((v) => { if (!matchMed
 document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', () => {
   navigator.clipboard?.writeText(b.dataset.copy).then(() => { const t = b.textContent; b.textContent = b.dataset.done; setTimeout(() => (b.textContent = t), 1600); });
 }));
+
+// "Also in" tiles rise into place once, one beat apart, as they scroll into view.
+(() => {
+  const tiles = [...document.querySelectorAll('.reveal')];
+  if (!tiles.length) return;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) { tiles.forEach((t) => t.classList.add('in')); return; }
+  const io = new IntersectionObserver((entries) => {
+    entries.filter((e) => e.isIntersecting).forEach((e) => {
+      const i = tiles.indexOf(e.target);
+      e.target.style.transitionDelay = `${(i % 4) * 70}ms`;
+      e.target.classList.add('in');
+      io.unobserve(e.target);
+    });
+  }, { rootMargin: '0px 0px -10% 0px' });
+  tiles.forEach((t) => io.observe(t));
+})();

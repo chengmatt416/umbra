@@ -15,6 +15,7 @@ internal object OperationTraits {
         -> true
         is Operation.Clipboard -> op.action != ClipboardAction.GET
         is Operation.Notifications -> op.action != NotificationAction.LIST
+        is Operation.Display -> op.action == app.umbra.core.model.action.DisplayAction.LAUNCH || op.action == app.umbra.core.model.action.DisplayAction.DESTROY
         else -> false
     }
 

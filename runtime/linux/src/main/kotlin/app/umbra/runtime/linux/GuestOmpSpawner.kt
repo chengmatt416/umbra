@@ -30,23 +30,23 @@ class GuestOmpSpawner(
         runtime.mount()
         val id = "${System.currentTimeMillis().toString(36)}-${counter.incrementAndGet()}"
         val pidFile = "/tmp/umbra-omp-$id.pid"
-        var envFile: String? = null
-        if (spec.secrets.isNotEmpty()) {
-            envFile = "/tmp/umbra-omp-$id.env"
-            runtime.writeFile(envFile, spec.secrets.entries.joinToString("\n", postfix = "\n") { (k, v) ->
-                require(k.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "bad environment variable name '$k'" }
-                "export $k=${quote(v)}"
-            })
-        }
+        val secretLines = if (spec.secrets.isNotEmpty()) SecretStdin.lines(spec.secrets) else emptyList()
         val command = runtime.hostCommand(
             argv = spec.command,
             env = spec.environment,
             cwd = spec.workingDirectory,
-            envFile = envFile,
             pidFile = pidFile,
+            secretsOnStdin = secretLines.isNotEmpty(),
         )
         val process = (if (runtime.mode == LinuxMode.PROOT) AppLauncher else launcher).start(command, spec.stderrLines)
-        return GuestTransport(process, runtime, pidFile, envFile)
+        // Credentials go first on omp's stdin, before any RPC line; the wrapper consumes them up to the end marker.
+        try {
+            secretLines.forEach { process.writeLine(it) }
+        } catch (e: Throwable) {
+            withContext(NonCancellable) { GuestTransport(process, runtime, pidFile).destroy() }
+            throw e
+        }
+        return GuestTransport(process, runtime, pidFile)
     }
 }
 
@@ -55,7 +55,6 @@ internal class GuestTransport(
     private val wrapper: OmpTransport,
     private val runtime: LinuxRuntime,
     private val pidFile: String,
-    private val envFile: String?,
 ) : OmpTransport by wrapper {
     @Volatile
     private var cachedPid: Long? = null
@@ -73,7 +72,7 @@ internal class GuestTransport(
             withTimeoutOrNull(20_000) {
                 val pid = runtime.readFile(pidFile, 64)?.trim()?.toLongOrNull()
                 if (pid != null) runtime.killTree(pid)
-                runtime.exec(listOf("rm", "-f", pidFile) + listOfNotNull(envFile), asRoot = true, timeoutMs = 5_000)
+                runtime.exec(listOf("rm", "-f", pidFile), asRoot = true, timeoutMs = 5_000)
             }
         }
     }

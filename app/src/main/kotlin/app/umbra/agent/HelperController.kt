@@ -65,7 +65,7 @@ class HelperController(private val context: Context) {
 
     /** The shell command that starts the helper in the background. [dropToUid] makes a root-started helper become that user. */
     fun launchCommand(port: Int, token: String, dropToUid: Int? = null, logFile: String = "/dev/null"): String =
-        "CLASSPATH=$apkPath setsid nohup app_process /system/bin app.umbra.platform.server.ServerMain --port $port --token $token" +
+        "UMBRA_HELPER_TOKEN=$token CLASSPATH=$apkPath setsid nohup app_process /system/bin app.umbra.platform.server.ServerMain --port $port" +
             (dropToUid?.let { " --uid $it" } ?: "") + " >$logFile 2>&1 &"
 
     /** What a user without root pastes into `adb shell` once per boot (spec §23). */

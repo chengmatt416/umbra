@@ -16,6 +16,7 @@ import java.io.File
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.*
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -30,8 +31,433 @@ import kotlinx.serialization.json.put
  * counterpart: it is the test harness's hands, not a product feature.
  */
 class DebugControl(private val container: AppContainer) : ControlHandler {
+    private val handoffFixtures = container.context.getSharedPreferences("debug-handoff-fixtures", 0)
     override suspend fun handle(command: String, args: JsonObject): JsonElement = when (command) {
         "status" -> status()
+        "test.watchers.create" -> {
+            check(container.telegram.state.value.userId == null) { "Disconnect Telegram before running this local fixture" }
+            val p = container.agents.create("Watchers QA ${System.nanoTime()}", "a1", app.umbra.agent.agents.Templates.BLANK, "Synthetic watcher fixture only; no external messages.",
+                model = ModelRef("umbra-test-agent", "fake-model"), effort = app.umbra.core.session.Effort("minimal"), channels = emptyList(), running = false)
+            val now = System.currentTimeMillis()
+            container.agents.store.update(p.id) { it.copy(running = true, proactivityLevel = 2, morningBriefMinute = null, eveningBriefMinute = null) }
+            container.agents.store.setState(p.id, container.agents.store.state(p.id).copy(lastWakeMs = now))
+            container.agents.proactive.store.saveWatcher(app.umbra.agent.agents.proactive.AgentWatcher("qa-watcher", p.id, "Synthetic watcher",
+                app.umbra.agent.agents.proactive.ProbeSpec.NotificationPattern("app.umbra.fixture.unused", "Synthetic.*", literal = false),
+                app.umbra.agent.agents.proactive.ConditionSpec.Contains("Synthetic"), onMatchInstruction = "Synthetic fixture", triggerOnce = false, enabled = true, authorizedAtMs = now))
+            buildJsonObject { put("agent", p.id) }
+        }
+        "test.watchers.state", "test.watchers.dispatch", "test.watchers.revoke", "test.watchers.renew", "test.watchers.cleanup" -> {
+            val id = str(args, "agent")
+            check(container.agents.store.get(id)?.name?.startsWith("Watchers QA ") == true)
+            val runtime = container.agents.proactive
+            val store = runtime.store
+            val watcher = store.watchers(id).single()
+            var created: String? = null
+            when (command) {
+                "test.watchers.dispatch" -> created = runtime.discovery(requireNotNull(container.agents.store.get(id)),
+                    "[Watcher qa-watcher] Synthetic watcher fixture only. Save a private note with note_write then report completion.", watcher).id
+                "test.watchers.revoke" -> store.saveWatcher(watcher.copy(enabled = false, authorizedAtMs = null))
+                "test.watchers.renew" -> store.saveWatcher(watcher.copy(enabled = true, authorizedAtMs = System.currentTimeMillis()))
+                "test.watchers.cleanup" -> {
+                    container.agents.setRunning(id, false)
+                    container.sessionStore.list().filter { it.agentId == id && it.id != container.agents.store.get(id)?.sessionId }.forEach { container.supervisor.stop(it.id); container.supervisor.delete(it.id) }
+                    container.agents.delete(id)
+                }
+            }
+            buildJsonObject {
+                created?.let { put("created", it) }
+                put("note", store.note(id, "qa-watcher"))
+                put("watchers", JsonArray(store.watchers(id).map { UmbraJson.encodeToJsonElement(app.umbra.agent.agents.proactive.AgentWatcher.serializer(), it) }))
+                put("tasks", JsonArray(container.sessionStore.list().filter { it.agentId == id }.map { UmbraJson.encodeToJsonElement(Session.serializer(), it) }))
+            }
+        }
+        "test.goals.create" -> {
+            check(container.telegram.state.value.userId == null) { "Disconnect Telegram before running this local fixture" }
+            val p = container.agents.create("Goals QA ${System.nanoTime()}", "a1", app.umbra.agent.agents.Templates.BLANK, "Synthetic goal fixture only; no external messages.",
+                model = ModelRef("umbra-test-agent", "fake-model"), effort = app.umbra.core.session.Effort("minimal"), channels = emptyList(), running = false)
+            val now = System.currentTimeMillis()
+            container.agents.store.update(p.id) { it.copy(running = true, proactivityLevel = 4, morningBriefMinute = null, eveningBriefMinute = null) }
+            container.agents.store.setState(p.id, container.agents.store.state(p.id).copy(lastWakeMs = now))
+            val store = container.agents.proactive.store
+            val goal = store.saveGoal(app.umbra.agent.agents.proactive.AgentGoal("qa-goal", p.id, "Synthetic goal", "Complete only the fixture milestones.",
+                acceptanceCriteria = listOf("Both milestone checks pass"), createdAtMs = now, lastCheckedAtMs = now,
+                milestones = listOf(app.umbra.agent.agents.proactive.GoalMilestone("first", "First fixture", updatedAtMs = now),
+                    app.umbra.agent.agents.proactive.GoalMilestone("second", "Second fixture", dependsOn = listOf("first"), updatedAtMs = now))))
+            buildJsonObject { put("agent", p.id); put("goal", goal.id) }
+        }
+        "test.goals.state", "test.goals.authorize", "test.goals.replan", "test.goals.cleanup" -> {
+            val id = str(args, "agent")
+            check(container.agents.store.get(id)?.name?.startsWith("Goals QA ") == true)
+            val runtime = container.agents.proactive
+            val store = runtime.store
+            when (command) {
+                "test.goals.authorize" -> runtime.authorizeGoal(id, "qa-goal", (args["enabled"] as? JsonPrimitive)?.content == "true")
+                "test.goals.replan" -> {
+                    val goal = store.goals(id).single()
+                    val now = System.currentTimeMillis()
+                    runtime.replanGoal(goal, goal.copy(state = app.umbra.agent.agents.proactive.GoalState.IN_PROGRESS,
+                        milestones = goal.milestones.filter { it.status == "done" } + app.umbra.agent.agents.proactive.GoalMilestone("revised", "Revised fixture", dependsOn = listOf("first"), updatedAtMs = now),
+                        replanHistory = goal.replanHistory + app.umbra.agent.agents.proactive.ReplanRecord(now, "fixture", "Keep verified work and replace unfinished work")))
+                }
+                "test.goals.cleanup" -> {
+                    container.agents.setRunning(id, false)
+                    container.sessionStore.list().filter { it.agentId == id && it.id != container.agents.store.get(id)?.sessionId }.forEach { container.supervisor.stop(it.id); container.supervisor.delete(it.id) }
+                    container.agents.delete(id)
+                }
+            }
+            buildJsonObject {
+                put("goals", JsonArray(store.goals(id).map { UmbraJson.encodeToJsonElement(app.umbra.agent.agents.proactive.AgentGoal.serializer(), it) }))
+                put("cards", JsonArray(store.opportunities(id).map { UmbraJson.encodeToJsonElement(app.umbra.agent.agents.proactive.OpportunityCard.serializer(), it) }))
+                put("attention", JsonArray(store.attention(id).map { UmbraJson.encodeToJsonElement(app.umbra.agent.agents.proactive.AttentionItem.serializer(), it) }))
+                put("tasks", JsonArray(container.sessionStore.list().filter { it.agentId == id }.map { UmbraJson.encodeToJsonElement(Session.serializer(), it) }))
+            }
+        }
+        "test.suggestions.create" -> {
+            val p = container.agents.create("Capsule QA ${System.nanoTime()}", "a1", app.umbra.agent.agents.Templates.BLANK, "Synthetic capsule suggestions fixture",
+                model = ModelRef("umbra-test-agent", "fake-model"), channels = emptyList(), running = false)
+            container.agents.store.update(p.id) { it.copy(running = true, proactivityLevel = 0, morningBriefMinute = null, eveningBriefMinute = null) }
+            val store = container.agents.proactive.store
+            val now = System.currentTimeMillis()
+            for ((id, title, tier) in listOf(Triple("qa-ambient", "Synthetic ambient suggestion", app.umbra.agent.agents.proactive.DeliveryTier.CAPSULE_AMBIENT),
+                Triple("qa-quiet", "Synthetic quiet suggestion", app.umbra.agent.agents.proactive.DeliveryTier.BRIEF_QUEUE))) {
+                val card = app.umbra.agent.agents.proactive.OpportunityCard(id, p.id, app.umbra.agent.agents.proactive.OpportunityCard.Kind.FOLLOW_UP,
+                    title, "Synthetic prepared step; viewing does not execute it.", listOf("fixture"), .7, .9,
+                    app.umbra.agent.agents.proactive.PreparedNextStep("Review synthetic step", "agent_turn", "{\"instruction\":\"Do not execute from this fixture\"}"), createdAtMs = now,
+                    expiresAtMs = if (id == "qa-ambient") now + 120_000 else null)
+                store.saveOpportunity(card)
+                store.stage(p.id, app.umbra.agent.agents.proactive.AttentionItem(id, title, card.summary, .7, .7, .9, "fixture", now, tier = tier))
+            }
+            buildJsonObject {
+                put("agent", p.id); put("expanded", container.capsule.expanded.value); put("tucked", container.capsule.tucked.value)
+                container.capsule.expanded.value = false; container.capsule.tucked.value = false
+            }
+        }
+        "test.suggestions.state", "test.suggestions.targets", "test.suggestions.expireSoon", "test.suggestions.cleanup" -> {
+            val id = str(args, "agent")
+            check(container.agents.store.get(id)?.name?.startsWith("Capsule QA ") == true)
+            if (command == "test.suggestions.expireSoon") {
+                val store = container.agents.proactive.store
+                val card = store.opportunities(id).first { it.id == "qa-ambient" }
+                store.saveOpportunity(card.copy(expiresAtMs = System.currentTimeMillis() + 5_000))
+            }
+            if (command == "test.suggestions.cleanup") {
+                container.agents.delete(id)
+                container.capsule.expanded.value = (args["expanded"] as? JsonPrimitive)?.content == "true"
+                container.capsule.tucked.value = (args["tucked"] as? JsonPrimitive)?.content == "true"
+            }
+            buildJsonObject {
+                val sessions = container.sessionStore.list().filter { it.agentId == id }
+                put("sessions", sessions.size); put("active", sessions.any { it.state.isActive })
+                put("started", sessions.any { it.state != app.umbra.core.session.SessionState.CREATED || it.queuedAtMs != null })
+                if (command == "test.suggestions.targets") {
+                    container.capsule.debugTapPoint?.let { put("pill", JsonArray(listOf(it.x, it.y).map(::JsonPrimitive))) }
+                    container.capsule.debugSuggestionTargets.filterKeys { it in setOf("qa-ambient", "qa-quiet") }.forEach { (key, point) ->
+                        put(key, JsonArray(listOf(point.x, point.y).map(::JsonPrimitive)))
+                    }
+                }
+            }
+        }
+        "test.note_ui.seed" -> {
+            check(container.settings.value.providers.isEmpty() && container.telegram.state.value.userId == null && !container.settings.value.shareUsageCounts) { "Use only a provider-free, unlinked QA app with usage counts off" }
+            val id = str(args, "agent")
+            val p = requireNotNull(container.agents.store.get(id))
+            check(p.name == "Documents QA fixture")
+            container.agents.store.update(id) { it.copy(name = "Documents QA navigation", running = true, proactivityLevel = 0, morningBriefMinute = null, eveningBriefMinute = null) }
+            val now = System.currentTimeMillis()
+            val store = container.agents.proactive.store
+            store.saveOpportunity(app.umbra.agent.agents.proactive.OpportunityCard("qa-note-ui", id, app.umbra.agent.agents.proactive.OpportunityCard.Kind.FOLLOW_UP,
+                "UI suggestion fixture", "Synthetic review only", listOf("fixture"), .6, .9,
+                app.umbra.agent.agents.proactive.PreparedNextStep("Review UI instruction", "agent_turn", "{\"instruction\":\"Synthetic original instruction\",\"note\":\"preserve\"}"), createdAtMs = now))
+            store.saveBrief(id, app.umbra.agent.agents.proactive.DailyBrief("qa-note-ui", java.time.LocalDate.now().toString(), app.umbra.agent.agents.proactive.DailyBrief.Kind.MORNING,
+                "UI brief fixture", generatedAtMs = now))
+            val child = container.supervisor.create("Synthetic fixture only", title = "UI child task", kind = app.umbra.core.session.SessionKind.CODING, agentId = id, spawnedBy = p.sessionId)
+            val grandchild = container.supervisor.create("Synthetic fixture only", title = "UI nested task", kind = app.umbra.core.session.SessionKind.SUBAGENT, spawnedBy = child.id)
+            for (task in listOf(child, grandchild)) container.sessionStore.update(task.id) { it.copy(state = app.umbra.core.session.SessionState.PAUSED,
+                attachments = it.attachments + ("qa.note_ui.owner" to JsonPrimitive(id))) }
+            buildJsonObject { put("child", child.id); put("nested", grandchild.id) }
+        }
+        "test.note_ui.state", "test.note_ui.cleanup" -> {
+            val id = str(args, "agent")
+            check(container.agents.store.get(id)?.name == "Documents QA navigation")
+            val tasks = container.sessionStore.list().filter { it.agentId == id || it.attachments["qa.note_ui.owner"] == JsonPrimitive(id) }
+            if (command == "test.note_ui.cleanup") {
+                for (task in tasks) { container.supervisor.stop(task.id); container.supervisor.delete(task.id) }
+                container.agents.delete(id)
+            }
+            buildJsonObject {
+                put("tasks", JsonArray(tasks.map { UmbraJson.encodeToJsonElement(Session.serializer(), it) }))
+                put("focus", container.ui.focusedSession.value)
+                put("usageCounts", container.settings.value.shareUsageCounts)
+            }
+        }
+        "test.documents.create" -> {
+            val p = container.agents.create("Documents QA fixture", "a1", app.umbra.agent.agents.Templates.BLANK, "Synthetic document context fixture", channels = emptyList(), running = false)
+            buildJsonObject { put("agent", p.id) }
+        }
+        "test.documents.blocked_create" -> {
+            val profiles = container.agents.profiles().map { it.id }.toSet()
+            val sessions = container.sessionStore.list().map { it.id }.toSet()
+            val result = runCatching { container.agents.create("Documents QA 4242424242424242", "a1", app.umbra.agent.agents.Templates.BLANK,
+                "Synthetic document context fixture", channels = emptyList(), running = false) }
+            buildJsonObject {
+                put("blocked", result.exceptionOrNull() is IllegalArgumentException)
+                put("profilesUnchanged", profiles == container.agents.profiles().map { it.id }.toSet())
+                put("sessionsUnchanged", sessions == container.sessionStore.list().map { it.id }.toSet())
+            }
+        }
+        "test.documents.legacy" -> {
+            val id = "ag" + java.util.UUID.randomUUID().toString().replace("-", "")
+            container.agents.store.save(app.umbra.agent.agents.AgentProfile(id, "Documents QA 4242424242424242",
+                running = true, sessionId = null, createdAtMs = System.currentTimeMillis(), channels = emptyList(), proactivityLevel = 0))
+            buildJsonObject { put("agent", id) }
+        }
+        "test.documents.query", "test.documents.state", "test.documents.revoke", "test.documents.cleanup" -> {
+            val id = str(args, "agent")
+            check(container.agents.store.get(id)?.name?.startsWith("Documents QA ") == true)
+            when (command) {
+                "test.documents.query" -> {
+                    container.agents.proactive.store.grants(id).find { it.connectorId == "drive_files" && it.enabled }?.let {
+                        check(it.endpoint?.contains("UmbraQADocuments") == true) { "Choose only the synthetic fixture folder" }
+                    }
+                    val scope = if ((args["restricted"] as? JsonPrimitive)?.content == "true") emptyList() else listOf("drive_files")
+                    val result = kotlinx.coroutines.withContext(app.umbra.core.orchestrator.ToolAuthority("documents-qa", id, scope)) {
+                        container.personalContext.resolve(id, "research invoice", setOf("documents"), 3650, "document")
+                    }
+                    JsonArray(result.map { UmbraJson.encodeToJsonElement(app.umbra.agent.agents.proactive.ContextEvidence.serializer(), it) })
+                }
+                "test.documents.revoke" -> { container.personalContext.revoke(id, "drive_files", true); buildJsonObject { put("ok", true) } }
+                "test.documents.cleanup" -> {
+                    container.agents.proactive.store.grants(id).find { it.connectorId == "drive_files" }?.endpoint
+                        ?.takeIf { it.contains("UmbraQADocuments") }?.let { uri ->
+                            container.context.contentResolver.releasePersistableUriPermission(android.net.Uri.parse(uri), android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                    container.agents.delete(id)
+                    buildJsonObject { put("ok", true) }
+                }
+                else -> buildJsonObject {
+                    val profile = requireNotNull(container.agents.store.get(id))
+                    put("running", profile.running); put("hasSession", profile.sessionId != null)
+                    val grant = container.agents.proactive.store.grants(id).find { it.connectorId == "drive_files" && it.enabled }
+                    put("connected", grant != null)
+                    put("fixtureTree", grant?.endpoint?.contains("UmbraQADocuments") == true)
+                    put("persistentRead", grant?.endpoint?.let { endpoint -> container.context.contentResolver.persistedUriPermissions.any { it.uri.toString() == endpoint && it.isReadPermission } } == true)
+                    put("persistentWrite", grant?.endpoint?.let { endpoint -> container.context.contentResolver.persistedUriPermissions.any { it.uri.toString() == endpoint && it.isWritePermission } } == true)
+                }
+            }
+        }
+        "test.handoff.create" -> {
+            val session = container.supervisor.create("Synthetic native credential panel verification", title = "Credential QA ${java.util.UUID.randomUUID()}", model = ModelRef("umbra-test-agent", "fake-model"))
+            container.sessionStore.update(session.id) { it.copy(state = app.umbra.core.session.SessionState.RUNNING) }
+            check(handoffFixtures.edit().putBoolean(session.id, true).commit())
+            buildJsonObject { put("id", session.id) }
+        }
+        "test.handoff.request", "test.handoff.state", "test.handoff.stop", "test.handoff.deleteSource", "test.handoff.cleanup", "test.handoff.ui", "test.handoff.field" -> {
+            val id = str(args, "id")
+            val session = container.sessionStore.get(id)
+            check(handoffFixtures.getBoolean(id, false) && (session == null || session.title.startsWith("Credential QA ")))
+            when (command) {
+                "test.handoff.request" -> {
+                    requireNotNull(session)
+                    val snapshot = container.accessibility.snapshot(app.umbra.platform.api.SnapshotOptions(displayId = 0))
+                    val field = snapshot.windows.flatMap { it.nodes }.first { it.packageName == "app.umbra.fixture.crashylogin" && it.isPassword && it.isEditable }
+                    val link = container.credentialHandoff.request(session.id, "Synthetic native login", field.id, "Verify the local panel without a real account")
+                    buildJsonObject {
+                        put("link", link)
+                        val username = snapshot.windows.flatMap { it.nodes }.first { it.packageName == field.packageName && it.isEditable && !it.isPassword }
+                        put("username", JsonArray(listOf(username.bounds.centerX, username.bounds.centerY).map(::JsonPrimitive)))
+                    }
+                }
+                "test.handoff.ui" -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    buildJsonObject { app.umbra.agent.credentials.CredentialHandoffActivity.panelBounds().forEach { (key, value) -> put(key, JsonArray(value.map(::JsonPrimitive))) } }
+                }
+                "test.handoff.field" -> {
+                    val snapshot = container.accessibility.snapshot(app.umbra.platform.api.SnapshotOptions(displayId = 0))
+                    val field = snapshot.windows.flatMap { it.nodes }.first { it.packageName == "app.umbra.fixture.crashylogin" && it.isPassword && it.isEditable }
+                    JsonArray(listOf(field.bounds.centerX, field.bounds.centerY).map(::JsonPrimitive))
+                }
+                else -> {
+                    if (session != null && command in setOf("test.handoff.stop", "test.handoff.cleanup", "test.handoff.deleteSource")) container.supervisor.stop(id)
+                    if (command == "test.handoff.deleteSource") container.supervisor.delete(id)
+                    if (command == "test.handoff.cleanup") {
+                        container.credentialHandoff.pending.value?.takeIf { it.sessionId == id }?.let { container.credentialHandoff.finish(it.id, clearField = true) }
+                        if (session != null) container.supervisor.delete(id)
+                        check(handoffFixtures.edit().remove(id).commit())
+                    }
+                    buildJsonObject {
+                        val request = container.credentialHandoff.pending.value?.takeIf { it.sessionId == id }
+                        put("pending", request != null)
+                        request?.let { put("request", it.id); put("state", it.state); put("linkUsed", it.linkUsed) }
+                        if (app.umbra.platform.android.UmbraAccessibilityService.connected.value)
+                            request?.let { put("fieldClear", container.accessibility.credentialFieldClear(it.target, clear = false)) }
+                        val value = "NativeQaCredential7"
+                        put("protected", value in container.credentialHandoff.protectedValues())
+                        put("timelineClean", !UmbraJson.encodeToString(ListSerializer(EventRecord.serializer()), container.sessionStore.events(id)).contains(value))
+                    }
+                }
+            }
+        }
+        "test.transform.run" -> try {
+            buildJsonObject { put("result", container.transformSandbox.run(str(args, "source"), args["input"] ?: JsonObject(emptyMap()))) }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { buildJsonObject { put("error", e.message ?: "Transform failed") } }
+        // Demonstration data for screen recordings (website clips): realistic goals, suggestions, a brief, a watcher and a
+        // routine for one agent. Nothing here is enabled or authorized, so seeding runs no work by itself.
+        "demo.proactive.seed" -> {
+            val id = str(args, "agent")
+            val zh = (args["lang"] as? JsonPrimitive)?.content == "zh"
+            fun t(en: String, tw: String) = if (zh) tw else en
+            val store = container.agents.proactive.store
+            val now = System.currentTimeMillis()
+            val hour = 3_600_000L
+            val existing = store.goals(id).map { it.id }.toSet()
+            if ("demo-kyoto" !in existing) store.saveGoal(app.umbra.agent.agents.proactive.AgentGoal("demo-kyoto", id, t("Plan the Kyoto trip in November", "規劃 11 月京都旅行"),
+                t("Four nights, two people, under NT$60,000 in total. Quiet ryokan, one day in Nara.", "兩人四晚，總預算 NT$60,000 以內。安靜的旅館，其中一天去奈良。"),
+                acceptanceCriteria = listOf(t("Flights and stay within budget", "機票與住宿在預算內"), t("Day-by-day plan you approved", "你確認過的每日行程")),
+                milestones = listOf(app.umbra.agent.agents.proactive.GoalMilestone("m1", t("Compare flights TPE → KIX", "比較台北 → 關西機票"), "done", updatedAtMs = now - 20 * hour),
+                    app.umbra.agent.agents.proactive.GoalMilestone("m2", t("Shortlist ryokans under ¥25,000", "篩選 ¥25,000 以下的旅館"), "done", updatedAtMs = now - 6 * hour),
+                    app.umbra.agent.agents.proactive.GoalMilestone("m3", t("Draft the day-by-day plan", "擬定每日行程"), "active", updatedAtMs = now - hour),
+                    app.umbra.agent.agents.proactive.GoalMilestone("m4", t("Book after your OK", "你確認後再預訂"), "pending", dependsOn = listOf("m3"), updatedAtMs = now)),
+                replanHistory = listOf(app.umbra.agent.agents.proactive.ReplanRecord(now - 3 * hour, "new_evidence", t("Peach moved the 07:10 flight to 09:40; day 1 now starts at Fushimi Inari.", "樂桃把 07:10 班機改到 09:40，第一天改從伏見稻荷開始。"))),
+                createdAtMs = now - 48 * hour, lastProgressAtMs = now - hour))
+            if ("demo-crash" !in existing) store.saveGoal(app.umbra.agent.agents.proactive.AgentGoal("demo-crash", id, t("Fix the login crash reports", "修好登入閃退回報"),
+                t("Users on Android 15 report a crash right after sign-in.", "Android 15 使用者回報登入後立即閃退。"),
+                milestones = listOf(app.umbra.agent.agents.proactive.GoalMilestone("c1", t("Reproduce on the emulator", "在模擬器重現"), "done", updatedAtMs = now - 30 * hour),
+                    app.umbra.agent.agents.proactive.GoalMilestone("c2", t("Patch and test in a coding session", "在 Coding session 修補並測試"), "done", updatedAtMs = now - 10 * hour),
+                    app.umbra.agent.agents.proactive.GoalMilestone("c3", t("Open the pull request", "開 Pull Request"), "done", updatedAtMs = now - 9 * hour)),
+                acceptanceCriteria = listOf(t("No crash on sign-in in the test run", "測試中登入不再閃退")), deliverables = listOf("PR #212"),
+                state = app.umbra.agent.agents.proactive.GoalState.COMPLETED, createdAtMs = now - 72 * hour, lastProgressAtMs = now - 9 * hour))
+            val conflict = app.umbra.agent.agents.proactive.OpportunityCard("demo-conflict", id, app.umbra.agent.agents.proactive.OpportunityCard.Kind.CONFLICT_ALERT,
+                t("Dentist at 14:00 overlaps the client call at 14:30", "14:00 牙醫與 14:30 客戶通話重疊"),
+                t("The clinic is 25 minutes from home. I drafted a reply to move the call to 16:00.", "診所離家 25 分鐘。我擬好了把通話改到 16:00 的回覆。"),
+                listOf("calendar", "whatsapp"), .9, .9,
+                app.umbra.agent.agents.proactive.PreparedNextStep(t("Review the reschedule draft", "檢視改期草稿"), "send_message_draft", "{\"to\":\"Acme · WhatsApp\",\"text\":\"${t("Could we move our call to 16:00 today? Something came up at 14:00.", "今天的通話可以改到 16:00 嗎？我 14:00 臨時有事。")}\"}",
+                    listOf("16:00", "17:30")), createdAtMs = now - 20 * 60_000)
+            val follow = app.umbra.agent.agents.proactive.OpportunityCard("demo-follow", id, app.umbra.agent.agents.proactive.OpportunityCard.Kind.FOLLOW_UP,
+                t("Lena asked for the Q4 slides twice", "Lena 已經兩次要 Q4 簡報"),
+                t("Last asked yesterday at 18:12. The deck is in /workspace/q4. I can send it after you look.", "最後一次是昨天 18:12。簡報在 /workspace/q4，你看過後我可以傳給她。"),
+                listOf("telegram"), .6, .85, app.umbra.agent.agents.proactive.PreparedNextStep(t("Prepare the reply", "準備回覆"), "agent_turn", "{\"instruction\":\"Prepare a reply to Lena with the Q4 deck\"}"), createdAtMs = now - 2 * hour)
+            val price = app.umbra.agent.agents.proactive.OpportunityCard("demo-price", id, app.umbra.agent.agents.proactive.OpportunityCard.Kind.PRICE_OR_MONITOR,
+                t("Ryokan in Higashiyama dropped to ¥23,800", "東山的旅館降到 ¥23,800"),
+                t("Your watcher matched at 07:55. Free cancellation until 3 days before.", "監測器在 07:55 觸發，入住前 3 天可免費取消。"),
+                listOf("watcher:ryokan"), .5, .8, app.umbra.agent.agents.proactive.PreparedNextStep(t("Add it to the Kyoto plan", "加入京都行程"), "agent_turn", "{\"instruction\":\"Add the Higashiyama ryokan to the Kyoto goal shortlist\"}"), createdAtMs = now - 3 * hour)
+            val refund = app.umbra.agent.agents.proactive.OpportunityCard("demo-refund", id, app.umbra.agent.agents.proactive.OpportunityCard.Kind.TASK_DISCOVERY,
+                t("Two Shopee orders look late", "兩筆蝦皮訂單似乎延遲"),
+                t("Both were due yesterday. I can check their delivery status and whether a refund is needed.", "兩筆都應在昨天送達。我可以檢查到貨狀態，以及是否需要申請退款。"),
+                listOf("notifications"), .55, .8,
+                app.umbra.agent.agents.proactive.PreparedNextStep(t("Check the orders", "檢查訂單"), "agent_turn",
+                    "{\"task\":\"${t("Check the Shopee delivery status and whether a refund is needed", "檢查蝦皮到貨狀態及是否需申請退款")}\",\"order_ids\":[\"261015N0V335KM\",\"261016R2XU2G7H\"]}"),
+                createdAtMs = now - 40 * 60_000)
+            listOf(conflict, follow, price, refund).forEach { card ->
+                store.saveOpportunity(card)
+                store.stage(id, app.umbra.agent.agents.proactive.AttentionItem(card.id, card.title, card.summary, card.urgency, .8, card.confidence, "demo", card.createdAtMs,
+                    tier = if (card.urgency >= .8) app.umbra.agent.agents.proactive.DeliveryTier.CAPSULE_AMBIENT else app.umbra.agent.agents.proactive.DeliveryTier.BRIEF_QUEUE, preparedStep = card.preparedAction))
+            }
+            val today = java.time.LocalDate.now().toString()
+            store.saveBrief(id, app.umbra.agent.agents.proactive.DailyBrief("brief_${today}_morning", today, app.umbra.agent.agents.proactive.DailyBrief.Kind.MORNING,
+                t("A light day: one conflict to settle, and the Kyoto plan is nearly ready.", "今天不忙：有一個衝突要處理，京都行程快完成了。"),
+                scheduleHighlights = listOf(app.umbra.agent.agents.proactive.BriefItem("10:00", t("Stand-up · notes ready", "站立會議 · 筆記已備好")), app.umbra.agent.agents.proactive.BriefItem("14:00", t("Dentist · Ren'ai Rd", "牙醫 · 仁愛路")), app.umbra.agent.agents.proactive.BriefItem("14:30", t("Client call · Acme", "客戶通話 · Acme"))),
+                conflictsDetected = listOf(app.umbra.agent.agents.proactive.ConflictAlert("cf1", "hard_overlap", t("Dentist 14:00 and the client call 14:30 overlap; the clinic is 25 min from home.", "14:00 牙醫與 14:30 客戶通話重疊；診所離家 25 分鐘。"), listOf("calendar"))),
+                overnightCompleted = listOf(app.umbra.agent.agents.proactive.BriefItem(t("Login crash fixed, PR opened", "登入閃退已修好，已開 PR"), "#212"), app.umbra.agent.agents.proactive.BriefItem(t("Inbox sorted: 3 need you, 41 archived", "收件匣已整理：3 封需要你，41 封已封存"), "")),
+                attentionNeeded = listOf(conflict),
+                lowPriorityDigest = t("Package arrives tomorrow. Two newsletters saved for the weekend.", "包裹明天到。兩份電子報留到週末看。"), generatedAtMs = now - 2 * hour))
+            store.saveWatcher(app.umbra.agent.agents.proactive.AgentWatcher("demo-ryokan", id, t("Ryokan under ¥25,000", "旅館低於 ¥25,000"),
+                app.umbra.agent.agents.proactive.ProbeSpec.HttpOrCss("https://example.com/ryokan/higashiyama", ".price"), app.umbra.agent.agents.proactive.ConditionSpec.NumericCompare("<", 25000.0), 60,
+                t("Tell me and add it to the Kyoto shortlist.", "通知我並加入京都候選清單。"), lastCheckedMs = now - 30 * 60_000, lastValue = "¥23,800"))
+            store.saveRoutine(app.umbra.agent.agents.proactive.AgentRoutine("demo-sweep", id, t("Weekday inbox sweep", "平日收件匣整理"), app.umbra.agent.agents.proactive.RoutineTrigger.CronSchedule("30 8 * * 1-5", java.time.ZoneId.systemDefault().id),
+                instruction = t("Sort new mail; draft replies to anything from Acme; never send.", "整理新郵件；為 Acme 的來信擬草稿；不要寄出。"), allowedConnectors = listOf("email"), createdAtMs = now - 96 * hour))
+            container.agents.store.update(id) { it.copy(proactivityLevel = 3, morningBriefMinute = 480, eveningBriefMinute = 1110) }
+            buildJsonObject { put("ok", true) }
+        }
+        // Synthesized guest scripts: the real store gates and the real Linux run (Laya's review is recorded by hand here,
+        // since the fixture checks execution, not the model's judgement). The skill is removed afterwards.
+        "test.script.run" -> try {
+            val language = str(args, "language")
+            val caps = app.umbra.agent.agents.proactive.ScriptCapabilities(args["network"]?.jsonPrimitive?.booleanOrNull ?: false,
+                (args["domains"] as? JsonArray).orEmpty().map { it.jsonPrimitive.content })
+            val source = str(args, "source")
+            val skill = app.umbra.agent.agents.proactive.UmbraSkill("toolqa" + System.nanoTime(), "Script QA", "Fixture", null,
+                app.umbra.agent.agents.proactive.ExecutionTarget.LINUX_CLI, verificationChecks = listOf("fixture"), approvalBoundary = "fixture",
+                updatedAtMs = System.currentTimeMillis(), synthesizedScript = source, scriptLanguage = language, scriptCapabilities = caps,
+                testCases = listOf(app.umbra.agent.agents.proactive.TransformTestCase(args["input"] ?: JsonObject(emptyMap()), expectedKeys = listOf("n"))))
+            try {
+                container.skills.propose(skill, "Fixture")
+                container.skills.beginTest(skill.id, "qa"); container.skills.recordTest(skill.id, "qa", true)
+                container.skills.recordCodeReview(skill.id, 1, app.umbra.agent.agents.proactive.SkillStore.hash(source)); container.skills.approve(skill.id)
+                val ready = container.skills.scriptForRun(skill.id)
+                val started = System.currentTimeMillis()
+                val out = app.umbra.agent.agents.proactive.GuestScriptRunner { container.guest.runtime }.run(ready, args["input"] ?: JsonObject(emptyMap()))
+                val path = app.umbra.agent.agents.proactive.GuestScriptPolicy.path(ready.id, ready.version, language)
+                val stat = container.guest.runtime.exec(listOf("/usr/bin/stat", "-c", "%U %a", path), timeoutMs = 10_000)
+                buildJsonObject { put("result", out); put("ms", System.currentTimeMillis() - started); put("installed", stat.stdout.trim()) }
+            } finally {
+                runCatching { container.skills.disable(skill.id); container.skills.removeDraft(skill.id) }
+                runCatching { container.guest.runtime.exec(listOf("/bin/rm", "-rf", "/opt/umbra/synthesized-tools/${skill.id}"), asRoot = true, timeoutMs = 10_000) }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { buildJsonObject { put("error", e.message ?: "Script failed") } }
+        "test.teams.create" -> {
+            val members = (1..2).map { n -> container.agents.create("Teams QA ${System.nanoTime()} $n", "a$n", app.umbra.agent.agents.Templates.BLANK, "Answer only the explicit test request. No notifications or external messages.", channels = emptyList()).let { p ->
+                container.agents.store.update(p.id) { it.copy(proactivityLevel = 0, morningBriefMinute = null, eveningBriefMinute = null) }!!
+            } }
+            val group = container.teams.create("Teams QA ${System.nanoTime()}", members.map { it.id }, members.first().id)
+            UmbraJson.encodeToJsonElement(app.umbra.agent.agents.proactive.AgentGroup.serializer(), group)
+        }
+        "test.teach.create" -> {
+            val p = container.agents.create("Teach QA ${System.nanoTime()}", "a1", app.umbra.agent.agents.Templates.BLANK, "Synthetic demonstration fixture", channels = emptyList(), running = false)
+            buildJsonObject { put("agent", p.id) }
+        }
+        "test.teach.start", "test.teach.stop", "test.teach.state", "test.teach.extract", "test.teach.cleanup" -> {
+            val id = str(args, "agent")
+            check(container.agents.store.get(id)?.name?.startsWith("Teach QA ") == true)
+            when (command) {
+                "test.teach.start" -> container.demonstrations.start(id)
+                "test.teach.stop" -> container.demonstrations.stop()
+                "test.teach.extract" -> container.demonstrations.extract(id, str(args, "id"))
+                "test.teach.cleanup" -> {
+                    if (container.demonstrations.active.value?.agentId == id) container.demonstrations.stop()
+                    container.demonstrations.list(id).forEach { container.demonstrations.remove(id, it.id) }
+                    container.skills.list().filter { it.ownerAgentId == id }.forEach { container.skills.disable(it.id); container.skills.removeDraft(it.id) }
+                    container.returnControl("display:0")
+                    container.agents.delete(id)
+                }
+            }
+            buildJsonObject {
+                put("active", container.demonstrations.active.value != null)
+                put("records", JsonArray(container.demonstrations.list(id).map { UmbraJson.encodeToJsonElement(app.umbra.agent.agents.proactive.Demonstration.serializer(), it) }))
+                put("skills", JsonArray(container.skills.list().filter { it.ownerAgentId == id }.map { UmbraJson.encodeToJsonElement(app.umbra.agent.agents.proactive.UmbraSkill.serializer(), it) }))
+            }
+        }
+        "test.teams.send" -> {
+            val group = container.agents.proactive.store.groups().first { it.id == str(args, "group") && it.name.startsWith("Teams QA ") }
+            buildJsonObject { put("root", container.teams.sendUser(group.id, str(args, "text"))) }
+        }
+        "test.teams.state" -> {
+            val store = container.agents.proactive.store
+            val group = store.groups().first { it.id == str(args, "group") && it.name.startsWith("Teams QA ") }
+            buildJsonObject {
+                put("messages", JsonArray(store.groupMessages(group.id).map { UmbraJson.encodeToJsonElement(app.umbra.agent.agents.proactive.GroupMessage.serializer(), it) }))
+                put("turns", JsonArray(store.groupTurns().filter { it.groupId == group.id }.map { UmbraJson.encodeToJsonElement(app.umbra.agent.agents.proactive.GroupTurn.serializer(), it) }))
+                put("parents", buildJsonObject { container.sessionStore.list().filter { it.agentId in group.memberAgentIds }.forEach { s -> s.spawnedBy?.let { put(s.id, it) } } })
+            }
+        }
+        "test.teams.receipt" -> {
+            val group = container.agents.proactive.store.groups().first { it.id == str(args, "group") && it.name.startsWith("Teams QA ") }
+            val session = requireNotNull(container.sessionStore.get(str(args, "id")))
+            check(session.agentId in group.memberAgentIds)
+            session.attachments[app.umbra.core.orchestrator.CompletionEvidence.KEY] ?: JsonObject(emptyMap())
+        }
+        "test.teams.cleanup" -> {
+            val store = container.agents.proactive.store
+            val group = store.groups().first { it.id == str(args, "group") && it.name.startsWith("Teams QA ") }
+            container.teams.stop(group.id)
+            for (agent in group.memberAgentIds) {
+                check(container.agents.store.get(agent)?.name?.startsWith("Teams QA ") == true)
+                container.sessionStore.list().filter { it.agentId == agent }.forEach { s -> container.supervisor.stop(s.id); container.supervisor.delete(s.id) }
+                container.agents.delete(agent)
+            }
+            store.removeGroup(group.id)
+            buildJsonObject { put("ok", true) }
+        }
         "notifications.list" -> buildJsonArray {
             container.notificationReader.records().forEach { record -> add(app.umbra.core.model.UmbraJson.encodeToJsonElement(app.umbra.agent.notifications.NotificationRecord.serializer(), record)) }
         }
@@ -113,6 +539,13 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             container.gitSecrets.put(app.umbra.agent.integration.gitSecretName(c.id), str(args, "token"))
             buildJsonObject { put("id", c.id); put("url", c.url) }
         }
+        "guest.exec_secrets" -> {
+            // Development only: proves credentials reach a guest command through stdin, never a file or a command line.
+            val argv = (args["argv"] as JsonArray).map { (it as JsonPrimitive).content }
+            val secrets = (args["secrets"] as JsonObject).mapValues { (it.value as JsonPrimitive).content }
+            val out = container.guest.runtime.execWithSecrets(argv, secrets, timeoutMs = 60_000)
+            buildJsonObject { put("exit", out.exitCode); put("stdout", out.stdout.takeLast(4000)); put("stderr", out.stderr.takeLast(2000)) }
+        }
         "guest.exec_root" -> {
             val argv = (args["argv"] as JsonArray).map { (it as JsonPrimitive).content }
             val out = container.guest.runtime.exec(argv, asRoot = true, timeoutMs = (args["timeout_ms"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 120_000, maxOutputBytes = 1024 * 1024)
@@ -125,7 +558,11 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             val url = str(args, "base_url")
             require(url.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+/v1")))
             backup.writeText(UmbraJson.encodeToString(app.umbra.agent.data.AppPrefs.serializer(), container.settings.value))
-            val provider = ProviderConfig("umbra-test-agent", "Local agent verification", custom = true, baseUrl = url, api = "openai-completions", models = listOf("fake-model"), keyless = true)
+            // With "key", the provider needs a (dummy) API key: omp then starts with it as a secret, which the local
+            // scripted server can check in the Authorization header (the credential path into the guest).
+            val key = (args["key"] as? JsonPrimitive)?.content
+            if (key != null) container.secrets.put("UMBRA_TEST_AGENT_KEY", key)
+            val provider = ProviderConfig("umbra-test-agent", "Local agent verification", apiKeyEnv = if (key != null) "UMBRA_TEST_AGENT_KEY" else null, custom = true, baseUrl = url, api = "openai-completions", models = listOf("fake-model"), keyless = key == null)
             container.settings.update { it.copy(providers = listOf(provider), defaultModel = ModelRef(provider.id, "fake-model"), autoModel = false, autoEffort = false, thinkingLevel = "minimal") }
             buildJsonObject { put("ok", true) }
         }
@@ -133,6 +570,7 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             val backup = File(container.context.filesDir, "debug-provider-backup.json")
             val original = UmbraJson.decodeFromString(app.umbra.agent.data.AppPrefs.serializer(), backup.readText())
             container.settings.update { original }
+            container.secrets.remove("UMBRA_TEST_AGENT_KEY")
             backup.delete()
             buildJsonObject { put("ok", true) }
         }
@@ -158,8 +596,26 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
         }
         "capsule.set" -> {
             val on = (args["on"] as? JsonPrimitive)?.content != "false"
-            container.settings.update { it.copy(overlayEnabled = on) }
-            buildJsonObject { put("on", on) }
+            val placement = (args["placement"] as? JsonPrimitive)?.content?.let { app.umbra.agent.data.CapsulePlacement.valueOf(it.uppercase()) }
+            container.settings.update { it.copy(overlayEnabled = on, capsulePlacement = placement ?: it.capsulePlacement) }
+            buildJsonObject { put("on", on); put("placement", container.settings.value.capsulePlacement.name) }
+        }
+        "capsule.status" -> buildJsonObject {
+            put("enabled", container.settings.value.overlayEnabled)
+            put("started", container.capsule.isStarted)
+            put("revision", container.capsuleSignals.revision.value)
+            put("suggestions", container.capsule.projectedSuggestions)
+            put("suggestionExpirySignals", container.capsule.suggestionExpirySignals)
+        }
+        "test.capsule.signal" -> { container.capsuleSignals.request(); buildJsonObject { put("ok", true) } }
+        "test.composer.draft" -> buildJsonObject { put("text", container.ui.draft.value) }
+        "test.qr.state" -> {
+            val connected = app.umbra.platform.android.UmbraAccessibilityService.connected.value
+            val snapshot = if (connected) container.accessibility.snapshot(app.umbra.platform.api.SnapshotOptions(displayId = 0)) else null
+            buildJsonObject {
+                put("connected", connected)
+                put("found", snapshot?.containsText(container.context.getString(R.string.rn_found, str(args, "name")), exact = true, displayId = 0) == true)
+            }
         }
         // The redesign's own switches, for recordings and tests: the mode, first-run setup, the theme.
         "nodes.list" -> UmbraJson.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(app.umbra.core.control.PairedNode.serializer()), container.nodes.all.value.values.toList())
@@ -177,13 +633,14 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
                 var q = p
                 (args["mode"] as? JsonPrimitive)?.content?.let { q = q.copy(uiMode = app.umbra.agent.data.UiMode.valueOf(it.uppercase())) }
                 (args["onboarded"] as? JsonPrimitive)?.content?.let { q = q.copy(onboarded = it == "true") }
+                (args["homeAgents"] as? JsonPrimitive)?.content?.let { q = q.copy(homeAgents = it == "true") }
                 (args["providers"] as? JsonPrimitive)?.content?.takeIf { it == "none" }?.let { q = q.copy(providers = emptyList(), defaultModel = null) }
                 // "auto", or one of omp's levels (low, medium, high...) for new tasks.
                 (args["effort"] as? JsonPrimitive)?.content?.let { e -> q = if (e == "auto") q.copy(autoEffort = true) else q.copy(autoEffort = false, thinkingLevel = e) }
                 q
             }
             val p = container.settings.value
-            buildJsonObject { put("mode", p.uiMode.name); put("onboarded", p.onboarded); put("providers", p.providers.size); put("effort", if (p.autoEffort) "auto" else p.thinkingLevel.orEmpty()) }
+            buildJsonObject { put("mode", p.uiMode.name); put("onboarded", p.onboarded); put("homeAgents", p.homeAgents); put("providers", p.providers.size); put("effort", if (p.autoEffort) "auto" else p.thinkingLevel.orEmpty()) }
         }
         "approval_mode" -> {
             (args["mode"] as? JsonPrimitive)?.content?.let { mode ->
@@ -214,7 +671,8 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
         }
         "test.task.fixture" -> {
             val session = container.supervisor.create("Synthetic task controls verification", title = "Task controls QA")
-            val done = container.sessionStore.update(session.id) { it.copy(state = app.umbra.core.session.SessionState.COMPLETED, resultSummary = "Synthetic task result: implementation and tests passed.") }!!
+            val summary = (args["summary"] as? JsonPrimitive)?.content ?: "Synthetic task result: implementation and tests passed."
+            val done = container.sessionStore.update(session.id) { it.copy(state = app.umbra.core.session.SessionState.COMPLETED, resultSummary = summary) }!!
             container.sessionStore.append(session.id, app.umbra.core.session.SessionEvent.AgentMessage(done.resultSummary!!))
             sessionJson(done)
         }

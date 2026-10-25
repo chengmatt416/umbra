@@ -36,7 +36,7 @@ case "${1:-}" in
     apk=$("$ADB" shell pm path $PKG | tr -d '\r' | sed 's/^package://')
     # Separate invocations: a pkill -f pattern also matches the shell that carries it in its own command line.
     "$ADB" shell "pkill -f app.umbra.platform.server.ServerMain" || true
-    "$ADB" shell "CLASSPATH=$apk setsid nohup app_process /system/bin app.umbra.platform.server.ServerMain --port $port --token $tok >/data/local/tmp/umbra-helper.log 2>&1 &"
+    "$ADB" shell "UMBRA_HELPER_TOKEN=$tok CLASSPATH=$apk setsid nohup app_process /system/bin app.umbra.platform.server.ServerMain --port $port >/data/local/tmp/umbra-helper.log 2>&1 &"
     sleep 3
     "$ADB" shell "cat /data/local/tmp/umbra-helper.log"
     "$ADB" shell "am broadcast -a app.umbra.agent.dev.HELPER_CONFIGURE --es token $tok --ei port $port -p $PKG" | grep -E 'data=' ;;
@@ -45,7 +45,7 @@ case "${1:-}" in
     apk=$("$ADB" shell pm path $PKG | tr -d '\r' | sed 's/^package://')
     # Only root's own helper: the shell user's helper (started by `helper`) must survive.
     rootsh 'pkill -u 0 -f "ServerMain --port"; true' || true
-    rootsh "CLASSPATH=$apk setsid nohup app_process /system/bin app.umbra.platform.server.ServerMain --port $port --token $tok >/data/local/tmp/umbra-root-helper.log 2>&1 &"
+    rootsh "UMBRA_HELPER_TOKEN=$tok CLASSPATH=$apk setsid nohup app_process /system/bin app.umbra.platform.server.ServerMain --port $port >/data/local/tmp/umbra-root-helper.log 2>&1 &"
     sleep 3
     "$ADB" shell "cat /data/local/tmp/umbra-root-helper.log"
     "$ADB" shell "am broadcast -a app.umbra.agent.dev.ROOT_HELPER_CONFIGURE --es token $tok --ei port $port -p $PKG" | grep -E 'data=' ;;

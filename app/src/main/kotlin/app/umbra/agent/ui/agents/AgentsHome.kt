@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.agents
 
+import app.umbra.agent.ui.porcelain.inkItem
 import android.text.format.DateUtils
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -58,15 +59,16 @@ fun templateName(template: String): String = stringResource(
  * Home's Agents tab (Figma 10.1): one row per agent like a Telegram chat list (face, name and role, last line, time,
  * unread count, next wake), then the conversations agents had with each other.
  */
-fun LazyListScope.agentRows(profiles: List<AgentProfile>, pairs: List<AgentPair>, onOpen: (String) -> Unit, onNew: () -> Unit) {
+internal fun LazyListScope.agentRows(profiles: List<AgentProfile>, pairs: List<AgentPair>, today: AgentsToday, onOpen: (String) -> Unit, onNew: () -> Unit, onProactive: (String, Int) -> Unit, onOpenSession: (String) -> Unit = {}) {
     if (profiles.isEmpty()) {
         item(key = "agents-empty") { NoAgents(onNew) }
         return
     }
-    items(profiles, key = { "agent-" + it.id }) { p -> AgentRow(p) { onOpen(p.id) } }
+    if (today.brief != null || today.suggestions.isNotEmpty()) item(key = "agents-today") { androidx.compose.foundation.layout.Box(inkItem()) { AgentsTodayDeck(today, onProactive, onOpenSession) } }
+    items(profiles, key = { "agent-" + it.id }) { p -> androidx.compose.foundation.layout.Box(inkItem()) { AgentRow(p, today.goals[p.id], today.pending[p.id] ?: 0, { onOpen(p.id) }, { tab -> onProactive(p.id, tab) }) } }
     val known = profiles.associateBy { it.id }
     val shown = pairs.filter { it.a in known && it.b in known }.take(5)
-    items(shown, key = { "pair-" + it.a + it.b }) { pair -> PairRow(pair, known.getValue(pair.a), known.getValue(pair.b)) { onOpen(pair.fromId) } }
+    items(shown, key = { "pair-" + it.a + it.b }) { pair -> androidx.compose.foundation.layout.Box(inkItem()) { PairRow(pair, known.getValue(pair.a), known.getValue(pair.b)) { onOpen(pair.fromId) } } }
 }
 
 @Composable
@@ -78,14 +80,14 @@ private fun NoAgents(onNew: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy((-10).dp)) {
             listOf("a1", "a6", "a11").forEach { AgentAvatar(it, "", 52.dp) }
         }
-        Text(stringResource(R.string.ag_empty_title), fontFamily = P.serif, fontSize = 24.sp, color = P.ink, textAlign = TextAlign.Center)
+        Text(stringResource(R.string.ag_empty_title), fontFamily = P.serif, fontSize = 24.sp, color = P.ink, textAlign = TextAlign.Center, style = androidx.compose.ui.text.TextStyle(lineBreak = androidx.compose.ui.text.style.LineBreak.Heading))
         Text(stringResource(R.string.ag_empty_body), fontSize = 14.sp, lineHeight = 21.sp, color = P.sub, textAlign = TextAlign.Center)
         PButton(stringResource(R.string.ag_new), onNew, icon = PIcons.plus)
     }
 }
 
 @Composable
-private fun AgentRow(p: AgentProfile, onClick: () -> Unit) {
+private fun AgentRow(p: AgentProfile, goal: app.umbra.agent.agents.proactive.AgentGoal?, suggestions: Int, onClick: () -> Unit, onProactive: (Int) -> Unit) {
     val container = LocalContext.current.container
     val context = LocalContext.current
     val conversation by produceState(ConversationState(), p.sessionId) {
@@ -116,6 +118,12 @@ private fun AgentRow(p: AgentProfile, onClick: () -> Unit) {
                 PIcon(if (p.running) PIcons.clock else PIcons.pause, size = 12.dp, tint = P.muted)
                 if (status.working) app.umbra.agent.ui.porcelain.ThinkingOrb(status.label, state = status.orb, paused = status.paused)
                 Text(status.label, fontSize = 12.sp, color = P.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            goal?.let { Box(Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { onProactive(0) }) { AgentGoalLine(it) } }
+            // The agent's Briefing: its brief, the suggestions waiting (counted here) and its goals.
+            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                PButton(stringResource(R.string.briefing_title) + if (suggestions > 0) " · $suggestions" else "", { onProactive(2) }, tiny = true,
+                    style = if (suggestions > 0) app.umbra.agent.ui.porcelain.ButtonStyle.Primary else app.umbra.agent.ui.porcelain.ButtonStyle.Ghost, icon = PIcons.clock)
             }
         }
     }

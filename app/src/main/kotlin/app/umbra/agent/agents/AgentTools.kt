@@ -30,18 +30,36 @@ class AgentTools(private val container: AppContainer) {
     private val runtime get() = container.agents
     private val store get() = container.agents.store
 
-    fun forAgent(agentId: String): List<HostSideTool> = listOf(
+    fun forAgent(agentId: String, sessionId: String? = null): List<HostSideTool> = listOf(
         tool("memory_add", "Remember something durable about the user in your MEMORY: a preference, a person, a routine, a commitment. One fact per call, in your own short words. Never store passwords, one-time codes or bank details.", objectSchema {
             string("text", "The fact, e.g. \"Drinks oat milk, not cow's milk\".", required = true)
             string("source", "Where you learned it: \"user\", \"WhatsApp\", a coding session's #handle…")
+            enum("category", MemoryCategory.entries.map { it.name })
+            stringArray("tags", "Retrieval keywords")
+            boolean("shared", "Share this fact with the other agents")
+            integer("expires_at_ms", "Optional expiry, Unix milliseconds")
         }) { a ->
-            val e = store.memory(agentId).add(a.str("text") ?: return@tool err("text is missing"), a.str("source") ?: "agent")
+            if (a.bool("shared") == true) {
+                val session = sessionId?.let { container.sessionStore.get(it) }
+                require(session?.turnMode == app.umbra.core.session.ProactiveTurnMode.AUTHORIZED_EXECUTION && session.connectorScope?.let { "agents" in it } != false) { "Discovery may write private memory only; sharing requires an authorized turn" }
+            }
+            val text = a.str("text") ?: return@tool err("text is missing")
+            app.umbra.core.safety.OutboundDlpGuard(4) { container.protectedValues() }.requireSafe(text)
+            val memory = if (a.bool("shared") == true) store.teamMemory() else store.memory(agentId)
+            val e = memory.add(text, a.str("source") ?: "agent",
+                category = a.str("category")?.let(MemoryCategory::valueOf) ?: MemoryCategory.ENTITY_FACT,
+                tags = (a["tags"] as? kotlinx.serialization.json.JsonArray).orEmpty().map { (it as JsonPrimitive).content },
+                expiresAtMs = (a["expires_at_ms"] as? JsonPrimitive)?.content?.toLongOrNull())
             ok("Remembered (${e.date} · ${e.source}).")
         },
         tool("memory_edit", "Correct a memory: the first one containing `old` becomes `new`.", objectSchema {
             string("old", "Part of the memory to change.", required = true)
             string("new", "The corrected fact.", required = true)
-        }) { a -> if (store.memory(agentId).edit(a.str("old") ?: "", a.str("new") ?: return@tool err("new is missing"))) ok("Changed.") else err("No memory contains that.") },
+        }) { a ->
+            val new = a.str("new") ?: return@tool err("new is missing")
+            app.umbra.core.safety.OutboundDlpGuard(4) { container.protectedValues() }.requireSafe(new)
+            if (store.memory(agentId).edit(a.str("old") ?: "", new)) ok("Changed.") else err("No memory contains that.")
+        },
         tool("memory_forget", "Forget memories that contain the given text (the user asked you to, or they are wrong).", objectSchema {
             string("text", "Text the memories to forget contain.", required = true)
         }) { a -> ok("Forgot ${store.memory(agentId).forget(a.str("text") ?: return@tool err("text is missing"))}.") },
@@ -118,7 +136,7 @@ class AgentTools(private val container: AppContainer) {
         tool("agent_status", "Describe your current task broadly, in the user's language, without private details or reasoning. Update when the task changes, not for each action.", objectSchema {
             string("summary", "A short activity, e.g. Planning the trip or Reviewing messages.", required = true)
         }) { a ->
-            val sid = store.get(agentId)?.sessionId ?: return@tool err("No agent session")
+            val sid = sessionId ?: store.get(agentId)?.sessionId ?: return@tool err("No agent session")
             val summary = a.str("summary")?.trim()?.take(120)?.takeIf { it.isNotBlank() } ?: return@tool err("summary is missing")
             container.sessionStore.update(sid) { it.copy(activity = summary) }
             ok("Status updated.")
@@ -128,7 +146,7 @@ class AgentTools(private val container: AppContainer) {
             string("title", "A short title.")
             string("model", "\"auto\" (default) or provider/id.")
             enum("effort", listOf("auto", "minimal", "low", "medium", "high", "xhigh", "max"), "How hard it thinks (default auto).")
-        }) { a -> codingStart(agentId, a) },
+        }) { a -> codingStart(agentId, a, sessionId) },
     )
 
     private suspend fun setTimer(agentId: String, a: JsonObject): HostToolPayload {
@@ -142,7 +160,10 @@ class AgentTools(private val container: AppContainer) {
             else -> return err("Give at, in_minutes or cron.")
         }
         if (next <= now) return err("That time has passed.")
+        // A repeating timer faster than every five minutes would only spin the agent (the wake budget holds it anyway).
+        if (cron != null && runCatching { Cron(cron).next(next) - next }.getOrDefault(0L) < 5 * 60_000L) return err("A repeating timer may fire at most every 5 minutes.")
         val timers = store.timers(agentId)
+        if (timers.size >= 50) return err("This agent already has 50 timers; cancel some first.")
         val t = AgentTimer(nextId("t", timers.map { it.id }), note, next, cron, "agent", now)
         store.setTimers(agentId, timers + t)
         runtime.reschedule()
@@ -150,18 +171,18 @@ class AgentTools(private val container: AppContainer) {
         return ok("Set ${t.id} for ${f.format(LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(next), ZoneId.systemDefault()))}${cron?.let { ", repeating ($it)" } ?: ""}.")
     }
 
-    private suspend fun codingStart(agentId: String, a: JsonObject): HostToolPayload {
+    private suspend fun codingStart(agentId: String, a: JsonObject, sessionId: String?): HostToolPayload {
         val p = store.get(agentId) ?: return err("no such agent")
         val task = a.str("task")?.takeIf { it.isNotBlank() } ?: return err("task is missing")
         val effort = when (val e = a.str("effort")) { null, "", "auto" -> Effort(Effort.OMP_AUTO, auto = true); in Effort.LEVELS -> Effort(e); else -> return err("bad effort") }
         val modelName = a.str("model")?.takeIf { it.isNotBlank() && it != "auto" }
         val model = modelName?.let { container.resolveModel(it) ?: return err("No connected model is called '$it'.") }
-        val owner = p.sessionId?.let { container.sessionStore.get(it) }
+        val owner = (sessionId ?: p.sessionId)?.let { container.sessionStore.get(it) }
         val sharedWorkspace = owner?.takeIf { container.sessionFiles.connected(it).isNotEmpty() }?.workspaceId
         val s = container.supervisor.submit(
             workspaceId = sharedWorkspace,
             request = task, title = a.str("title") ?: task.lineSequence().first().take(80), model = model, effort = effort,
-            spec = SessionSpec(kind = SessionKind.CODING, agentId = p.id, spawnedBy = owner?.id),
+            spec = SessionSpec(kind = SessionKind.CODING, agentId = p.id, spawnedBy = owner?.id, connectorScope = owner?.connectorScope, approvalTtlMs = owner?.approvalTtlMs),
         )
         val handle = container.sessionBus.address(s)
         return ok("[Session: ${s.id}] Started the coding session $handle${if (s.queuedAtMs != null) " (queued: it starts when the phone can take another agent)" else ""}. Its report comes back to you when it finishes; follow it with session_read $handle.")
@@ -212,7 +233,7 @@ object AgentPrompt {
         appendLine(soul.trim().ifEmpty { "You are ${p.name}." })
         appendLine()
         appendLine("## What you remember about the user (MEMORY.md, newest last)")
-        if (memory.isEmpty()) appendLine("(nothing yet)") else memory.takeLast(80).forEach { appendLine("- ${it.date} · ${it.source} · ${it.text}") }
+        if (memory.isEmpty()) appendLine("(nothing yet)") else memory.forEach { appendLine("- ${it.date} · [${it.category}] · ${it.source} · ${it.text}") }
         appendLine()
         appendLine("## How you live")
         appendLine("- You run all the time for the user, but you are only awake for moments: ${heartbeatMinutes?.let { "about every $it minutes" } ?: "when something happens"}, when a timer you set is due, when a rule fires, or when a message arrives. Each wake starts with a `[Wake · time · reason]` digest of what is new. The user's own messages to you come as normal messages (from Telegram they start with `[Telegram]`).")

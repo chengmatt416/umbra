@@ -13,9 +13,11 @@ import sys
 import time
 from lib import *
 
-CODE = re.search(r"Pairing code: ([A-Z0-9-]+)", open(sys.argv[1]).read()).group(1)
+# With a NODE_LOG argument the scene pairs a fresh umbra-node on camera; without one it shows the node already paired
+# (no job is placed on that computer: only its page and the read-only preflight).
+CODE = re.search(r"Pairing code: ([A-Z0-9-]+)", open(sys.argv[1]).read()).group(1) if len(sys.argv) > 1 else None
 b = umbractl.Bridge(); umbractl.setup()
-ui_set(b, mode="power", onboarded=True, effort="auto")
+ui_set(b, mode="power", onboarded=True, effort="auto", homeAgents=False)
 b.control("capsule.set", {"on": False})
 
 
@@ -39,18 +41,25 @@ rec = Recorder("scene_e2").start()
 
 # ---- nodes: the menu's Nodes, pair the Mac, preflight, trust, a job under a lease
 rec.mark("nodes"); menu("Nodes", 1.2); time.sleep(2.2)
-if not find("Pair a node", timeout=1, exact=True):
-    tap_text("Pair a computer"); time.sleep(1.4)
-tap_text("Pair a node", exact=True); time.sleep(1.4)
-tap(360, 731); time.sleep(0.8); text("10.0.2.2"); time.sleep(0.6)          # Address
-sh("input", "keyevent", "4"); time.sleep(1.0)                             # keyboard away: the dialog moves back
-tap(360, 1015); time.sleep(0.8); text(CODE); time.sleep(0.8)              # Pairing code
-sh("input", "keyevent", "4"); time.sleep(1.4)                             # keyboard away: the whole dialog
-tap_text("Pair", exact=True, below=1000); time.sleep(4.0)
-tap_text("Preflight", exact=True); time.sleep(3.5)
-tap_text("Owned", exact=True); time.sleep(1.8)                           # raise its trust
-tap_text("Run…", exact=True); time.sleep(1.6)
-tap_text("Place job", exact=True); time.sleep(4.5)
+if CODE:
+    if not find("Pair a node", timeout=1, exact=True):
+        tap_text("Pair a computer"); time.sleep(1.4)
+    tap_text("Pair a node", exact=True); time.sleep(1.4)
+    tap(360, 731); time.sleep(0.8); text("10.0.2.2"); time.sleep(0.6)          # Address
+    sh("input", "keyevent", "4"); time.sleep(1.0)                             # keyboard away: the dialog moves back
+    tap(360, 1015); time.sleep(0.8); text(CODE); time.sleep(0.8)              # Pairing code
+    sh("input", "keyevent", "4"); time.sleep(1.4)                             # keyboard away: the whole dialog
+    tap_text("Pair", exact=True, below=1000); time.sleep(4.0)
+    tap_text("Preflight", exact=True); time.sleep(3.5)
+    tap_text("Owned", exact=True); time.sleep(1.8)                           # raise its trust
+    tap_text("Run…", exact=True); time.sleep(1.6)
+    tap_text("Place job", exact=True); time.sleep(4.5)
+else:
+    time.sleep(1.0)
+    p = find("MacBook", timeout=3) or find("@", timeout=2)
+    if p: tap(*p); time.sleep(2.6)
+    pf = find("Preflight", timeout=2, exact=True)
+    if pf: tap(*pf); time.sleep(3.5)
 sweep(1, 640, 1200, 2.4)
 
 # ---- safety: the Safety hub and what it holds

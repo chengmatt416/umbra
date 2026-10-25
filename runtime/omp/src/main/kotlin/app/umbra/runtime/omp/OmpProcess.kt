@@ -26,11 +26,13 @@ object OmpProcess {
         clientConfig: OmpClientConfig = OmpClientConfig(),
         stderrLines: Int = 200,
         spawner: OmpSpawner = LocalSpawner,
+        overlayFile: String = OVERLAY_FILE,
     ): Started {
+        require(overlayFile.matches(Regex("[A-Za-z0-9._-]+")) && overlayFile !in setOf(".", ".."))
         if (providers.isNotEmpty()) files.write(MODELS_FILE, OmpModelsFile.toYaml(providers))
-        files.write(OVERLAY_FILE, settings.toYaml())
+        files.write(overlayFile, settings.toYaml())
 
-        val effective = launch.copy(settingsOverlay = launch.settingsOverlay ?: "${files.ompPath.trimEnd('/')}/$OVERLAY_FILE")
+        val effective = launch.copy(settingsOverlay = launch.settingsOverlay ?: "${files.ompPath.trimEnd('/')}/$overlayFile")
         val env = buildMap {
             put("PI_CODING_AGENT_DIR", files.ompPath)
             // RPC mode already disables titles, but a stray model call would still leak the first prompt.

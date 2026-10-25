@@ -170,7 +170,7 @@ class ProotRuntime(
         }
     }
 
-    override fun hostCommand(argv: List<String>, env: Map<String, String>, cwd: String?, asRoot: Boolean, envFile: String?, pidFile: String?): String {
+    override fun hostCommand(argv: List<String>, env: Map<String, String>, cwd: String?, asRoot: Boolean, envFile: String?, pidFile: String?, secretsOnStdin: Boolean): String {
         require(argv.isNotEmpty()) { "empty command" }
         val environment = linkedMapOf(
             "HOME" to RuntimeLayout.GUEST_HOME,
@@ -188,6 +188,7 @@ class ProotRuntime(
         }
         val inner = buildString {
             append("umask 022; ")
+            if (secretsOnStdin) append(SecretStdin.PREAMBLE)
             if (envFile != null) append("set -a; . ${quote(envFile)}; set +a; rm -f ${quote(envFile)}; ")
             if (pidFile != null) append("echo \$\$ > ${quote(pidFile)}; ")
             append("cd ${quote(cwd ?: if (asRoot) "/" else RuntimeLayout.GUEST_WORKSPACE)} 2>/dev/null || cd /; exec \"\$@\"")
@@ -213,24 +214,15 @@ class ProotRuntime(
 
     override suspend fun execWithSecrets(argv: List<String>, secrets: Map<String, String>, env: Map<String, String>, cwd: String?, timeoutMs: Long, maxOutputBytes: Int): ShellResult {
         if (secrets.isEmpty()) return exec(argv, env, cwd, timeoutMs = timeoutMs, maxOutputBytes = maxOutputBytes)
-        val file = "/tmp/umbra-exec-${System.nanoTime().toString(36)}.env"
-        writeFile(file, secrets.entries.joinToString("\n", postfix = "\n") { (k, v) ->
-            require(k.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "bad environment variable name '$k'" }
-            "export $k=${quote(v)}"
-        })
-        try {
-            mount()
-            return shell.exec(ShellRequest(hostCommand(argv, env, cwd, envFile = file), timeoutMs = timeoutMs, maxOutputBytes = maxOutputBytes))
-        } finally {
-            withContext(Dispatchers.IO) { File(hostPath(file)).delete() }
-        }
+        mount()
+        return shell.exec(ShellRequest(hostCommand(argv, env, cwd, secretsOnStdin = true), stdin = SecretStdin.payload(secrets), timeoutMs = timeoutMs, maxOutputBytes = maxOutputBytes))
     }
 
     // ---- files and processes ----
 
     /** The workspace and the home are bound from outside the rootfs, so their paths lead there. */
     override fun hostPath(guestPath: String): String {
-        val p = "/" + guestPath.trimStart('/')
+        val p = guestPath(guestPath)
         fun under(prefix: String) = p == prefix || p.startsWith("$prefix/")
         return when {
             under(RuntimeLayout.GUEST_WORKSPACE) -> layout.workspaces.trimEnd('/') + p.removePrefix(RuntimeLayout.GUEST_WORKSPACE)
@@ -240,17 +232,18 @@ class ProotRuntime(
     }
 
     override suspend fun writeFile(guestPath: String, content: String, mode: String) = withContext(Dispatchers.IO) {
+        fileMode(mode)
         val file = File(hostPath(guestPath))
-        file.parentFile?.mkdirs()
-        val tmp = File(file.path + ".new")
-        tmp.delete()
-        tmp.createNewFile()
-        TarReader.setMode(tmp, 0b110_000_000) // private while it is written
-        tmp.writeText(content)
-        TarReader.setMode(tmp, mode.toInt(8))
-        if (!tmp.renameTo(file)) {
-            file.delete()
+        val parent = requireNotNull(file.parentFile)
+        if (!parent.isDirectory && !parent.mkdirs()) throw BackendException(ErrorCode.COMMAND_FAILED, "creating parent of $guestPath failed")
+        val tmp = File.createTempFile(".umbra-write-", ".tmp", parent)
+        try {
+            TarReader.setMode(tmp, 0b110_000_000)
+            tmp.writeText(content)
+            TarReader.setMode(tmp, mode.toInt(8))
             if (!tmp.renameTo(file)) throw BackendException(ErrorCode.COMMAND_FAILED, "writing $guestPath failed")
+        } finally {
+            tmp.delete()
         }
     }
 

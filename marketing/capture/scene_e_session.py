@@ -23,7 +23,7 @@ b.control("approval_mode", {"mode": "autonomous"}); b.control("capsule.set", {"o
 sid = None
 for _ in range(80):
     try:
-        sid = b.control("session.create", {"request": "Prepare the 0.3.2 release: test, build, sign and upload the APK"})["id"]; break
+        sid = b.control("session.create", {"request": "Prepare the 0.6.0 release: test, build, sign and upload the APK"})["id"]; break
     except RuntimeError as e:
         print(e, flush=True); time.sleep(15)
 print("session", sid, flush=True)

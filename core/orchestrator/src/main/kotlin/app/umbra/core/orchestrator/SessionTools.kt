@@ -63,7 +63,7 @@ class SessionTools(
             integer("after_seq", "Number of whole transcript messages already read (default 0).")
             integer("offset", "Character offset within the next message; copy next_offset from the previous page (default 0).")
             integer("lines", "History page size (default 20, at most 100).")
-        }) { args, _ -> read(args.str("who") ?: return@tool err("who is missing"), args.bool("history") == true, (args.int("after_seq") ?: 0).toLong().coerceAtLeast(0), (args.int("lines") ?: 20).coerceIn(1, 100), (args.int("offset") ?: 0).coerceAtLeast(0)) })
+        }) { args, _ -> read(sessionId, args.str("who") ?: return@tool err("who is missing"), args.bool("history") == true, (args.int("after_seq") ?: 0).toLong().coerceAtLeast(0), (args.int("lines") ?: 20).coerceIn(1, 100), (args.int("offset") ?: 0).coerceAtLeast(0)) })
 
         if (allowSubagents) {
             add(tool("subagent_start", START_DESCRIPTION, objectSchema {
@@ -103,13 +103,18 @@ class SessionTools(
     // ---- the tools ----
 
     private suspend fun list(selfId: String, all: Boolean, query: String?, offset: Int, limit: Int): HostToolPayload {
-        val sessions = store.list(app.umbra.core.session.SessionFilter(query = query, limit = Int.MAX_VALUE)).filter { it.id != selfId }
+        val records = store.list().associateBy { it.id }
+        val caller = records[selfId]
+        val sessions = store.list(app.umbra.core.session.SessionFilter(query = query, limit = Int.MAX_VALUE)).filter {
+            it.id != selfId && (mayRead(caller, it, records) || it.kind == SessionKind.AGENT && it.spawnedBy == null)
+        }
         val active = sessions.filter { !it.state.isTerminal || it.kind == SessionKind.AGENT }
         val shown = if (all) sessions.drop(offset).take(limit) else active + sessions.filter { it.state.isTerminal && it.kind != SessionKind.AGENT }.take(5)
         if (shown.isEmpty()) return HostToolPayload.text("No other sessions or agents.")
         val text = shown.distinctBy { it.id }.joinToString("\n") { s ->
             val kind = when (s.kind) { SessionKind.AGENT -> "agent"; SessionKind.SUBAGENT -> "subagent of " + (s.spawnedBy ?: "?"); SessionKind.CODING -> "coding" }
-            "${bus.address(s)} · $kind · ${s.state.name.lowercase()} · ${s.title.take(70)}" + (s.resultSummary?.let { "\n  Summary: ${it.take(600)}" } ?: "") + (s.plan.firstOrNull { it.status == "active" }?.let { " · now: ${it.text.take(60)}" } ?: "")
+            "${bus.address(s)} · $kind · ${s.state.name.lowercase()} · ${s.title.take(70)}" + if (mayRead(caller, s, records))
+                (s.resultSummary?.let { "\n  Summary: ${it.take(600)}" } ?: "") + (s.plan.firstOrNull { it.status == "active" }?.let { " · now: ${it.text.take(60)}" } ?: "") else " · private conversation"
         }
         return HostToolPayload.text(text + (if (all) "\nnext_offset=${offset + shown.size}; has_more=${offset + shown.size < sessions.size}" else "") + "\n\nUse session_read for title and summary, then history=true only when needed. Write with session_send.")
     }
@@ -122,8 +127,9 @@ class SessionTools(
         return HostToolPayload.text("Sent to ${target?.let(bus::address) ?: to} as ${e.id}. If it answers, the reply arrives in this conversation as a message; you do not need to wait for it.")
     }
 
-    private suspend fun read(who: String, history: Boolean, afterSeq: Long, lines: Int, offset: Int): HostToolPayload {
+    private suspend fun read(selfId: String, who: String, history: Boolean, afterSeq: Long, lines: Int, offset: Int): HostToolPayload {
         val s = bus.resolve(who) ?: return err("No session or agent is called '$who'.")
+        if (!mayRead(store.get(selfId), s, store.list().associateBy { it.id })) return err("This agent's private history was not shared with you. Use a structured handoff instead.")
         val head = "${bus.address(s)} · ${s.state.name.lowercase()} · ${s.title}"
         val summary = s.resultSummary ?: store.tail(s.id, 100).asReversed()
             .firstNotNullOfOrNull { (it.event as? app.umbra.core.session.SessionEvent.AgentMessage)?.text }
@@ -162,7 +168,7 @@ class SessionTools(
             model = model,
             projectId = parent.projectId,
             effort = effort,
-            spec = SessionSpec(kind = SessionKind.SUBAGENT, handle = handle, spawnedBy = parent.id, agentId = parent.agentId),
+            spec = SessionSpec(kind = SessionKind.SUBAGENT, handle = handle, spawnedBy = parent.id, agentId = parent.agentId, turnMode = parent.turnMode, connectorScope = parent.connectorScope, approvalTtlMs = parent.approvalTtlMs),
         )
         val where = "#$handle (session ${child.id}) · ${model?.let { "${it.provider}/${it.modelId}" } ?: "the default model"} · effort ${effort.level}"
         if (child.queuedAtMs != null && args.bool("wait") != true) {
@@ -232,6 +238,18 @@ class SessionTools(
     }
 
     // ---- small helpers ----
+
+    private fun mayRead(caller: Session?, target: Session, records: Map<String, Session>): Boolean {
+        if (caller == null) return false
+        if (caller.agentId == null || target.agentId == caller.agentId || target.id == caller.id) return true
+        val visited = mutableSetOf<String>()
+        var cursor: Session? = target
+        while (cursor != null && visited.size < 32 && visited.add(cursor.id)) {
+            if (cursor.id == caller.id || cursor.agentId == caller.agentId) return true
+            cursor = cursor.spawnedBy?.let(records::get)
+        }
+        return false
+    }
 
     private fun tool(name: String, description: String, schema: JsonObject, run: suspend (JsonObject, HostToolProgress) -> HostToolPayload) =
         HostSideTool(HostToolDefinition(name, description, schema)) { call: HostToolCall, progress -> run(call.arguments, progress) }

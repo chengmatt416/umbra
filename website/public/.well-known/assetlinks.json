@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.umbra.agent",
+      "sha256_cert_fingerprints": [
+        "B3:80:60:DE:E2:99:10:FB:73:D1:5C:B7:5F:E4:B5:57:70:8D:85:D3:7C:B2:C3:BD:BE:6A:5E:CC:3A:22:31:C3"
+      ]
+    }
+  }
+]

@@ -4,13 +4,14 @@ import app.umbra.runtime.omp.ContentBlock
 import app.umbra.runtime.omp.HostToolCall
 import app.umbra.runtime.omp.HostToolPayload
 import app.umbra.runtime.omp.HostToolProgress
-import java.io.BufferedReader
+import app.umbra.platform.api.BoundedLineReader
 import java.io.BufferedWriter
-import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicInteger
@@ -19,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -61,6 +63,8 @@ class ToolBridgeServer(
     private var server: ServerSocket? = null
     private var acceptor: Job? = null
     private val calls = AtomicInteger()
+    private val clients = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
+    private val connectionSlots = java.util.concurrent.Semaphore(8)
 
     /** The port actually bound (useful when [port] is 0). */
     val boundPort: Int get() = server?.localPort ?: -1
@@ -68,7 +72,11 @@ class ToolBridgeServer(
     fun start(): Int {
         check(server == null) { "already started" }
         // Explicitly IPv4: on Android getLoopbackAddress() is ::1, which clients connecting to 127.0.0.1 never reach.
-        val s = ServerSocket(port, 16, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
+        val s = ServerSocket()
+        try {
+            s.reuseAddress = true
+            s.bind(InetSocketAddress(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), port), 16)
+        } catch (e: Exception) { s.close(); throw e }
         server = s
         acceptor = scope.launch {
             while (isActive) {
@@ -77,23 +85,34 @@ class ToolBridgeServer(
                 } catch (_: java.io.IOException) {
                     break
                 }
-                launch { serve(client) }
+                val accepted = synchronized(clients) {
+                    if (s.isClosed || server !== s || !connectionSlots.tryAcquire()) false else { clients += client; true }
+                }
+                if (!accepted) { client.close(); continue }
+                val job = launch(start = CoroutineStart.LAZY) { serve(client) }
+                job.invokeOnCompletion {
+                    try { client.close() } catch (_: java.io.IOException) {}
+                    clients.remove(client)
+                    connectionSlots.release()
+                }
+                job.start()
             }
         }
         return s.localPort
     }
 
     override fun close() {
-        try {
-            server?.close()
-        } catch (_: java.io.IOException) {
+        synchronized(clients) {
+            try { server?.close() } catch (_: java.io.IOException) {}
+            server = null
+            clients.forEach { try { it.close() } catch (_: java.io.IOException) {} }
         }
-        server = null
         scope.cancel()
     }
 
     private suspend fun serve(socket: Socket) = socket.use {
-        val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+        socket.soTimeout = 5_000
+        val reader = BoundedLineReader(socket.getInputStream())
         val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8))
         val writeLock = Any()
         fun send(obj: JsonObject) = synchronized(writeLock) {
@@ -101,25 +120,30 @@ class ToolBridgeServer(
             writer.write("\n")
             writer.flush()
         }
-        val inFlight = Job()
+        val inFlight = SupervisorJob(scope.coroutineContext[Job])
+        val requests = java.util.concurrent.Semaphore(16)
+        var lastRead = System.currentTimeMillis()
+        var authenticated = false
         try {
             while (true) {
-                val line = reader.readLine() ?: break
-                if (line.length > maxFrameBytes) {
-                    send(error(null, "request too large"))
-                    break
-                }
+                val line = try { reader.readLine(maxFrameBytes) } catch (_: SocketTimeoutException) {
+                    if (!authenticated || (inFlight.children.none { it.isActive } && System.currentTimeMillis() - lastRead > 5 * 60_000L)) break
+                    continue
+                } ?: break
+                lastRead = System.currentTimeMillis()
                 val request = try {
                     Json.parseToJsonElement(line).jsonObject
                 } catch (e: Exception) {
-                    send(error(null, "invalid JSON: ${e.message}"))
-                    continue
+                    send(error(null, "invalid JSON"))
+                    break
                 }
                 val id = (request["id"] as? JsonPrimitive)?.content
                 if (!tokenMatches((request["auth"] as? JsonPrimitive)?.content)) {
                     send(error(id, "unauthorized"))
-                    continue
+                    break
                 }
+                authenticated = true
+                if (!requests.tryAcquire()) { send(error(id, "too many requests")); continue }
                 // Each call runs on its own coroutine so a slow tool (or an unanswered approval) does not block the connection.
                 scope.launch(inFlight) {
                     try {
@@ -128,6 +152,8 @@ class ToolBridgeServer(
                         throw e
                     } catch (e: Exception) {
                         send(error(id, "internal error: ${e.message}"))
+                    } finally {
+                        requests.release()
                     }
                 }
             }
@@ -194,7 +220,7 @@ class BridgeResponse(val isError: Boolean, val text: String, val images: List<By
 /** Blocking line-based client for [ToolBridgeServer]; used by tooling that reaches a device through `adb forward`. */
 class BridgeClient(private val host: String, private val port: Int, private val token: String) : AutoCloseable {
     private val socket = Socket(host, port)
-    private val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+    private val reader = BoundedLineReader(socket.getInputStream())
     private val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8))
     private val ids = AtomicInteger()
 
@@ -205,7 +231,7 @@ class BridgeClient(private val host: String, private val port: Int, private val 
         writer.write(request.toString()); writer.write("\n"); writer.flush()
         socket.soTimeout = timeoutMs
         while (true) {
-            val line = reader.readLine() ?: error("bridge closed the connection")
+            val line = reader.readLine(16 * 1024 * 1024) ?: error("bridge closed the connection")
             val obj = Json.parseToJsonElement(line).jsonObject
             if ((obj["id"] as? JsonPrimitive)?.content != id) continue
             val content = obj["content"] as? JsonArray ?: JsonArray(emptyList())
@@ -223,7 +249,7 @@ class BridgeClient(private val host: String, private val port: Int, private val 
         writer.write(request.toString()); writer.write("\n"); writer.flush()
         socket.soTimeout = timeoutMs
         while (true) {
-            val obj = Json.parseToJsonElement(reader.readLine() ?: error("bridge closed the connection")).jsonObject
+            val obj = Json.parseToJsonElement(reader.readLine(16 * 1024 * 1024) ?: error("bridge closed the connection")).jsonObject
             if ((obj["id"] as? JsonPrimitive)?.content != id) continue
             if ((obj["ok"] as? JsonPrimitive)?.content == "true") return obj["result"] ?: JsonNull
             error("control '$command' failed: " + ((obj["error"] as? JsonPrimitive)?.content ?: ((obj["content"] as? JsonArray)?.firstOrNull()?.jsonObject?.get("text") as? JsonPrimitive)?.content ?: "unknown"))
@@ -234,7 +260,7 @@ class BridgeClient(private val host: String, private val port: Int, private val 
     fun tools(session: String = "bridge"): List<String> {
         val request = buildJsonObject { put("id", "list"); put("auth", token); put("session", session); put("list", true) }
         writer.write(request.toString()); writer.write("\n"); writer.flush()
-        val obj = Json.parseToJsonElement(reader.readLine() ?: error("bridge closed the connection")).jsonObject
+        val obj = Json.parseToJsonElement(reader.readLine(16 * 1024 * 1024) ?: error("bridge closed the connection")).jsonObject
         return (obj["tools"] as? JsonArray).orEmpty().map { ((it as JsonObject)["name"] as JsonPrimitive).content }
     }
 

@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.sessions
 
+import app.umbra.agent.ui.porcelain.inkItem
 import app.umbra.agent.ui.sessionsFlow
 import android.text.format.DateUtils
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -139,7 +140,7 @@ fun SessionsScreen(onOpenSession: (String) -> Unit) {
                 }
             }
             if (mine.isEmpty()) item(key = "pe-${project.id}") { Subtle(stringResource(R.string.sessions_project_empty)) }
-            items(mine, key = { it.id }) { s -> SessionRow(s, projects, onOpenSession, onError = { error = it }) }
+            items(mine, key = { it.id }) { s -> androidx.compose.foundation.layout.Box(inkItem()) { SessionRow(s, projects, onOpenSession, onError = { error = it }) } }
         }
         item(key = "independent") {
             Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -152,7 +153,7 @@ fun SessionsScreen(onOpenSession: (String) -> Unit) {
         }
         val independent = byProject[null].orEmpty()
         if (independent.isEmpty()) item { Subtle(stringResource(if (sessions.isEmpty()) R.string.sessions_nothing else R.string.sessions_none_here)) }
-        items(independent, key = { it.id }) { s -> SessionRow(s, projects, onOpenSession, onError = { error = it }) }
+        items(independent, key = { it.id }) { s -> androidx.compose.foundation.layout.Box(inkItem()) { SessionRow(s, projects, onOpenSession, onError = { error = it }) } }
     }
 
     if (newProject) NameDialog(stringResource(R.string.project_new_title), "", onDismiss = { newProject = false }) { name ->

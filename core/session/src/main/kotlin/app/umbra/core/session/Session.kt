@@ -58,6 +58,9 @@ enum class SessionKind {
  * user, so the task can say "Auto → high".
  */
 @Serializable
+enum class ProactiveTurnMode { AUTHORIZED_EXECUTION, READ_ONLY_DISCOVERY }
+
+@Serializable
 data class Effort(val level: String, val auto: Boolean = false) {
     companion object {
         /** omp's levels, lightest first (pi-catalog THINKING_EFFORTS, after `off`). */
@@ -141,6 +144,11 @@ data class Session(
     val spawnedBy: String? = null,
     /** How a coding session uses a web browser: "auto", "dom" (headless, page structure) or "visual" (the desktop's screen). Null: auto. */
     val browser: String? = null,
+    val turnMode: ProactiveTurnMode = ProactiveTurnMode.AUTHORIZED_EXECUTION,
+    val routineRunId: String? = null,
+    val latestUserIntent: String? = null,
+    val connectorScope: List<String>? = null,
+    val approvalTtlMs: Long? = null,
 )
 
 @Serializable

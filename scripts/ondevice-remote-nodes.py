@@ -25,8 +25,14 @@ OUT = ROOT / 'reports/remote-nodes'
 OUT.mkdir(parents=True, exist_ok=True)
 
 def tree():
-    adb('shell', 'uiautomator', 'dump', '/sdcard/umbra-node-qa.xml')
-    return ET.fromstring(adb('shell', 'cat', '/sdcard/umbra-node-qa.xml'))
+    for _ in range(5):
+        adb('shell', 'uiautomator', 'dump', '/sdcard/umbra-node-qa.xml')
+        root = ET.fromstring(adb('shell', 'cat', '/sdcard/umbra-node-qa.xml'))
+        denied = next((n for n in root.iter('node') if n.get('resource-id') == 'com.android.systemui:id/log_access_dialog_deny_button'), None)
+        if denied is None:
+            return root
+        adb('shell', 'input', 'tap', *map(str, bounds(denied)))
+    raise AssertionError('Android UI hierarchy remained behind a log-access dialog')
 def bounds(node):
     x1, y1, x2, y2 = map(int, re.findall(r'\d+', node.attrib['bounds']))
     return ((x1 + x2) // 2, (y1 + y2) // 2)

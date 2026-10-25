@@ -15,6 +15,9 @@ import app.umbra.runtime.omp.StreamingBehavior
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.NonCancellable
@@ -28,6 +31,10 @@ data class SessionSpec(
     /** The browser mode of a coding session (see [app.umbra.core.session.Session.browser]). */
     val browser: String? = null,
     val usageLimit: app.umbra.core.session.AiUsageLimit? = null,
+    val turnMode: app.umbra.core.session.ProactiveTurnMode = app.umbra.core.session.ProactiveTurnMode.AUTHORIZED_EXECUTION,
+    val routineRunId: String? = null,
+    val connectorScope: List<String>? = null,
+    val approvalTtlMs: Long? = null,
 )
 
 /** Raised when the device cannot take another running session right now (spec §30). */
@@ -50,6 +57,12 @@ class AgentSupervisor(
     private val tuiHolds = ConcurrentHashMap<String, suspend () -> Boolean>()
     private val counted = ConcurrentHashMap.newKeySet<String>()
     private var observers = emptyList<Job>()
+
+    /** Navigation may cancel the waiting screen; accepted work belongs to the supervisor. */
+    private suspend fun <T> owned(block: suspend () -> T): T {
+        currentCoroutineContext().ensureActive()
+        return scope.async { block() }.await()
+    }
 
     // ---- lifecycle of the supervisor ----
 
@@ -121,8 +134,15 @@ class AgentSupervisor(
         agentId: String? = null,
         browser: String? = null,
         usageLimit: app.umbra.core.session.AiUsageLimit? = null,
+        turnMode: app.umbra.core.session.ProactiveTurnMode = app.umbra.core.session.ProactiveTurnMode.AUTHORIZED_EXECUTION,
+        routineRunId: String? = null,
+        connectorScope: List<String>? = null,
+        approvalTtlMs: Long? = null,
     ): Session {
+        deps.validateModelInput(request)
+        title?.let(deps.validateModelInput)
         val now = deps.clock.nowMs()
+        spawnedBy?.let { parent -> SpawnGuard.refusal(deps.store.list(), parent, now)?.let { throw IllegalStateException(it) } }
         val id = SessionIds.generate(now)
         val name = title?.takeIf { it.isNotBlank() } ?: titleOf(request)
         val workspace = workspaceId
@@ -143,19 +163,23 @@ class AgentSupervisor(
             agentId = agentId,
             browser = browser,
             usageLimit = usageLimit,
+            turnMode = turnMode,
+            routineRunId = routineRunId,
+            connectorScope = connectorScope,
+            approvalTtlMs = approvalTtlMs,
         )
         return deps.store.create(session)
     }
 
     /** Creates a session and starts working on the request, with [images] (a screen selection, a photo) attached. */
-    suspend fun launch(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList(), effort: app.umbra.core.session.Effort? = null, spec: SessionSpec = SessionSpec()): Session {
+    suspend fun launch(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList(), effort: app.umbra.core.session.Effort? = null, spec: SessionSpec = SessionSpec()): Session = owned {
         // What would refuse the start refuses it before a session exists: a refused request leaves no failed session.
         // (send checks again, and takes the slot.)
         checkFence()
         deps.admission(projectId, runningByProject())?.let { throw CapacityException(it) }
         deps.serviceAdmission(null)?.let { throw CapacityException(it) }
         governor?.decision?.value?.let { if (!it.allowNewSessions) throw CapacityException(capacityReason()) }
-        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser, usageLimit = spec.usageLimit)
+        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser, usageLimit = spec.usageLimit, turnMode = spec.turnMode, routineRunId = spec.routineRunId, connectorScope = spec.connectorScope, approvalTtlMs = spec.approvalTtlMs)
         try {
             send(session.id, request, images)
         } catch (e: Exception) {
@@ -167,7 +191,7 @@ class AgentSupervisor(
             }
             throw e
         }
-        return deps.store.get(session.id) ?: session
+        deps.store.get(session.id) ?: session
     }
 
     /**
@@ -177,16 +201,28 @@ class AgentSupervisor(
      * what the phone can take. Refused outright: during a lockdown, when [QUEUE_LIMIT] requests already wait, and a
      * request with pictures that cannot start now (pictures are not kept for later).
      */
-    suspend fun submit(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList(), effort: app.umbra.core.session.Effort? = null, spec: SessionSpec = SessionSpec()): Session {
+    suspend fun submit(request: String, title: String? = null, workspaceId: String? = null, model: ModelRef? = null, projectId: String? = null, images: List<ContentBlock.Image> = emptyList(), effort: app.umbra.core.session.Effort? = null, spec: SessionSpec = SessionSpec()): Session = owned {
         checkFence()
         val problem = waitingReason(projectId)
-        if (problem == null && (images.isNotEmpty() || queued().isEmpty())) return launch(request, title, workspaceId, model, projectId, images, effort, spec)
+        if (problem == null && (images.isNotEmpty() || queued().isEmpty())) return@owned launch(request, title, workspaceId, model, projectId, images, effort, spec)
         if (images.isNotEmpty()) throw CapacityException("$problem A request with a picture is not queued; send it again when a slot is free.")
         if (queued().size >= QUEUE_LIMIT) throw CapacityException("${problem ?: "Requests are waiting."} The queue is full ($QUEUE_LIMIT waiting); stop or wait for some.")
-        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser, usageLimit = spec.usageLimit)
+        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser, usageLimit = spec.usageLimit, turnMode = spec.turnMode, routineRunId = spec.routineRunId, connectorScope = spec.connectorScope, approvalTtlMs = spec.approvalTtlMs)
         val waiting = deps.store.update(session.id) { it.copy(queuedAtMs = deps.clock.nowMs()) } ?: session
         wake.trySend(Unit)
-        return waiting
+        waiting
+    }
+
+    /** Sessions waiting for admission, longest-waiting first. */
+    suspend fun enqueue(sessionId: String): Session = owned {
+        checkFence()
+        val session = deps.store.get(sessionId) ?: throw app.umbra.core.session.SessionNotFoundException(sessionId)
+        require(session.state == SessionState.CREATED) { "Only an unstarted task can enter the queue" }
+        if (session.queuedAtMs != null) return@owned session
+        if (queued().size >= QUEUE_LIMIT) throw CapacityException("The queue is full ($QUEUE_LIMIT waiting).")
+        val waiting = deps.store.update(sessionId) { it.copy(queuedAtMs = deps.clock.nowMs()) } ?: session
+        wake.trySend(Unit)
+        waiting
     }
 
     /** Sessions waiting for admission, longest-waiting first. */
@@ -358,8 +394,9 @@ class AgentSupervisor(
         live[sessionId]?.reloadConversation()
     }
 
-    private fun sessionFor(id: String): AgentSession = live.getOrPut(id) {
-        AgentSession(id, deps, scope) { ended -> live.remove(ended.sessionId, ended) }
+    private suspend fun sessionFor(id: String): AgentSession {
+        val initial = deps.store.get(id) ?: throw app.umbra.core.session.SessionNotFoundException(id)
+        return live.getOrPut(id) { AgentSession(initial, deps, scope) { ended -> live.remove(ended.sessionId, ended) } }
     }
 
     /** Raised for new managed input during an emergency input lockdown. */
@@ -393,7 +430,7 @@ class AgentSupervisor(
         return launch
     }
 
-    suspend fun send(sessionId: String, message: String, images: List<ContentBlock.Image> = emptyList(), whileRunning: StreamingBehavior = StreamingBehavior.STEER) {
+    suspend fun send(sessionId: String, message: String, images: List<ContentBlock.Image> = emptyList(), whileRunning: StreamingBehavior = StreamingBehavior.STEER, messageSource: String = "user"): Unit = owned {
         val state = deps.store.get(sessionId)?.state ?: throw app.umbra.core.session.SessionNotFoundException(sessionId)
         checkTui(sessionId)
         checkFence()
@@ -417,7 +454,7 @@ class AgentSupervisor(
         // Started by hand while it waited in the queue: it is not queued any more.
         if (state == SessionState.CREATED) deps.store.update(sessionId) { if (it.queuedAtMs != null) it.copy(queuedAtMs = null) else it }
         try {
-            sessionFor(sessionId).send(message, images, whileRunning)
+            sessionFor(sessionId).send(message, images, whileRunning, messageSource)
         } catch (e: Exception) {
             if (counted.remove(sessionId)) governor?.endSession()
             throw e
@@ -432,8 +469,8 @@ class AgentSupervisor(
         if (session != null && session.isProcessAlive) session.interrupt(message, images) else send(sessionId, message, images)
     }
 
-    suspend fun pause(sessionId: String) {
-        live[sessionId]?.pause() ?: tryApply(sessionId, SessionCommand.PAUSE, "paused by the user")
+    suspend fun pause(sessionId: String, reason: String = "paused by the user") {
+        live[sessionId]?.pause(reason) ?: tryApply(sessionId, SessionCommand.PAUSE, reason)
     }
 
     suspend fun resume(sessionId: String, note: String? = null) {

@@ -191,6 +191,30 @@ class LayaHttpEngineTest {
     }
 
     @Test
+    fun otherServersAndUnauthorizedAnswersAreNotLaya() = runBlocking<Unit> {
+        // 401, 404 and a non-Laya page on the port all used to count as "up" (security review G21).
+        for (response in listOf(MockResponse.Builder().code(401).build(), MockResponse.Builder().code(404).build(),
+            MockResponse.Builder().code(200).body("<html>router</html>").build(), MockResponse.Builder().code(200).body("""{"status":"starting"}""").build())) {
+            server.enqueue(response)
+            assertFalse(engine().isAvailable())
+        }
+    }
+
+    @Test
+    fun withAKeyEveryRequestIsAuthorizedAndOnlyTheAuthorizedHealthDetailCounts() = runBlocking<Unit> {
+        val keyed = LayaHttpEngine(server.url("/").toString(), OkHttpClient.Builder().callTimeout(3, TimeUnit.SECONDS).build(), apiKey = { "k-123" })
+        // Liveness alone is what laya-serve tells a caller without the right key: a different server instance.
+        server.enqueue(MockResponse.Builder().code(200).body("""{"status":"ok"}""").build())
+        assertFalse(keyed.isAvailable())
+        server.enqueue(MockResponse.Builder().code(200).body("""{"status":"ok","loaded":["laya-typed-decisions"]}""").build())
+        assertTrue(keyed.isAvailable())
+        repeat(2) { assertEquals("Bearer k-123", server.takeRequest(2, TimeUnit.SECONDS)!!.headers["Authorization"]) }
+        reply("""{"answers":{"dept":{"choice":"billing","confidence":0.9}}}""")
+        runCatching { keyed.decide(choice()) }
+        assertEquals("Bearer k-123", server.takeRequest(2, TimeUnit.SECONDS)!!.headers["Authorization"])
+    }
+
+    @Test
     fun cancellingTheCallerCancelsTheHttpRequestPromptly() = runBlocking<Unit> {
         server.enqueue(MockResponse.Builder().code(200).body("""{"answers":{}}""").headersDelay(10, TimeUnit.SECONDS).build())
         val e = engine(client = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build())

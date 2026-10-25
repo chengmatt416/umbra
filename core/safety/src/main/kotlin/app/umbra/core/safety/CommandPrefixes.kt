@@ -20,6 +20,9 @@ object CommandPrefixes {
         val shell = operation as? Operation.Shell ?: return null
         if (shell.asRoot || shell.stdin != null || shell.env.isNotEmpty()) return null
         val words = words(shell.command) ?: return null
+        // Screen input never earns a standing grant: the same words tap different things on different screens.
+        val program = words.first().substringAfterLast('/')
+        if (program in SHELL_SCREEN_INPUT || program == "cmd" && words.getOrNull(1) == "input") return null
         val second = words.getOrNull(1)
         val hasSubcommand = words.first().substringAfterLast('/') in subcommands && second?.matches(Regex("[A-Za-z][A-Za-z0-9_-]*")) == true
         val hasFlag = second?.matches(Regex("--?[A-Za-z][A-Za-z0-9-]*")) == true

@@ -18,6 +18,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -32,7 +34,7 @@ import org.junit.jupiter.api.io.TempDir
  * failures are handled, and that the agent can ask the user questions.
  */
 class AgentSessionTest {
-    @TempDir
+    @TempDir(factory = UuidTempDirFactory::class)
     lateinit var dir: Path
 
     private val ompBinary: File? = listOf(
@@ -49,11 +51,16 @@ class AgentSessionTest {
         securityCheck: app.umbra.core.safety.ActionSecurityCheck? = null,
         usage: UsageBudgets? = null,
         modelCost: app.umbra.runtime.omp.OmpModelCost? = null,
+        backupVision: Boolean = false,
+        mainImages: Boolean = false,
+        sessionPrompt: suspend (app.umbra.core.session.Session) -> String? = { null },
+        validateModelPayload: (kotlinx.serialization.json.JsonElement) -> Unit = { app.umbra.core.safety.ModelPayloadGuard().requireSafe(it) },
+        wrapTransport: (app.umbra.runtime.omp.OmpTransport) -> app.umbra.runtime.omp.OmpTransport = { it },
         block: suspend OrchestratorRig.() -> Unit,
     ) {
         assumeTrue(ompBinary != null, "omp is not installed; skipping the orchestrator test")
         model.use {
-            OrchestratorRig(dir, ompBinary!!, it.url, mode, governor = governor, beforeWork = beforeWork, securityCheck = securityCheck, usage = usage, modelCost = modelCost).use { rig ->
+            OrchestratorRig(dir, ompBinary!!, it.url, mode, governor = governor, beforeWork = beforeWork, securityCheck = securityCheck, usage = usage, modelCost = modelCost, backupVision = backupVision, mainImages = mainImages, sessionPrompt = sessionPrompt, validateModelPayload = validateModelPayload, wrapTransport = wrapTransport).use { rig ->
                 runBlocking {
                     try {
                         rig.block()
@@ -64,6 +71,125 @@ class AgentSessionTest {
                     }
                 }
             }
+        }
+    }
+
+    private val testImage = app.umbra.runtime.omp.ContentBlock.Image("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aONsAAAAASUVORK5CYII=", "image/png")
+
+    @Test
+    fun followUpsRefreshPrivateContextWithoutRetainingRevokedMemoryInTheSystemPrompt() {
+        var memory = "Preference: durable-memory-first"
+        val model = ScriptedModel { ScriptedModel.text("Acknowledged.") }
+        withRig(model, sessionPrompt = { memory }) {
+            val task = supervisor.launch("Remember the current preference")
+            awaitState(task.id, SessionState.COMPLETED)
+            assertTrue(model.requests.single().systemText.contains("durable-memory-first"))
+            memory = "Preference: durable-memory-next"
+            supervisor.send(task.id, "Apply the changed preference")
+            awaitState(task.id, SessionState.COMPLETED)
+            assertTrue(model.requests.last().systemText.contains("durable-memory-next"))
+            assertFalse(model.requests.last().systemText.contains("durable-memory-first"))
+            memory = ""
+            supervisor.send(task.id, "The source was revoked; continue without its facts")
+            awaitState(task.id, SessionState.COMPLETED)
+            assertFalse(model.requests.last().systemText.contains("durable-memory-next"))
+            assertEquals(3, model.requests.size)
+        }
+    }
+
+    @Test
+    fun newlyAddedVaultValuesAreRemovedFromNativeResultsBeforeHistoryAndModelCalls() {
+        val value = "opaque-new-native-vault-fixture"
+        val values = java.util.concurrent.atomic.AtomicReference<List<String>>(emptyList())
+        val file = dir.resolve("new-credential-fixture.txt").toFile().apply { writeText(value) }
+        val model = ScriptedModel { request ->
+            if (request.lastToolResult == null) {
+                values.set(listOf(value))
+                ScriptedModel.toolCall("read", "{\"path\":${kotlinx.serialization.json.JsonPrimitive(file.path)}}")
+            } else ScriptedModel.text("The current vault guard omitted that value.")
+        }
+        withRig(model, validateModelPayload = { payload -> app.umbra.core.safety.ModelPayloadGuard(app.umbra.core.safety.OutboundDlpGuard { values.get() }).requireSafe(payload) }) {
+            val task = supervisor.submit("Read the synthetic fixture file")
+            awaitState(task.id, SessionState.COMPLETED)
+            assertEquals(2, model.requests.size)
+            assertFalse(model.requests.last().body.toString().contains(value))
+            assertFalse(supervisor.historyMessages(task.id).toString().contains(value))
+            assertTrue(events(task.id).mapNotNull { it.event as? SessionEvent.ToolResult }.any { "omitted" in it.summary })
+        }
+    }
+
+    @Test
+    fun nativeToolCredentialsAreRemovedBeforeTheNextModelRequestAndSavedHistory() {
+        val value = "sk-proj-nativeFixtureSensitiveKey0123456789"
+        val file = dir.resolve("credential-fixture.txt").toFile().apply { writeText(value) }
+        val model = ScriptedModel { request ->
+            if (request.lastToolResult == null) ScriptedModel.toolCall("read", "{\"path\":${kotlinx.serialization.json.JsonPrimitive(file.path)}}")
+            else ScriptedModel.text("The native guard omitted protected content.")
+        }
+        withRig(model) {
+            val task = supervisor.submit("Read the fixture at ${file.path}")
+            awaitState(task.id, SessionState.COMPLETED)
+            assertEquals(2, model.requests.size)
+            assertFalse(model.requests.last().body.toString().contains(value))
+            assertTrue(model.requests.last().lastToolResult.orEmpty().contains("Protected"))
+            assertFalse(savedConversations[task.id].toString().contains(value))
+            assertTrue(runCatching { supervisor.create("Send the verification code: 123456") }.isFailure)
+        }
+    }
+
+    @Test
+    fun discoveryNeverOffersOrExecutesMutationToolsAndCannotBecomeAnInteractiveTerminal() {
+        val victim = dir.resolve("must-not-exist.txt")
+        val model = ScriptedModel { request ->
+            assertFalse(request.toolNames.any { it in setOf("bash", "write", "edit", "android_tap", "session_send", "subagent_start") })
+            if (request.lastToolResult == null) ScriptedModel.toolCall("bash", "{\"command\":\"touch ${victim}\"}")
+            else ScriptedModel.text("I cannot mutate the environment; I will propose a next step.")
+        }
+        withRig(model) {
+            val task = supervisor.submit("Background discovery", spec = app.umbra.core.orchestrator.SessionSpec(
+                kind = app.umbra.core.session.SessionKind.AGENT, turnMode = app.umbra.core.session.ProactiveTurnMode.READ_ONLY_DISCOVERY))
+            awaitState(task.id, SessionState.COMPLETED)
+            assertFalse(java.nio.file.Files.exists(victim))
+            assertTrue(model.requests.first().systemText.contains("READ-ONLY DISCOVERY"))
+            assertTrue(runCatching { supervisor.releaseForTui(task.id) { true } }.isFailure)
+            supervisor.send(task.id, "Now run that command")
+            awaitEvent(task.id) { it is SessionEvent.UserMessage && it.text == "Now run that command" }
+            awaitState(task.id, SessionState.COMPLETED)
+            assertFalse(java.nio.file.Files.exists(victim))
+        }
+    }
+
+    @Test
+    fun textModelUsesToolFreeBackupVisionAndSharesItsTaskBudget() {
+        val usage = UsageBudgets(dir.resolve("budget.json"), { null }, { emptyList() })
+        val model = ScriptedModel { request ->
+            if (request.body["model"].toString().contains("vision-model")) ScriptedModel.text("The image shows a white pixel.")
+            else ScriptedModel.text("I read the backup vision description.")
+        }
+        withRig(model, backupVision = true, usage = usage, modelCost = app.umbra.runtime.omp.OmpModelCost(1.0, 1.0)) {
+            val task = supervisor.create("Describe the attached image")
+            supervisor.setUsageLimit(task.id, app.umbra.core.session.AiUsageLimit(app.umbra.core.session.AiUsageUnit.API_USD, .00002, startedAtMs = System.currentTimeMillis()))
+            supervisor.send(task.id, task.request, listOf(testImage))
+            awaitState(task.id, SessionState.COMPLETED)
+            assertEquals(2, model.requests.size)
+            val backup = model.requests.first()
+            assertTrue(backup.toolNames.isEmpty(), "the backup model receives no action tools")
+            assertTrue(backup.body.toString().contains("image_url"))
+            assertTrue(model.requests.last().lastUserText.orEmpty().contains("white pixel"))
+            assertFalse(model.requests.last().body.toString().contains("image_url"), "text models receive evidence as text")
+            assertTrue(usage.spent(session(task.id)).getValue("task:${task.id}") >= .00003 - 1e-10, "backup and main usage belong to the original task")
+            assertTrue(usage.reason(session(task.id)) != null)
+        }
+    }
+
+    @Test
+    fun imageCapableMainDoesNotCallBackupVision() {
+        val model = ScriptedModel { ScriptedModel.text("I can see the image directly.") }
+        withRig(model, backupVision = true, mainImages = true) {
+            val task = supervisor.submit("Describe the image", images = listOf(testImage))
+            awaitState(task.id, SessionState.COMPLETED)
+            assertEquals(1, model.requests.size)
+            assertTrue(model.requests.single().body.toString().contains("image_url"))
         }
     }
 
@@ -135,6 +261,23 @@ class AgentSessionTest {
     }
 
     @Test
+    fun usageLimitsBlockNativeImageQuestionInferenceBeforeItCanSpend() {
+        val usage = UsageBudgets(dir.resolve("budget.json"), { null }, { emptyList() })
+        val image = dir.resolve("image.png").toFile().apply { writeBytes(java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jQ7cAAAAASUVORK5CYII=")) }
+        val model = ScriptedModel { r ->
+            if (r.lastToolResult == null) ScriptedModel.toolCall("read", "{\"path\":${kotlinx.serialization.json.JsonPrimitive(image.path + "?q=Describe+this")}}")
+            else ScriptedModel.text("Auxiliary inference was blocked.")
+        }
+        withRig(model, usage = usage, modelCost = app.umbra.runtime.omp.OmpModelCost(1.0, 1.0)) {
+            val task = supervisor.launch("Read the test image with a question", spec = SessionSpec(usageLimit = app.umbra.core.session.AiUsageLimit(app.umbra.core.session.AiUsageUnit.API_USD, 1.0, startedAtMs = 0)))
+            awaitState(task.id, SessionState.COMPLETED)
+            assertEquals(2, model.requests.size, "only the main request and its response to the blocked tool may call the provider")
+            val result = events(task.id).mapNotNull { it.event as? SessionEvent.ToolResult }.single { it.tool == "read" }
+            assertTrue(result.summary.contains("auxiliary", ignoreCase = true), result.summary)
+        }
+    }
+
+    @Test
     fun nativeUsageHookLeavesAnUnlimitedUnpricedSessionUsable() {
         val usage = UsageBudgets(dir.resolve("budget.json"), { null }, { error("Quota must not be queried") })
         val model = ScriptedModel { ScriptedModel.text("Unlimited done.") }
@@ -173,6 +316,37 @@ class AgentSessionTest {
     }
 
     // ---- lifecycle ----
+
+    @Test
+    fun newSessionStartupSurvivesTheComposerBeingDismissed() {
+        val entered = CompletableDeferred<String>()
+        val proceed = CompletableDeferred<Unit>()
+        val model = ScriptedModel { ScriptedModel.text("Started without a manual resume.") }
+        withRig(model, beforeWork = { entered.complete(it.id); proceed.await() }) {
+            val composer = scope.launch { supervisor.submit("Start the task and keep working when I open it") }
+            val id = withTimeout(10_000) { entered.await() }
+            composer.cancelAndJoin()
+            proceed.complete(Unit)
+            assertEquals("Started without a manual resume.", awaitState(id, SessionState.COMPLETED).resultSummary)
+            assertEquals(1, model.requests.size)
+        }
+    }
+
+    @Test
+    fun sendingToAPreparedSessionSurvivesLeavingItsScreen() {
+        val entered = CompletableDeferred<Unit>()
+        val proceed = CompletableDeferred<Unit>()
+        val model = ScriptedModel { ScriptedModel.text("Prepared session completed.") }
+        withRig(model, beforeWork = { entered.complete(Unit); proceed.await() }) {
+            val task = supervisor.create("Task created by the attachment picker")
+            val composer = scope.launch { supervisor.send(task.id, task.request) }
+            withTimeout(10_000) { entered.await() }
+            composer.cancelAndJoin()
+            proceed.complete(Unit)
+            assertEquals("Prepared session completed.", awaitState(task.id, SessionState.COMPLETED).resultSummary)
+            assertEquals(1, model.requests.size)
+        }
+    }
 
     @Test
     fun aTaskRunsToCompletionAndIsRecordedInTheTimeline() {
@@ -221,6 +395,24 @@ class AgentSessionTest {
             assertTrue("first request" in messages && "do it again" in messages, "the second turn sees the first: the conversation continued")
             val transitions = events(session.id).map { it.event }.filterIsInstance<SessionEvent.StateChanged>().map { it.to }
             assertEquals(listOf(SessionState.RUNNING, SessionState.COMPLETED, SessionState.RUNNING, SessionState.COMPLETED), transitions)
+        }
+    }
+
+    @Test
+    fun aTurnThatEndsWithUnfinishedDelegatesIsNotVerifiedAndNamesThem() {
+        val model = ScriptedModel { ScriptedModel.text("handed off") }
+        withRig(model) {
+            val parent = supervisor.create("coordinate")
+            val child = supervisor.create("delegated part")
+            store.update(child.id) { it.copy(spawnedBy = parent.id) }
+            supervisor.send(parent.id, "coordinate the work")
+            val done = awaitState(parent.id, SessionState.COMPLETED)
+            val receipt = done.attachments[CompletionEvidence.KEY] as kotlinx.serialization.json.JsonObject
+            val verification = receipt["verification"] as kotlinx.serialization.json.JsonObject
+            assertEquals(kotlinx.serialization.json.JsonPrimitive(false), verification["verified"])
+            assertEquals(listOf(child.id), (verification["pendingDelegates"] as kotlinx.serialization.json.JsonArray).map { (it as kotlinx.serialization.json.JsonPrimitive).content })
+            assertTrue(CompletionEvidence.awaitingDelegateReport(done), "teams and goals wait for the delegate's report")
+            assertTrue((verification["residualRisks"] as kotlinx.serialization.json.JsonArray).toString().contains("Delegated work is still active"))
         }
     }
 
@@ -466,10 +658,11 @@ class AgentSessionTest {
         }
         withRig(model) {
             val session = supervisor.launch("x")
-            awaitState(session.id, SessionState.COMPLETED)
+            awaitState(session.id, SessionState.PAUSED)
             val stored = events(session.id).joinToString("\n") { it.event.toString() }
             assertFalse("hunter2secret" in stored, "a password in a command is scrubbed before it is stored")
             assertFalse("abcdef123456" in stored)
+            assertEquals(1, model.requests.size, "protected tool arguments must never be sent back in another provider request")
         }
     }
 
@@ -616,6 +809,38 @@ class AgentSessionTest {
             val note = events(s.id).map { it.event }.filterIsInstance<SessionEvent.StateChanged>().last()
             assertTrue(note.reason.orEmpty().contains("restarted"), "the user is told why: ${note.reason}")
         }
+    }
+
+    @Test
+    fun idleReleaseCannotCloseAnAcceptedPromptBeforeItsFirstAgentEvent() {
+        val reached = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val proceed = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val model = ScriptedModel { ScriptedModel.text("Finished the accepted prompt.") }
+        try {
+            withRig(model, wrapTransport = { transport -> object : app.umbra.runtime.omp.OmpTransport by transport {
+                override suspend fun readLine(): String? {
+                    val line = transport.readLine()
+                    if (line != null && Regex("\"type\"\\s*:\\s*\"agent_start\"").containsMatchIn(line)) {
+                        reached.send(Unit)
+                        proceed.receiveCatching()
+                    }
+                    return line
+                }
+            } }) {
+                val task = supervisor.launch("First accepted prompt")
+                repeat(2) { turn ->
+                    if (turn == 1) supervisor.send(task.id, "Follow up after releasing the first process")
+                    withTimeout(60_000) { reached.receive() }
+                    assertEquals(SessionState.RUNNING, session(task.id).state)
+                    assertTrue(supervisor.isProcessAlive(task.id))
+                    assertFalse(supervisor.releaseIfIdle(task.id, 0), "A pending prompt must keep its process")
+                    proceed.send(Unit)
+                    awaitState(task.id, SessionState.COMPLETED)
+                    assertTrue(supervisor.releaseIfIdle(task.id, 0), "A settled process must still be releasable")
+                }
+                assertEquals(2, model.requests.size)
+            }
+        } finally { proceed.close(); reached.close() }
     }
 
     @Test

@@ -5,6 +5,7 @@ import app.umbra.platform.privileged.ServerException
 import app.umbra.runtime.omp.OmpTransport
 import app.umbra.runtime.omp.ProcessTransport
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.util.Base64
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -13,6 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -58,7 +60,7 @@ internal class HelperProcessTransport private constructor(
     private val maxTail: Int,
 ) : OmpTransport {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val lines = Channel<String>(Channel.UNLIMITED)
+    private val lines = Channel<String>(8)
     private val exit = CompletableDeferred<Int>()
     private val tail = ArrayDeque<String>()
 
@@ -66,14 +68,15 @@ internal class HelperProcessTransport private constructor(
 
     init {
         scope.launch {
-            val out = LineSplitter { lines.trySend(it) }
-            val err = LineSplitter { line ->
+            val out = LineSplitter(2 * 1024 * 1024) { lines.send(it) }
+            val err = LineSplitter(64 * 1024) { line ->
                 synchronized(tail) {
-                    tail.addLast(line)
+                    tail.addLast(line.take(16 * 1024))
                     while (tail.size > maxTail) tail.removeFirst()
                 }
             }
-            for (event in events) {
+            try {
+              for (event in events) {
                 (event["out"] as? JsonPrimitive)?.content?.let { out.feed(Base64.getDecoder().decode(it)) }
                 (event["err"] as? JsonPrimitive)?.content?.let { err.feed(Base64.getDecoder().decode(it)) }
                 (event["exit"] as? JsonPrimitive)?.intOrNull?.let { code ->
@@ -83,11 +86,16 @@ internal class HelperProcessTransport private constructor(
                     lines.close()
                     return@launch
                 }
+              }
+              out.flush()
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                synchronized(tail) { tail.addLast("Agent stream failed: ${e.message.orEmpty().take(300)}"); while (tail.size > maxTail) tail.removeFirst() }
+                try { client.killProc(id) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+            } finally {
+                exit.complete(-1)
+                lines.close()
             }
-            // The channel ended without an exit event: the helper went away.
-            out.flush()
-            exit.complete(-1)
-            lines.close()
         }
     }
 
@@ -117,21 +125,22 @@ internal class HelperProcessTransport private constructor(
     }
 
     /** Cuts a byte stream into lines, keeping a partial line until the rest arrives. */
-    private class LineSplitter(private val onLine: (String) -> Unit) {
+    private class LineSplitter(private val maxBytes: Int, private val onLine: suspend (String) -> Unit) {
         private val pending = ByteArrayOutputStream()
 
-        fun feed(bytes: ByteArray) {
+        suspend fun feed(bytes: ByteArray) {
             for (b in bytes) {
                 if (b == '\n'.code.toByte()) {
                     onLine(pending.toString(Charsets.UTF_8).trimEnd('\r'))
                     pending.reset()
                 } else {
+                    if (pending.size() >= maxBytes) throw IOException("Agent output line exceeds $maxBytes bytes")
                     pending.write(b.toInt())
                 }
             }
         }
 
-        fun flush() {
+        suspend fun flush() {
             if (pending.size() > 0) onLine(pending.toString(Charsets.UTF_8))
             pending.reset()
         }

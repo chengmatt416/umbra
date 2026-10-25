@@ -45,6 +45,12 @@ data class AgentProfile(
     /** When the user last read its conversation: newer agent messages count as unread. */
     val lastReadMs: Long = 0,
     val usageLimit: app.umbra.core.session.AiUsageLimit? = null,
+    val proactivityLevel: Int = 3,
+    val coordinator: Boolean = false,
+    val shareBrowserProfile: Boolean = false,
+    val morningBriefMinute: Int? = 8 * 60,
+    val eveningBriefMinute: Int? = 18 * 60,
+    val prepareMeetingMinutes: Int = 30,
 ) {
     companion object {
         const val DEFAULT_HEARTBEAT_MIN = 10
@@ -87,6 +93,10 @@ data class AgentState(
     val nextWakeMs: Long = 0,
     /** How long the agent's model worked today (its turns, measured), for the battery estimate. */
     val activeMsToday: Long = 0,
+    /** When background runs started in the last hour ([WakeBudget]). */
+    val backgroundRuns: List<Long> = emptyList(),
+    /** Work a wake had to hold back (budget spent, or the previous background run still working): it runs next time. */
+    val deferred: List<String> = emptyList(),
 )
 
 /** Two agents that wrote to each other, and the last thing said: a row of its own in the Agents list. */
@@ -114,98 +124,26 @@ object Templates {
     }
 }
 
-/** MEMORY.md: one line per thing learned, `- 2026-10-18 · source · text`, newest last. */
-class Memory(private val file: File) {
-    data class Entry(val index: Int, val date: String, val source: String, val text: String)
-
-    private val line = Regex("""^- (\d{4}-\d{2}-\d{2}) · ([^·]+?) · (.+)$""")
-
-    @Synchronized
-    fun entries(): List<Entry> = read().mapIndexedNotNull { i, l -> line.find(l)?.let { Entry(i, it.groupValues[1], it.groupValues[2].trim(), it.groupValues[3].trim()) } }
-
-    @Synchronized
-    fun add(text: String, source: String, date: LocalDate = LocalDate.now()): Entry {
-        val clean = text.replace('\n', ' ').trim().take(500)
-        require(clean.isNotEmpty()) { "empty memory" }
-        val lines = read().toMutableList()
-        if (lines.isEmpty()) lines += HEADER
-        lines += "- ${date} · ${source.replace('·', '-').trim().take(40).ifEmpty { "agent" }} · $clean"
-        write(lines)
-        return entries().last()
-    }
-
-    /** Replaces the first entry containing [old] with [new] text (same date and source). */
-    @Synchronized
-    fun edit(old: String, new: String): Boolean {
-        val lines = read().toMutableList()
-        val i = lines.indexOfFirst { l -> line.find(l)?.groupValues?.get(3)?.contains(old, ignoreCase = true) == true }
-        if (i < 0) return false
-        val m = line.find(lines[i])!!
-        lines[i] = "- ${m.groupValues[1]} · ${m.groupValues[2].trim()} · ${new.replace('\n', ' ').trim().take(500)}"
-        write(lines)
-        return true
-    }
-
-    /** Removes entries containing [text]; returns how many. */
-    @Synchronized
-    fun forget(text: String): Int {
-        val lines = read()
-        val kept = lines.filterNot { l -> line.find(l)?.groupValues?.get(3)?.contains(text, ignoreCase = true) == true }
-        write(kept)
-        return lines.size - kept.size
-    }
-
-    @Synchronized
-    fun removeAt(index: Int) {
-        val lines = read().toMutableList()
-        if (index in lines.indices) { lines.removeAt(index); write(lines) }
-    }
-
-    /** Removes entries dated from [from] to [to] (inclusive). */
-    @Synchronized
-    fun forgetBetween(from: LocalDate, to: LocalDate): Int {
-        val lines = read()
-        val kept = lines.filterNot { l -> line.find(l)?.groupValues?.get(1)?.let { d -> LocalDate.parse(d).let { it >= from && it <= to } } == true }
-        write(kept)
-        return lines.size - kept.size
-    }
-
-    @Synchronized
-    fun raw(): String = if (file.exists()) file.readText() else HEADER + "\n"
-
-    @Synchronized
-    fun setRaw(text: String) = file.writeText(text)
-
-    private fun read(): List<String> = if (file.exists()) file.readLines() else emptyList()
-
-    private fun write(lines: List<String>) {
-        file.parentFile?.mkdirs()
-        val tmp = File(file.path + ".tmp")
-        tmp.writeText(lines.joinToString("\n") + "\n")
-        tmp.renameTo(file)
-    }
-
-    companion object {
-        const val HEADER = "# Memory"
-    }
-}
-
 /**
  * The agents on this phone, each in `agents/<id>/`: profile.json, SOUL.md, MEMORY.md, timers.json, rules.json,
  * queue.json, state.json. Profiles are kept in memory (a flow for the screens); the files are the truth across
  * restarts and updates.
  */
 class AgentStore(private val root: File) {
+    private val memories = java.util.concurrent.ConcurrentHashMap<String, Memory>()
     private val mutable = MutableStateFlow(loadAll())
     val profiles: StateFlow<List<AgentProfile>> = mutable.asStateFlow()
 
     fun dir(id: String) = File(root, id)
-    fun memory(id: String) = Memory(File(dir(id), "MEMORY.md"))
+    fun memory(id: String) = memories.getOrPut(id) { Memory(File(dir(id), "MEMORY.md")) }
+    fun teamMemory() = memories.getOrPut("TEAM_MEMORY") { Memory(File(root, "TEAM_MEMORY.md")) }
     fun get(id: String): AgentProfile? = mutable.value.firstOrNull { it.id == id }
     fun bySession(sessionId: String): AgentProfile? = mutable.value.firstOrNull { it.sessionId == sessionId }
 
     @Synchronized
     fun save(profile: AgentProfile) {
+        require(profile.proactivityLevel in 0..4 && profile.prepareMeetingMinutes in 5..120)
+        require(listOfNotNull(profile.morningBriefMinute, profile.eveningBriefMinute, profile.quietStartMin, profile.quietEndMin).all { it in 0..1439 })
         val d = dir(profile.id).apply { mkdirs() }
         writeAtomic(File(d, "profile.json"), UmbraJson.encodeToString(AgentProfile.serializer(), profile))
         mutable.value = (mutable.value.filterNot { it.id == profile.id } + profile).sortedBy { it.createdAtMs }

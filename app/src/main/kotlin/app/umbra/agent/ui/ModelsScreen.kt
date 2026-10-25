@@ -208,7 +208,7 @@ private fun AddProviderDialog(existing: Set<String>, onDismiss: () -> Unit, onSa
         onDismissRequest = onDismiss,
         containerColor = pc(0xFFF2F6EF),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(P.radius),
-        title = { Text(stringResource(R.string.models_add_provider), fontFamily = P.serif, fontSize = 22.sp, color = P.ink) },
+        title = { Text(stringResource(R.string.models_add_provider), fontFamily = P.serif, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, letterSpacing = (-0.2).sp, fontSize = 22.sp, color = P.ink) },
         text = {
             Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 @OptIn(ExperimentalLayoutApi::class)

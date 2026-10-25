@@ -24,6 +24,10 @@ class SafetyGate(
     private val securityCheck: ActionSecurityCheck? = null,
     private val commandRules: () -> List<AllowRule> = { emptyList() },
     private val saveCommandRule: (AllowRule) -> Unit = {},
+    private val dlp: OutboundDlpGuard = OutboundDlpGuard(),
+    private val customRules: suspend (sessionId: String) -> List<CustomActionRule> = { emptyList() },
+    private val originalIntent: suspend (sessionId: String) -> String? = { null },
+    private val onHandoff: (ActionRequest, ActionContext) -> Unit = { _, _ -> },
 ) {
     sealed interface Outcome {
         data class Proceed(val assessment: RiskAssessment, val how: String) : Outcome
@@ -48,22 +52,47 @@ class SafetyGate(
         ctx: ActionContext = ActionContext(),
         source: ApprovalSource = ApprovalSource.HOST_TOOL,
         additionalAssessment: RiskAssessment = RiskAssessment.NONE,
+        additionalRules: List<AllowRule> = emptyList(),
     ): Outcome {
-        val baseline = classifier.assess(request, ctx) + additionalAssessment
         val sessionId = request.sessionId ?: "-"
+        val effectiveContext = ctx.copy(userIntent = originalIntent(sessionId) ?: ctx.userIntent)
+        val baseline = classifier.assess(request, effectiveContext) + additionalAssessment + dlp.assess(request.operation, effectiveContext)
         // A hard denial is final. The independent model only adds findings, never removes them.
         val assessment = if (policy().decide(request, baseline) is PolicyDecision.Deny) baseline
-            else baseline + (securityCheck?.assess(request, ctx) ?: RiskAssessment.NONE)
+            else baseline + (securityCheck?.assess(request, effectiveContext) ?: RiskAssessment.NONE)
         // Read settings after inference, so a running task observes a policy change immediately.
-        val decision = policy().decide(request, assessment, rulesFor(sessionId) + commandRules(), ctx.foregroundPackage, ctx.cwd)
+        val decision = policy().decide(request, assessment, rulesFor(sessionId) + commandRules() + additionalRules, effectiveContext.foregroundPackage, effectiveContext.cwd)
+        if (decision !is PolicyDecision.Deny) {
+            if (RiskCategory.FINANCIAL_TRANSACTION in assessment.categories && CheckoutGuard.requiresUser(effectiveContext)) {
+                onHandoff(request, effectiveContext)
+                broker.recordAutomatic(toApproval(request, assessment, effectiveContext, source), false)
+                return Outcome.Blocked(ActionResult.failure(request.id, ErrorCode.PERMISSION_DENIED, "Complete payment, card entry or verification yourself. The agent has handed control to you.", status = ActionStatus.NEEDS_USER), assessment)
+            }
+            val rule = customRules(sessionId).filter { it.matches(request, assessment, effectiveContext) }.maxByOrNull { it.disposition.ordinal }
+            if (rule?.disposition == CustomActionRule.Disposition.HANDOFF_TO_USER) {
+                onHandoff(request, effectiveContext)
+                broker.recordAutomatic(toApproval(request, assessment, effectiveContext, source), false)
+                return Outcome.Blocked(ActionResult.failure(request.id, ErrorCode.PERMISSION_DENIED, "User takeover required by rule: ${rule.description}", status = ActionStatus.NEEDS_USER), assessment)
+            }
+            if (rule?.disposition == CustomActionRule.Disposition.ALWAYS_ASK)
+                return ask(request, assessment, effectiveContext, PolicyDecision.Ask(assessment, rule.description), source)
+            val hardReview = assessment.level >= RiskLevel.CRITICAL || assessment.findings.any { it.level >= RiskLevel.HIGH && it.category in setOf(
+                RiskCategory.CREDENTIAL_SUBMISSION, RiskCategory.ACCOUNT_SECURITY_CHANGE, RiskCategory.FINANCIAL_TRANSACTION, RiskCategory.PURCHASE) }
+            if (rule != null && !hardReview && rule.disposition in setOf(CustomActionRule.Disposition.AUTO_EXECUTE, CustomActionRule.Disposition.PRE_APPROVED_SCOPE)) {
+                broker.recordAutomatic(toApproval(request, assessment, effectiveContext, source), true)
+                return Outcome.Proceed(assessment, "allowed by custom rule ${rule.id}")
+            }
+        }
         return when (decision) {
             PolicyDecision.Allow -> Outcome.Proceed(assessment, "allowed")
             is PolicyDecision.AllowByRule -> {
-                broker.recordAutomatic(toApproval(request, assessment, ctx, source), allowed = true)
+                broker.recordAutomatic(toApproval(request, assessment, effectiveContext, source), allowed = true)
                 Outcome.Proceed(assessment, "allowed by remembered approval ${decision.rule.id}")
             }
             is PolicyDecision.Deny -> {
-                broker.recordAutomatic(toApproval(request, assessment, ctx, source), allowed = false)
+                broker.recordAutomatic(toApproval(request, assessment, effectiveContext, source).let {
+                    if (RiskCategory.SECRET_EXFILTRATION in assessment.categories) it.copy(description = "Blocked outbound protected data", details = mapOf("risk" to assessment.describe())) else it
+                }, allowed = false)
                 Outcome.Blocked(
                     ActionResult.failure(
                         id = request.id,
@@ -74,7 +103,7 @@ class SafetyGate(
                     assessment,
                 )
             }
-            is PolicyDecision.Ask -> ask(request, assessment, ctx, decision, source)
+            is PolicyDecision.Ask -> ask(request, assessment, effectiveContext, decision, source)
         }
     }
 
@@ -167,6 +196,11 @@ class SafetyGate(
             ctx.foregroundPackage?.let { put("app", it) }
             ctx.targetNode?.label?.let { put("element", it) }
             put("risk", assessment.describe())
+            ctx.outboundText?.let { put("outbound_payload", it) }
+            if (RiskCategory.FINANCIAL_TRANSACTION in assessment.categories) {
+                putAll(CheckoutGuard.details(ctx))
+                put("checkout_resource", if (request.target.environment == app.umbra.core.model.action.Environment.LINUX_GUI) "gui:0" else "display:${request.target.display ?: 0}")
+            }
             (request.operation as? Operation.Shell)?.let { shell ->
                 put("command", shell.command)
                 (shell.cwd ?: ctx.cwd)?.let { put("cwd", it) }

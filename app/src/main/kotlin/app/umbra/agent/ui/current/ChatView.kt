@@ -83,13 +83,13 @@ fun UserMessage(item: ChatItem.User, actions: MessageActions) {
             Column(
                 Modifier
                     .clip(RoundedCornerShape(18.dp, 18.dp, 5.dp, 18.dp))
-                    .background(pc(0xFFDCE8D8))
-                    .border(1.dp, pc(0x6EBFD1BB), RoundedCornerShape(18.dp, 18.dp, 5.dp, 18.dp))
+                    .background(if (app.umbra.agent.ui.porcelain.Theme.mono) P.accent2 else pc(0xFFDCE8D8))
+                    .border(1.dp, if (app.umbra.agent.ui.porcelain.Theme.mono) P.accent2 else pc(0x6EBFD1BB), RoundedCornerShape(18.dp, 18.dp, 5.dp, 18.dp))
                     .combinedClickable(onClick = {}, onLongClick = { menu = true })
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
                 if (item.steering) Text(stringResource(R.string.chat_steered), fontSize = 10.sp, color = P.amber, fontWeight = FontWeight.SemiBold)
-                if (item.text.isNotBlank()) Text(item.text, fontSize = 15.sp, lineHeight = 22.sp, color = P.ink)
+                if (item.text.isNotBlank()) Text(item.text, fontSize = 15.sp, lineHeight = 22.sp, color = if (app.umbra.agent.ui.porcelain.Theme.mono) app.umbra.agent.ui.porcelain.inkOnPrimary else P.ink)
                 if (item.images.isNotEmpty()) Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     item.images.forEach { Base64Picture(it.base64, 96) }
                 }

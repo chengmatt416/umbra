@@ -130,7 +130,7 @@ model = ScriptedModel([
 ]).start()
 b.control("provider.set", {"id": "scripted", "base_url": model.url_for_emulator, "model": "scripted-model", "key": ""})
 b.control("approval_mode", {"mode": "autonomous"}); b.control("capsule.set", {"on": False})
-ui_set(b, mode="power", onboarded=True, effort="auto")
+ui_set(b, mode="power", onboarded=True, effort="auto", homeAgents=False)
 task = ("This project is in %s (an Android app, package %s). Signing in as demo / umbra123 crashes the app. Build it with ./build.sh, "
         "install the apk on the phone, reproduce the crash in a background display, read the log to find the cause, fix the source, "
         "rebuild and reinstall, and show that signing in works." % (project, FIX))

@@ -97,6 +97,9 @@ class SessionToolState(val sessionId: String?, val createdAtMs: Long = System.cu
     /** Signature of the last rendered observation per display, so an unchanged screen can be reported cheaply. */
     val lastObservation = ConcurrentHashMap<Int, Int>()
 
+    /** The windows of the last observation per display, so a screen plan can offer Laya what is actually on screen. */
+    val lastTrees = ConcurrentHashMap<Int, List<UiTree>>()
+
     /** Display the agent last acted on, used when a call names none. */
     @Volatile
     var activeDisplay: Int = 0

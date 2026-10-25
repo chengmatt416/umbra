@@ -1,5 +1,6 @@
 package app.umbra.agent.ui.home
 
+import app.umbra.agent.ui.porcelain.inkItem
 import android.text.format.DateUtils
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
@@ -33,6 +34,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -75,10 +78,12 @@ import kotlinx.coroutines.launch
  * the message field and the menu button. Nothing decorative: an empty Home is one sentence above the field.
  */
 @Composable
-fun HomeScreen(onOpenSession: (String) -> Unit, onOpenAgent: (String) -> Unit, entries: List<MenuEntry>, onAccounts: () -> Unit, onComputers: () -> Unit) {
+fun HomeScreen(onOpenSession: (String) -> Unit, onOpenAgent: (String) -> Unit, entries: List<MenuEntry>, onAccounts: () -> Unit, onComputers: () -> Unit, onOpenProactive: (String, Int) -> Unit) {
     val container = LocalContext.current.container
     val scope = rememberCoroutineScope()
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
+    val density = LocalDensity.current
+    var composerHeight by remember { mutableStateOf(0.dp) }
     val all by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
     val profiles by container.agents.store.profiles.collectAsStateWithLifecycle()
     val pairs by container.agents.store.pairsFlow.collectAsStateWithLifecycle()
@@ -107,11 +112,12 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onOpenAgent: (String) -> Unit, e
         HomeFilter.QUEUED -> listOf(null to queued)
     }
     val empty = sessions.isEmpty()
+    val today = app.umbra.agent.ui.agents.rememberAgentsToday(profiles)
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.fillMaxSize().statusBarsPadding(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 120.dp + LocalChromeBottom.current),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = maxOf(120.dp, composerHeight + 36.dp) + LocalChromeBottom.current),
             verticalArrangement = Arrangement.spacedBy(if (agentsTab) 2.dp else 10.dp),
         ) {
             // Agents | Coding (Figma 10.1/10.2); the tab remembers the last choice.
@@ -123,7 +129,7 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onOpenAgent: (String) -> Unit, e
             }
             if (agentsTab) {
                 error?.let { item(key = "error") { Callout(it, Tone.Danger) } }
-                agentRows(profiles, pairs, onOpenAgent) { container.ui.homeSheet.value = "agent" }
+                agentRows(profiles, pairs, today, onOpenAgent, { container.ui.homeSheet.value = "agent" }, onOpenProactive, onOpenSession)
                 return@LazyColumn
             }
             if (power && !empty) item(key = "filters") {
@@ -135,11 +141,12 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onOpenAgent: (String) -> Unit, e
                 }
             }
             error?.let { item(key = "error") { Callout(it, Tone.Danger) } }
+            if (empty) item(key = "tasks-empty") { NoTasks { starter -> container.ui.saveDraft(starter) } }
             shown.forEach { (heading, list) ->
                 if (heading != null && list.isNotEmpty()) item(key = "h-$heading") {
                     Text(heading, Modifier.padding(start = 4.dp, top = 8.dp), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = P.sub)
                 }
-                items(list, key = { it.id }) { s ->
+                items(list, key = { it.id }) { s -> androidx.compose.foundation.layout.Box(inkItem()) {
                     TaskRow(
                         s, power, subagents[s.id] ?: 0,
                         approval = approvals.firstOrNull { it.sessionId == s.id },
@@ -147,24 +154,15 @@ fun HomeScreen(onOpenSession: (String) -> Unit, onOpenAgent: (String) -> Unit, e
                         onOpen = { onOpenSession(s.id) },
                         onDecide = { request, decision -> container.approvals.resolve(request.id, decision) },
                     )
-                }
+                } }
             }
-        }
-
-        val listening by container.ui.listening.collectAsStateWithLifecycle()
-        if (empty && !listening && !agentsTab) {
-            Text(
-                stringResource(R.string.r_home_empty),
-                Modifier.align(Alignment.BottomStart).navigationBarsPadding().imePadding().padding(start = 24.dp, end = 24.dp, bottom = if (power) 140.dp else 100.dp),
-                fontFamily = P.serif, fontSize = 26.sp, lineHeight = 36.sp, color = P.ink,
-            )
         }
 
         MenuScrim(menu) { menu = false }
         Box(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
         ) {
-            Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth(), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { composerHeight = with(density) { it.height.toDp() } }, verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (prefs.leftHanded) MenuButton(menu, { menu = !menu })
                 val toAgent = if (agentsTab) defaultAgent else null
                 HomeComposer(

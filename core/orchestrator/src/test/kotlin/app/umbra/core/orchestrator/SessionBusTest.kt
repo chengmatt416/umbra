@@ -22,7 +22,7 @@ import org.junit.jupiter.api.io.TempDir
  * scripted, everything between the tool call and the other session's conversation is the product's.
  */
 class SessionBusTest {
-    @TempDir
+    @TempDir(factory = UuidTempDirFactory::class)
     lateinit var dir: Path
 
     private val ompBinary: File? = listOf(
@@ -112,6 +112,40 @@ class SessionBusTest {
             val subagentRequest = model.requests.first { "You are a subagent" in it.systemText }
             assertFalse("subagent_start" !in subagentRequest.toolNames && false)
             assertNotNull(awaitState(parent.id, SessionState.COMPLETED))
+        }
+    }
+
+    @Test
+    fun aCoordinatingChildReportsOnlyAfterItsDelegatesAndAggregateTurnFinish() {
+        val model = ScriptedModel { r ->
+            when {
+                r.lastUserText.orEmpty().startsWith("[Report from") -> ScriptedModel.text("Received the aggregate result.")
+                r.lastUserText == "aggregate the completed work" -> ScriptedModel.text("The checked aggregate result.")
+                else -> ScriptedModel.text("Waiting for delegated work.")
+            }
+        }
+        withRig(model) {
+            val parent = supervisor.launch("coordinate the project", title = "Coordinator")
+            awaitState(parent.id, SessionState.COMPLETED)
+            val child = supervisor.create("delegate coordination", title = "Specialist", spawnedBy = parent.id)
+            val leaf = supervisor.create("pending leaf", spawnedBy = child.id)
+            supervisor.send(child.id, "coordinate the delegated work")
+            awaitState(child.id, SessionState.COMPLETED)
+            delay(2_000)
+            assertFalse(userTexts(parent.id).any { it.startsWith("[Report from") }, "A waiting coordinator must not publish its partial answer as a finished report")
+
+            // A descendant reaching a terminal state is not an aggregate result. A fresh coordinator
+            // turn must consume its report before the parent can receive final completion.
+            supervisor.stop(leaf.id)
+            delay(1_600)
+            store.update(child.id) { it.copy(activity = "Awaiting aggregation") }
+            delay(500)
+            assertFalse(userTexts(parent.id).any { it.startsWith("[Report from") })
+            supervisor.send(child.id, "aggregate the completed work", messageSource = "report")
+            val report = awaitUserText(parent.id, "[Report from")
+            assertTrue("The checked aggregate result." in report, report)
+            delay(2_000)
+            assertEquals(1, userTexts(parent.id).count { it.startsWith("[Report from") })
         }
     }
 

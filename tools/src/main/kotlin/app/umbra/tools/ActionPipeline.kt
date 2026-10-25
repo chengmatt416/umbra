@@ -27,6 +27,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
+import app.umbra.platform.api.DispatchFence
 
 /**
  * The single path every operation takes (spec §16, §17): normalise, look at the screen, resolve the
@@ -50,21 +52,47 @@ class ActionPipeline(
      * holding the screen the operation would act on). This is the writer-side check of INV-006.
      */
     private val inputGate: suspend (request: ActionRequest, displayId: Int?, touchesDisplay: Boolean) -> String? = { _, _, _ -> null },
+    /** Changes of authority invalidate work already waiting for review, even after control is returned. */
+    private val inputEpoch: (request: ActionRequest, displayId: Int?, touchesDisplay: Boolean) -> Any? = { _, _, _ -> null },
+    private val onObservation: suspend (request: ActionRequest, displayId: Int?, epoch: Any?) -> Unit = { _, _, _ -> },
 ) {
     private val verifier = Verifier(backends, logs, clock, codec)
     private val env = PipelineEnv(backends, clock, codec, logs, decisions, verifier, leases, config, ElementTargeting(decisions))
     private val ui = UiExecutor(env)
     private val observation = ObservationExecutor(env)
     private val system = SystemExecutor(env)
-    private val displays = DisplayExecutor(env)
+    private val displays = DisplayExecutor(env, ::execute)
     private val gui = GuiExecutor(env)
     private val screen = ScreenGuard(env)
 
     suspend fun execute(request: ActionRequest, state: SessionToolState = SessionToolState(request.sessionId)): ExecutionResult {
+        val displayLaunch = (request.operation as? Operation.Display)?.takeIf { it.action == app.umbra.core.model.action.DisplayAction.LAUNCH }
+        val launchDisplay = displayLaunch?.displayId
+        val launchPackage = displayLaunch?.packageName
+        if (launchDisplay != null && launchPackage != null) {
+            return execute(request.copy(operation = Operation.LaunchApp(launchPackage, activity = displayLaunch.activity, waitForForeground = false),
+                target = request.target.copy(display = launchDisplay, app = launchPackage)), state)
+        }
         val started = clock.nowMs()
         val attempts = mutableListOf<Attempt>()
         val op = request.operation
         val displayId = effectiveDisplay(request, state)
+        val sideEffects = OperationTraits.hasSideEffects(op)
+        val touchesDisplay = OperationTraits.mutatesUi(op)
+        val admittedEpoch = if (sideEffects) inputEpoch(request, displayId, touchesDisplay) else null
+        val observationEpoch = if (op is Operation.Observe || op is Operation.Screenshot) inputEpoch(request, displayId, false) else null
+        fun checkEpoch() {
+            if (!sideEffects) return
+            if (inputEpoch(request, displayId, touchesDisplay) != admittedEpoch) {
+                throw ActionFencedException("Input authority changed while this action was waiting. Submit a fresh action after control is returned.")
+            }
+        }
+        suspend fun checkDispatch(admittedRequest: ActionRequest = request) {
+            if (!sideEffects) return
+            checkEpoch()
+            inputGate(admittedRequest, displayId, touchesDisplay)?.let { throw ActionFencedException(it) }
+            checkEpoch()
+        }
         journal.begin(request.id, request.sessionId, op.name, displayId, request.target.app)
         try {
             if (request.target.environment == Environment.LINUX_CLI) {
@@ -77,7 +105,7 @@ class ActionPipeline(
                 }
             }
             if (request.target.environment == Environment.ANDROID && displayId == 0 && touchesScreen(op)) {
-                screen.ensureUsable()?.let { problem ->
+                withContext(DispatchFence(::checkEpoch)) { screen.ensureUsable() }?.let { problem ->
                     return fail(request, started, attempts, OpOutcome.fail(ErrorCode.NOT_ACTIONABLE, problem, status = ActionStatus.NEEDS_USER))
                 }
             }
@@ -140,7 +168,8 @@ class ActionPipeline(
                 }
                 val spec = request.verify
                 val baseline = if (spec.expect is Expectation.None || op is Operation.WaitFor || op is Operation.Verify) null else baselineFor(spec.expect, request.target.environment, displayId, snapshot)
-                val c = OpContext(request, state, displayId, snapshot, primary, look.error, resolved, started, attempts)
+                val c = OpContext(request, state, displayId, snapshot, primary, look.error, resolved, started, attempts,
+                    checkDispatch = { checkDispatch(request.copy(target = request.target.copy(app = context.foregroundPackage))) }, checkEpoch = ::checkEpoch)
                 var outcome = run(c)
                 var verification: VerificationResult? = null
 
@@ -178,10 +207,13 @@ class ActionPipeline(
                     delay(request.failure.retryDelayMs)
                     continue
                 }
+                if (outcome.isOk && (verification?.passed != false || !spec.required) && (op is Operation.Observe || op is Operation.Screenshot)) onObservation(request, displayId, observationEpoch)
                 return finalResult(request, started, attempts, outcome, verification, spec.required)
             }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: ActionFencedException) {
+            return fail(request, started, attempts, OpOutcome.fail(ErrorCode.LEASE_UNAVAILABLE, e.message.orEmpty(), status = ActionStatus.NEEDS_USER))
         } catch (e: BackendException) {
             return fail(request, started, attempts, OpOutcome.fail(e.code, e.message ?: "backend failed", e.retryable))
         } catch (e: Exception) {
@@ -193,10 +225,25 @@ class ActionPipeline(
 
     // ---- stages ----
 
-    private fun effectiveDisplay(request: ActionRequest, state: SessionToolState): Int? = when {
+    /** One authority snapshot for a multi-action controller, including the time spent asking Laya. */
+    internal fun sequenceFence(request: ActionRequest, state: SessionToolState): suspend () -> Unit {
+        val display = effectiveDisplay(request, state)
+        val epoch = inputEpoch(request, display, true)
+        return {
+            if (epoch != inputEpoch(request, display, true)) throw ActionFencedException("Control changed during the screen plan; submit a fresh plan.")
+            inputGate(request, display, true)?.let { throw ActionFencedException(it) }
+            if (epoch != inputEpoch(request, display, true)) throw ActionFencedException("Control changed during screen admission; submit a fresh plan.")
+        }
+    }
+
+    private fun effectiveDisplay(request: ActionRequest, state: SessionToolState): Int? {
+      val op = request.operation
+      return when {
+        op is Operation.Display && op.action != app.umbra.core.model.action.DisplayAction.CREATE -> op.displayId ?: request.target.display
         request.target.display != null -> request.target.display
         request.target.environment == Environment.ANDROID && !OperationTraits.isSystemOnly(request.operation) -> state.activeDisplay
         else -> null
+      }
     }
 
     private fun needsSnapshot(op: Operation): Boolean =
@@ -279,7 +326,8 @@ class ActionPipeline(
         // Waiting and verifying are bounded by their own deadline plus one read of the screen.
         val slack = if (request.operation is Operation.WaitFor || request.operation is Operation.Verify) Verifier.ROUND_GRACE_MS + 5_000L else 4_000L
         return try {
-            withTimeout(request.timeoutMs + slack) {
+            withTimeout(request.timeoutMs + slack) { withContext(DispatchFence(c.checkEpoch)) {
+                c.checkDispatch()
                 when (val op = request.operation) {
                     is Operation.Observe, is Operation.Screenshot, is Operation.Find, is Operation.WaitFor, is Operation.Verify -> observation.execute(c)
                     is Operation.Shell, is Operation.Packages, is Operation.SysInfo, is Operation.Logs, is Operation.File, is Operation.Process -> system.execute(c)
@@ -287,7 +335,7 @@ class ActionPipeline(
                     is Operation.Window, is Operation.LaunchCommand -> gui.execute(c)
                     else -> ui.execute(c)
                 }
-            }
+            } }
         } catch (e: TimeoutCancellationException) {
             OpOutcome.fail(ErrorCode.TIMEOUT, "${request.operation.name} did not finish within ${request.timeoutMs}ms.", retryable = true, status = ActionStatus.TIMEOUT)
         } catch (e: BackendException) {

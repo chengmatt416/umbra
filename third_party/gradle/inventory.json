@@ -784,6 +784,17 @@
       ]
     },
     {
+      "coordinate": "com.caverock:androidsvg-aar:1.4",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "sha256": "02a5b08a2b35d2d58eb2eaca9d84ac00fb341da725fdbd653ea3ed130437e95a",
+      "notices": []
+    },
+    {
       "coordinate": "com.google.guava:listenablefuture:1.0",
       "licenses": [
         {
@@ -793,6 +804,19 @@
       ],
       "sha256": "e4ad7607e5c0477c6f890ef26a49cb8d1bb4dffb650bab4502afee64644e3069",
       "notices": []
+    },
+    {
+      "coordinate": "com.google.re2j:re2j:1.8",
+      "licenses": [
+        {
+          "name": "Go License",
+          "url": "https://golang.org/LICENSE"
+        }
+      ],
+      "sha256": "7b52c72156dd7f98b3237a5b35c1d34fba381b21048c89208913ad80a45dfbd7",
+      "notices": [
+        "notices/com.google.re2j/re2j/1.8/LICENSE"
+      ]
     },
     {
       "coordinate": "com.google.zxing:core:3.5.3",
@@ -1114,6 +1138,19 @@
       ],
       "sha256": "ebc7aec252ed0c7d2d04c039d7f00e69f7b86b1f493c741d67b3ef31b986b054",
       "notices": []
+    },
+    {
+      "coordinate": "org.jsoup:jsoup:1.23.2",
+      "licenses": [
+        {
+          "name": "The MIT License",
+          "url": "https://jsoup.org/license"
+        }
+      ],
+      "sha256": "e9d8c856856680427f096d156f02a414289985c930998fcb519ce5be39b42003",
+      "notices": [
+        "notices/org.jsoup/jsoup/1.23.2/META-INF/jsoup/LICENSE"
+      ]
     },
     {
       "coordinate": "org.jspecify:jspecify:1.0.0",

@@ -13,6 +13,7 @@ import app.umbra.runtime.omp.HostToolCall
 import app.umbra.runtime.omp.HostToolPayload
 import app.umbra.runtime.omp.OmpEvent
 import java.util.Base64
+import java.security.MessageDigest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -42,8 +43,8 @@ class TimelineRecorder(
 ) {
     private var screenshots = 0
 
-    suspend fun userMessage(text: String, imageCount: Int = 0) {
-        store.append(sessionId, SessionEvent.UserMessage(Redaction.text(text), imageCount))
+    suspend fun userMessage(text: String, imageCount: Int = 0, source: String = "user") {
+        store.append(sessionId, SessionEvent.UserMessage(Redaction.text(text), imageCount, source))
     }
 
     suspend fun notice(level: String, message: String, source: String? = null) {
@@ -95,17 +96,25 @@ class TimelineRecorder(
                 summary = Redaction.text((result?.summary ?: text).take(SUMMARY_LIMIT)),
                 backend = result?.backend,
                 durationMs = result?.durationMs?.takeIf { it > 0 } ?: durationMs,
+                data = resultMetadata(result?.data, result?.verification?.passed),
             ),
         )
-        for (image in payload.content.filterIsInstance<ContentBlock.Image>()) {
+        saveImages(callId, call.toolName, payload.content.filterIsInstance<ContentBlock.Image>())
+    }
+
+    private suspend fun saveImages(callId: String, toolName: String, images: List<ContentBlock.Image>) {
+        for (image in images) {
             val bytes = try {
                 Base64.getDecoder().decode(image.base64)
             } catch (_: IllegalArgumentException) {
                 continue
             }
             val ext = if (image.mimeType.contains("png")) "png" else "jpg"
-            val path = artifacts.save(sessionId, "shot-${++screenshots}-${callId.takeLast(8)}.$ext", bytes)
-            store.append(sessionId, SessionEvent.Observation("Screenshot from ${call.toolName}", screenshotPath = path))
+            val safeId = callId.takeLast(16).replace(Regex("[^A-Za-z0-9_-]"), "_")
+            val path = artifacts.save(sessionId, "shot-${++screenshots}-$safeId.$ext", bytes)
+            store.append(sessionId, SessionEvent.Observation("Screenshot from $toolName", screenshotPath = path,
+                screenshotSha256 = path?.let { MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) } },
+                screenshotSizeBytes = path?.let { bytes.size.toLong() }, screenshotMimeType = path?.let { image.mimeType }))
         }
     }
 
@@ -131,8 +140,16 @@ class TimelineRecorder(
                         tool = event.toolName,
                         status = if (event.isError) "failed" else "ok",
                         summary = Redaction.text(textOf(event.result).take(SUMMARY_LIMIT)),
+                        data = resultMetadata((event.result as? JsonObject)?.get("details"), null),
                     ),
                 )
+                val images = ((event.result as? JsonObject)?.get("content") as? JsonArray).orEmpty().mapNotNull { block ->
+                    val b = block as? JsonObject ?: return@mapNotNull null
+                    if ((b["type"] as? JsonPrimitive)?.content != "image") null else (b["data"] as? JsonPrimitive)?.content?.let { data ->
+                        ContentBlock.Image(data, (b["mimeType"] as? JsonPrimitive)?.content ?: "image/png")
+                    }
+                }
+                saveImages(event.toolCallId, event.toolName, images)
                 if (event.toolName == "todo") return PlanParser.from(event.result)
             }
             is OmpEvent.Notice -> store.append(sessionId, SessionEvent.Notice(event.level, Redaction.text(event.message), event.source))
@@ -155,6 +172,11 @@ class TimelineRecorder(
 
     companion object {
         const val SUMMARY_LIMIT = 600
+        private fun resultMetadata(data: JsonElement?, verified: Boolean?): JsonObject? {
+            val values = (data as? JsonObject).orEmpty().filter { (k, v) -> k in setOf("exitCode", "truncated", "cancelled", "timedOut") && v is JsonPrimitive }
+            if (values.isEmpty() && verified == null) return null
+            return JsonObject(values + if (verified == null) emptyMap() else mapOf("verificationPassed" to JsonPrimitive(verified)))
+        }
 
         fun statusName(status: ActionStatus?, isError: Boolean): String = when (status) {
             ActionStatus.OK -> "ok"

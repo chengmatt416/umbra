@@ -40,6 +40,8 @@ data class InputLease(
     val reason: String? = null,
     /** The runner instance the lease was granted against (tmux server epoch, display id, …). */
     val runnerEpoch: String? = null,
+    val needsObservation: Boolean = false,
+    val lastAgentId: String? = null,
 ) {
     val id: String get() = resourceId.replace(':', '_').replace('/', '_')
 
@@ -53,6 +55,8 @@ sealed interface LeaseCheck {
 }
 
 class InputLeases(private val store: ControlStore, private val lockdown: () -> String? = { null }) {
+    private val revisions = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val allRevisions = java.util.concurrent.atomic.AtomicLong()
     private val docs = store.docs("leases", InputLease.serializer(), InputLease::id)
     private val timeline = store.journal("control-timeline")
 
@@ -63,8 +67,13 @@ class InputLeases(private val store: ControlStore, private val lockdown: () -> S
 
     fun current(resourceId: String): InputLease? = docs.list().firstOrNull { it.resourceId == resourceId }
 
+    /** Process-local fencing for in-flight actions, including deletion and recreation of a lease. */
+    fun revision(resourceId: String? = null): Long = if (resourceId == null) allRevisions.get() else revisions[resourceId] ?: 0L
+
     private fun put(lease: InputLease, event: String, by: Principal?, detail: String? = null): InputLease {
         docs.put(lease)
+        revisions.merge(lease.resourceId, 1L, Long::plus)
+        allRevisions.incrementAndGet()
         timeline.append(event, buildJsonObject {
             put("resource", lease.resourceId)
             put("generation", lease.generation)
@@ -91,7 +100,8 @@ class InputLeases(private val store: ControlStore, private val lockdown: () -> S
             }
             else -> Result.success(
                 put(
-                    InputLease(resourceId, principal, (cur?.generation ?: 0) + 1, LeaseState.ACTIVE, now, ttlMs?.let { now + it }, null, reason, runnerEpoch),
+                    InputLease(resourceId, principal, (cur?.generation ?: 0) + 1, LeaseState.ACTIVE, now, ttlMs?.let { now + it }, null, reason, runnerEpoch,
+                        needsObservation = cur?.needsObservation == true, lastAgentId = if (principal.isUser) cur?.lastAgentId else principal.id),
                     "acquire", principal, reason,
                 ),
             )
@@ -100,10 +110,11 @@ class InputLeases(private val store: ControlStore, private val lockdown: () -> S
 
     /** Immediate override (§6.1 "Immediate Override"): the user owns input now; the old owner's generation is fenced. */
     @Synchronized
-    fun takeBack(resourceId: String, reason: String = "taken back by the user", runnerEpoch: String? = null): InputLease {
+    fun takeBack(resourceId: String, reason: String = "taken back by the user", runnerEpoch: String? = null, lastAgentId: String? = null): InputLease {
         val cur = current(resourceId)
         val now = store.clock.nowMs()
-        return put(InputLease(resourceId, Principal.User, (cur?.generation ?: 0) + 1, LeaseState.ACTIVE, now, null, null, reason, runnerEpoch ?: cur?.runnerEpoch), "takeback", Principal.User, cur?.owner?.let { "fenced $it" })
+        return put(InputLease(resourceId, Principal.User, (cur?.generation ?: 0) + 1, LeaseState.ACTIVE, now, null, null, reason, runnerEpoch ?: cur?.runnerEpoch,
+            needsObservation = true, lastAgentId = lastAgentId ?: cur?.owner?.takeUnless { it.isUser }?.id ?: cur?.lastAgentId), "takeback", Principal.User, cur?.owner?.let { "fenced $it" })
     }
 
     /** Coordinated handoff: the agent is asked to stop at its next safe point; the user can still [takeBack] at once. */
@@ -126,7 +137,27 @@ class InputLeases(private val store: ControlStore, private val lockdown: () -> S
     @Synchronized
     fun grant(resourceId: String, to: Principal, reason: String = "returned by the user"): InputLease {
         val cur = current(resourceId)
-        return put(InputLease(resourceId, to, (cur?.generation ?: 0) + 1, LeaseState.ACTIVE, store.clock.nowMs(), null, null, reason, cur?.runnerEpoch), "restore", Principal.User, reason)
+        return put(InputLease(resourceId, to, (cur?.generation ?: 0) + 1, LeaseState.ACTIVE, store.clock.nowMs(), null, null, reason, cur?.runnerEpoch,
+            needsObservation = cur?.needsObservation == true, lastAgentId = if (to.isUser) cur?.lastAgentId else to.id), "restore", Principal.User, reason)
+    }
+
+    /** A read started before takeover or while the user still holds input cannot authorize new actions. */
+    @Synchronized fun observed(resourceId: String, by: Principal, expectedRevision: Long): Boolean {
+        val cur = current(resourceId) ?: return false
+        if (by.isUser || !cur.needsObservation || revision(resourceId) != expectedRevision || cur.owner?.isUser == true || cur.owner?.let { it != by } == true) return false
+        if (cur.lastAgentId != null && cur.lastAgentId != by.id) return false
+        put(cur.copy(needsObservation = false), "observed", by, "fresh observation after user takeover")
+        return true
+    }
+
+    /** Deletion fences the old actor without taking a user-held screen away from the person. */
+    @Synchronized fun forgetSession(sessionId: String) {
+        all.value.values.filter { it.owner == Principal.agent(sessionId) || it.lastAgentId == sessionId }.forEach { lease ->
+            val owned = lease.owner == Principal.agent(sessionId)
+            put(lease.copy(owner = if (owned) null else lease.owner, state = if (owned) LeaseState.RELEASED else lease.state,
+                generation = lease.generation + 1, lastAgentId = null, needsObservation = true, handoffTo = null, expiresAtMs = if (owned) null else lease.expiresAtMs),
+                "forget", null, "the owning task was deleted; a new actor must observe the screen")
+        }
     }
 
     /** The runner behind the resource went away or restarted: the lease can no longer be vouched for. */
@@ -145,7 +176,12 @@ class InputLeases(private val store: ControlStore, private val lockdown: () -> S
     /** Removes the record of a resource that no longer exists (a closed terminal). */
     @Synchronized
     fun forget(resourceId: String) {
-        current(resourceId)?.let { docs.delete(it.id); timeline.append("revoked", buildJsonObject { put("resource", resourceId); put("detail", "resource closed") }) }
+        current(resourceId)?.let {
+            docs.delete(it.id)
+            revisions.merge(resourceId, 1L, Long::plus)
+            allRevisions.incrementAndGet()
+            timeline.append("revoked", buildJsonObject { put("resource", resourceId); put("detail", "resource closed") })
+        }
     }
 
     /**

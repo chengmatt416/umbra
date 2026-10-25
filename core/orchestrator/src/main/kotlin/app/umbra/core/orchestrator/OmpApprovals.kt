@@ -70,6 +70,10 @@ class OmpApprovalBridge(
     private val questions: UserQuestions,
     /** Non-null during an emergency input lockdown: every tool omp asks about is denied (§8.2). */
     private val fence: () -> String? = { null },
+    /** Connector-first routing (§9.1): a route returned here refuses the UI-driving call. */
+    private val route: suspend (OmpApprovalPrompt) -> ConnectorRouting.Route? = { null },
+    /** Tells the model why a call was routed away (omp itself only reports a denial). */
+    private val onRouted: suspend (ConnectorRouting.Route) -> Unit = {},
 ) : UiRequestHandler {
     private val counter = AtomicLong()
 
@@ -77,6 +81,10 @@ class OmpApprovalBridge(
         val prompt = (request as? UiRequest.Select)?.takeIf { APPROVE in it.options && DENY in it.options }?.let { OmpApprovalPrompt.parse(it.title) }
             ?: return questions.ask(sessionId, request)
         if (fence() != null) return UiResponse.Value(DENY)
+        route(prompt)?.let { routed ->
+            onRouted(routed)
+            return UiResponse.Value(DENY)
+        }
         val action = ActionRequest(
             id = "omp-${prompt.tool}-${counter.incrementAndGet()}",
             operation = operationFor(prompt),

@@ -51,9 +51,23 @@ class UiState(context: Context) {
     /** A sheet Home should open ("agent", "coding"), asked for from elsewhere (the Capsule, a link). */
     val homeSheet = MutableStateFlow<String?>(null)
 
+    @Synchronized
     fun saveDraft(text: String) {
         draft.value = text
         prefs.edit().putString(KEY_DRAFT, text).apply()
+    }
+
+    @Synchronized
+    fun takeDraftForSend(text: String): String? {
+        val current = draft.value
+        if (current.trim() != text.trim()) return null
+        saveDraft("")
+        return current
+    }
+
+    @Synchronized
+    fun restoreDraftAfterFailedSend(original: String?) {
+        if (original != null && draft.value.isEmpty()) saveDraft(original)
     }
 
     /** Attaches [chip]. One snapshot at a time (§3.1): a new selection replaces the previous one. */

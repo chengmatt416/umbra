@@ -5,16 +5,20 @@ import android.os.Looper
 /**
  * Entry point of the privileged helper, run with `app_process` (see [ServerLauncher] in the app):
  *
- *     CLASSPATH=/data/app/.../base.apk app_process /system/bin app.umbra.platform.server.ServerMain --port 47100 --token <secret>
+ *     UMBRA_HELPER_TOKEN=<secret> CLASSPATH=/data/app/.../base.apk app_process /system/bin app.umbra.platform.server.ServerMain --port 47100
  *
  * It runs on the main looper, where display calls must be made, and serves until told to shut down.
  */
 object ServerMain {
+    const val TOKEN_ENV = "UMBRA_HELPER_TOKEN"
+
     @JvmStatic
     fun main(args: Array<String>) {
         val options = args.toList().windowed(2, 1).filter { it[0].startsWith("--") }.associate { it[0].removePrefix("--") to it[1] }
-        val token = options["token"] ?: run {
-            System.err.println("usage: ServerMain --port <port> --token <secret>")
+        // The token comes from the environment, which only this user can read; a `--token` argument would sit in the
+        // world-readable process command line for the helper's whole life (security review G17). Kept for old scripts.
+        val token = System.getenv(TOKEN_ENV)?.takeIf { it.isNotEmpty() } ?: options["token"] ?: run {
+            System.err.println("usage: $TOKEN_ENV=<secret> ServerMain --port <port>")
             return
         }
         val port = options["port"]?.toIntOrNull() ?: 0

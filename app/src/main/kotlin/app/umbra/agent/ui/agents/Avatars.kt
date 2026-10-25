@@ -71,8 +71,8 @@ fun AgentAvatar(avatar: String, name: String, size: Dp, modifier: Modifier = Mod
         }
         return
     }
-    val bg = pc(spec.background)
-    val ink = pc(spec.ink)
+    val bg = app.umbra.agent.ui.porcelain.pcGrey(spec.background)
+    val ink = app.umbra.agent.ui.porcelain.pcGrey(spec.ink)
     Canvas(base.background(bg)) { drawMotif(spec.motif, ink, bg) }
 }
 

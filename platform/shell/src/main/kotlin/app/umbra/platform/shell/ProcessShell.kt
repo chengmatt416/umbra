@@ -19,6 +19,7 @@ import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 
 /**
@@ -67,16 +68,20 @@ class ProcessShell(
     }
 
     override fun stream(request: ShellRequest): Flow<ShellEvent> = channelFlow {
+        require(request.timeoutMs > 0 && request.maxOutputBytes > 0) { "A stream needs a positive timeout and line limit" }
         val process = try {
             start(prefix, request)
         } catch (e: IOException) {
             throw BackendException(ErrorCode.BACKEND_UNAVAILABLE, "cannot start $name: ${e.message}", cause = e)
         }
         feedStdin(process, request)
-        val out = launch(Dispatchers.IO) { pump(process.inputStream) { ShellEvent.Out(it) } }
-        val err = launch(Dispatchers.IO) { pump(process.errorStream) { ShellEvent.Err(it) } }
+        val lineLimit = request.maxOutputBytes.coerceIn(1, 64 * 1024)
+        val out = launch(Dispatchers.IO) { pump(process, process.inputStream, lineLimit) { ShellEvent.Out(it) } }
+        val err = launch(Dispatchers.IO) { pump(process, process.errorStream, lineLimit) { ShellEvent.Err(it) } }
         val waiter = launch(Dispatchers.IO) {
-            val code = process.waitFor()
+            val finished = if (request.timeoutMs == Long.MAX_VALUE) { process.waitFor(); true } else process.waitFor(request.timeoutMs, TimeUnit.MILLISECONDS)
+            if (!finished) killTree(process)
+            val code = if (finished) process.exitValue() else TIMEOUT_EXIT_CODE
             out.join()
             err.join()
             send(ShellEvent.Exit(code))
@@ -95,19 +100,25 @@ class ProcessShell(
      * pipes under a blocked read, which Android reports as an `InterruptedIOException`; that is the end of the
      * stream, not a failure, and left uncaught it would take down a helper process that outlives the stream.
      */
-    private suspend fun ProducerScope<ShellEvent>.pump(pipe: java.io.InputStream, event: (String) -> ShellEvent) {
+    private suspend fun ProducerScope<ShellEvent>.pump(process: Process, pipe: java.io.InputStream, lineLimit: Int, event: (String) -> ShellEvent) {
         try {
-            val reader = pipe.bufferedReader()
-            while (true) send(event(reader.readLine() ?: break))
-        } catch (_: IOException) {
-            // Closed by killTree or by the process's own end: nothing more to read.
+            val reader = app.umbra.platform.api.BoundedLineReader(pipe, strictUtf8 = false)
+            while (true) send(event(reader.readLine(lineLimit) ?: break))
+        } catch (e: IOException) {
+            if (isActive && process.isAlive) {
+                killTree(process)
+                send(ShellEvent.Err("Stream stopped: ${e.message}"))
+            }
         }
     }
 
     private class Run(val exitCode: Int, val stdout: ByteArray, val stderr: ByteArray, val truncated: Boolean, val timedOut: Boolean)
 
-    private fun start(prefix: List<String>, request: ShellRequest): Process =
-        ProcessBuilder(prefix + wrap(compose(request))).redirectErrorStream(false).start()
+    private suspend fun start(prefix: List<String>, request: ShellRequest): Process {
+        val builder = ProcessBuilder(prefix + wrap(compose(request))).redirectErrorStream(false)
+        app.umbra.platform.api.DispatchFence.checkCurrent()
+        return builder.start()
+    }
 
     /** cwd and environment are applied by the shell itself so the same code works over `su` and `adb`. */
     internal fun compose(request: ShellRequest): String = buildString {
@@ -146,7 +157,7 @@ class ProcessShell(
         }
     }
 
-    private fun runProcess(prefix: List<String>, request: ShellRequest): Run {
+    private suspend fun runProcess(prefix: List<String>, request: ShellRequest): Run {
         val process = try {
             start(prefix, request)
         } catch (e: IOException) {

@@ -19,6 +19,10 @@
 
     <string name="r_home_title">任務</string>
     <string name="r_home_empty">想讓手機幫你做什麼？</string>
+    <string name="r_home_empty_body">任務在手機上或它的 Linux 裡執行：可以操作 App、寫程式並執行，遇到重要的事會先問你。</string>
+    <string name="r_home_starter_1">整理我未讀的通知</string>
+    <string name="r_home_starter_2">做一個小網頁給我看</string>
+    <string name="r_home_starter_3">開啟勿擾模式到早上 8 點</string>
     <string name="r_home_recent">最近</string>
     <string name="r_home_all">全部 %1$d</string>
     <string name="r_home_needs">等你 %1$d</string>
@@ -186,7 +190,7 @@
     <string name="r_voice_nothing">沒聽清楚，再說一次。</string>
     <string name="r_voice_needs_mic">Umbra 需要麥克風才能聽到你。</string>
     <string name="r_voice_offline">語音辨識目前需要網路連線。</string>
-    <string name="r_voice_language">這支手機的語音辨識不支援這個語言。</string>
+    <string name="r_voice_language">此語言目前無法辨識。請在手機的語音辨識設定安裝對應語言套件後再試。</string>
     <string name="r_voice_busy">語音辨識忙碌中，請稍後再試。</string>
     <string name="r_voice_stopped">語音辨識停止了，請再試一次。</string>
     <string name="r_voice_unavailable">這支手機沒有語音辨識功能。</string>

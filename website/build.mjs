@@ -7,8 +7,19 @@ const V = Date.now().toString(36);
 const SITE = process.env.SITE_URL || 'https://umbra-agent.pages.dev';
 const sha = APK.sha256;
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const mark = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8fa88f"/><stop offset="1" stop-color="#476d54"/></linearGradient></defs><circle cx="16" cy="16" r="14" fill="url(#g)"/><circle cx="21.5" cy="12" r="10.5" fill="#e9ede5" opacity=".92" style="mix-blend-mode:normal"/></svg>`;
+const mark = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4a4a4a"/><stop offset="1" stop-color="#050505"/></linearGradient></defs><circle cx="16" cy="16" r="14" fill="url(#g)"/><circle cx="21.5" cy="12" r="10.5" style="fill:var(--base)"/></svg>`;
 const dlIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 20h16"/></svg>`;
+const tileIcons = {
+  levels: '<path d="M4 18h3v-4H4zM10.5 18h3V9h-3zM17 18h3V5h-3z"/>',
+  teach: '<path d="M4 4h16v11H4z"/><path d="M8 20h8M12 15v5"/><circle cx="12" cy="9.5" r="2.2"/>',
+  tool: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L4 16.8V20h3.2l5.3-5.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>',
+  plug: '<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/>',
+  team: '<circle cx="9" cy="8" r="3"/><circle cx="17" cy="9.5" r="2.4"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M14 19a4 4 0 0 1 7 0"/>',
+  send: '<path d="M21 3 3 10.5l7 2.5 2.5 7z"/><path d="m10 13 4.5-4.5"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
+  check: '<path d="m4.5 12.5 4.5 4.5L19.5 6.5"/>',
+};
+const tileIcon = (k) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${tileIcons[k] || ''}</svg>`;
 const legalLinks = (zh) => `<a href="/privacy/">${zh ? '隱私政策' : 'Privacy'}</a> · <a href="/policy/">${zh ? '使用政策' : 'Use policy'}</a> · <a href="/licenses/">${zh ? '授權與致謝' : 'Licenses & notices'}</a>`;
 
 function page(t, other) {
@@ -31,7 +42,7 @@ function page(t, other) {
 <link rel="canonical" href="${url}">${alt}
 <meta property="og:type" content="website"><meta property="og:title" content="${esc(t.title)}"><meta property="og:description" content="${esc(t.description)}"><meta property="og:url" content="${url}"><meta property="og:image" content="${SITE}/og.png"><meta property="og:locale" content="${t.lang === 'en' ? 'en_US' : 'zh_TW'}">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="theme-color" content="#e9ede5" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#1c2823" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f6f4" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@500;600;700&family=Noto+Serif:wght@400;600&display=swap">
@@ -56,7 +67,7 @@ function page(t, other) {
     <p class="meta">${esc(t.hero.meta)}</p>
     <ul class="pills">${t.hero.pills.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>
   </div>
-  <div class="phone" role="img" aria-label="Umbra"><div class="screen"><img class="poster on" src="/clips/say.jpg" alt=""><video class="on" data-autoplay muted loop playsinline preload="metadata" poster="/clips/say.jpg" src="/clips/say.mp4" aria-hidden="true"></video></div></div>
+  <div class="phone" role="img" aria-label="Umbra"><div class="screen"><img class="poster on" src="/clips/agents.jpg" alt=""><video class="on" data-autoplay muted loop playsinline preload="metadata" poster="/clips/agents.jpg" src="/clips/agents.mp4" aria-hidden="true"></video></div></div>
 </div></section>
 
 <section class="story" id="story"><div class="wrap">
@@ -66,6 +77,11 @@ function page(t, other) {
     <div class="steps">${chapters}</div>
   </div>
   <p class="story-note">${esc(t.story.note)}</p>
+</div></section>
+
+<section class="more" id="more"><div class="wrap">
+  <p class="eyebrow">${esc(t.more.eyebrow)}</p><h2>${esc(t.more.title)}</h2>
+  <div class="bento">${t.more.items.map(([icon, h, p, cls]) => `<div class="tile reveal ${cls}"><div class="ic">${tileIcon(icon)}</div><h3>${esc(h)}</h3><p>${esc(p)}</p>${icon === 'levels' ? `<div class="levels">${['L0', 'L1', 'L2', 'L3', 'L4'].map((l) => `<span class="${l === 'L3' ? 'on' : ''}">${l}</span>`).join('')}</div>` : ''}</div>`).join('')}</div>
 </div></section>
 
 <section class="block" id="start"><div class="wrap">
@@ -115,7 +131,7 @@ writeFileSync('dist/index.html', `<!doctype html><html lang="en"><head><meta cha
 <link rel="canonical" href="${SITE}/"><link rel="alternate" hreflang="en" href="${SITE}/en/"><link rel="alternate" hreflang="zh-Hant-TW" href="${SITE}/zh-tw/"><link rel="alternate" hreflang="x-default" href="${SITE}/">
 <meta property="og:image" content="${SITE}/og.png"><meta name="robots" content="noindex,follow">
 <script>(function(){var p;try{p=localStorage.getItem('umbra-lang')}catch(e){}if(!p){var l=(navigator.languages||[navigator.language||'']).join(',').toLowerCase();p=/zh/.test(l)?'zh-tw':'en'}location.replace('/'+p+'/'+location.hash)})()</script>
-<style>body{font:18px/1.6 system-ui,sans-serif;background:#e9ede5;color:#32443a;display:grid;place-items:center;min-height:100vh;margin:0}a{color:#476d54;font-weight:600;margin:0 12px}</style></head>
+<style>body{font:18px/1.6 system-ui,sans-serif;background:#f6f6f4;color:#0b0b0b;display:grid;place-items:center;min-height:100vh;margin:0}a{color:#0b0b0b;font-weight:600;margin:0 12px}@media(prefers-color-scheme:dark){body{background:#000;color:#f3f3f1}a{color:#f3f3f1}}</style></head>
 <body><p><a href="/zh-tw/">繁體中文</a> · <a href="/en/">English</a></p></body></html>`);
 cpSync('src/site.css', 'dist/site.css');
 cpSync('src/story.js', 'dist/story.js');
@@ -157,5 +173,5 @@ if (APK.bytes > 0 && /^[0-9a-f]{64}$/.test(APK.sha256) && APK.versionCode > 0 &&
 } else console.warn(`src/apk.json does not describe umbra-${APK.version}.apk: dist/update.json not written`);
 writeFileSync('dist/robots.txt', `User-agent: *\nAllow: /\nDisallow: /download/\nSitemap: ${SITE}/sitemap.xml\n`);
 writeFileSync('dist/sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">${['en', 'zh-tw'].map((k) => `<url><loc>${SITE}${L[k].path}</loc><xhtml:link rel="alternate" hreflang="en" href="${SITE}/en/"/><xhtml:link rel="alternate" hreflang="zh-Hant-TW" href="${SITE}/zh-tw/"/></url>`).join('')}</urlset>`);
-writeFileSync('dist/_headers', `/node/install.sh\n  Content-Type: text/plain; charset=utf-8\n  Cache-Control: no-cache\n/node/minisign.pub\n  Content-Type: text/plain; charset=utf-8\n/update.json\n  Cache-Control: no-cache\n  Access-Control-Allow-Origin: *\n/models.json\n  Cache-Control: no-cache\n  Access-Control-Allow-Origin: *\n/clips/*\n  Cache-Control: public, max-age=604800\n/site.css\n  Cache-Control: public, max-age=3600\n/story.js\n  Cache-Control: public, max-age=3600\n/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n`);
+writeFileSync('dist/_headers', `/.well-known/assetlinks.json\n  Content-Type: application/json; charset=utf-8\n  Cache-Control: public, max-age=3600\n/credential-handoff*\n  Cache-Control: no-store\n  X-Frame-Options: DENY\n  X-Robots-Tag: noindex, nofollow, noarchive\n  Permissions-Policy: camera=(), microphone=(), geolocation=()\n  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\n/node/install.sh\n  Content-Type: text/plain; charset=utf-8\n  Cache-Control: no-cache\n/node/minisign.pub\n  Content-Type: text/plain; charset=utf-8\n/update.json\n  Cache-Control: no-cache\n  Access-Control-Allow-Origin: *\n/models.json\n  Cache-Control: no-cache\n  Access-Control-Allow-Origin: *\n/clips/*\n  Cache-Control: public, max-age=604800\n/site.css\n  Cache-Control: public, max-age=3600\n/story.js\n  Cache-Control: public, max-age=3600\n/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n`);
 console.log('built dist/');

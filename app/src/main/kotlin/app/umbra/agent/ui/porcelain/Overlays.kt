@@ -98,7 +98,7 @@ object GlassOverlays {
 
 /** True when dialogs here are drawn in-window as glass (a non-Porcelain theme, in the window that hosts them). */
 @Composable
-fun inWindowOverlays(): Boolean = !Theme.current.porcelain && GlassOverlays.hostView === LocalView.current
+fun inWindowOverlays(): Boolean = !Theme.current.plain && GlassOverlays.hostView === LocalView.current
 
 /** Registers a dialog or sheet with the host for as long as the caller is composed; back dismisses it. */
 @Composable

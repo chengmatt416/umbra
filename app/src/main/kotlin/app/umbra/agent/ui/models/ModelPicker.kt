@@ -65,7 +65,7 @@ fun modelLabel(prefs: AppPrefs, directory: ModelDirectory): String {
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun ModelPicker(onDismiss: () -> Unit, onConnect: () -> Unit, picked: ModelRef? = null, onPick: ((ModelRef?) -> Unit)? = null) {
+fun ModelPicker(onDismiss: () -> Unit, onConnect: () -> Unit, picked: ModelRef? = null, onPick: ((ModelRef?) -> Unit)? = null, imagesOnly: Boolean = false) {
     val container = LocalContext.current.container
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
     val directory by container.modelDirectory.directory.collectAsStateWithLifecycle()
@@ -82,28 +82,28 @@ fun ModelPicker(onDismiss: () -> Unit, onConnect: () -> Unit, picked: ModelRef? 
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = pc(0xFFFBFDF7)) {
         Column(Modifier.fillMaxWidth().heightIn(max = 620.dp).verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 28.dp)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.r_model_title), Modifier.weight(1f), fontSize = 20.sp, fontWeight = FontWeight.Medium, color = P.ink)
+                Text(stringResource(if (imagesOnly) R.string.backup_vision_title else R.string.r_model_title), Modifier.weight(1f), fontSize = 20.sp, fontWeight = FontWeight.Medium, color = P.ink)
                 Text(
                     if (updatedAt > 0) stringResource(R.string.r_model_updated, DateUtils.getRelativeTimeSpanString(updatedAt, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString())
                     else stringResource(R.string.r_model_bundled),
                     fontSize = 12.sp, color = P.muted,
                 )
             }
-            Option(stringResource(R.string.r_model_auto), stringResource(R.string.r_model_auto_body), chosen == null, enabled = true, mono = false) { choose(null) }
+            Option(stringResource(if (imagesOnly) R.string.backup_vision_off else R.string.r_model_auto), stringResource(if (imagesOnly) R.string.backup_vision_body else R.string.r_model_auto_body), chosen == null, enabled = true, mono = false) { choose(null) }
             // A provider the directory lists twice (an account and a key, both "OpenAI") shows once unless both are connected.
             val providers = directory.providers.filter { p -> p.id in connected || directory.providers.none { o -> o !== p && o.label == p.label && o.id in connected } && directory.providers.first { it.label == p.label } === p }
             providers.forEach { p ->
                 val on = p.id in connected
                 Group(stringResource(if (on) R.string.r_model_connected else R.string.r_model_connect_first, p.label))
-                p.models.forEach { m ->
+                p.models.filter { !imagesOnly || it.images }.forEach { m ->
                     Option(m.name, null, chosen == ModelRef(p.id, m.id), enabled = on, mono = false) { if (on) choose(ModelRef(p.id, m.id)) else onConnect() }
                 }
             }
-            prefs.providers.filter { it.custom && it.models.isNotEmpty() }.forEach { p ->
+            prefs.providers.filter { it.custom && it.models.isNotEmpty() && (!imagesOnly || it.images) }.forEach { p ->
                 Group(stringResource(R.string.r_model_connected, p.label))
                 p.models.forEach { id -> Option(id, null, chosen == ModelRef(p.id, id), enabled = true, mono = true) { choose(ModelRef(p.id, id)) } }
             }
-            Row(
+            if (!imagesOnly) Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable(role = Role.Button) { if (connected.isEmpty()) onConnect() else other = true }.padding(horizontal = 12.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -145,7 +145,7 @@ private fun OtherModelDialog(onDismiss: () -> Unit, onUse: (ModelRef) -> Unit) {
     var id by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.r_model_other_title), fontFamily = P.serif, fontSize = 22.sp, color = P.ink) },
+        title = { Text(stringResource(R.string.r_model_other_title), fontFamily = P.serif, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, letterSpacing = (-0.2).sp, fontSize = 22.sp, color = P.ink) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (prefs.providers.isEmpty()) Text(stringResource(R.string.r_model_other_none), fontSize = 14.sp, color = P.sub)

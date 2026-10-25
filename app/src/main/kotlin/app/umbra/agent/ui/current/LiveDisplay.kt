@@ -116,8 +116,8 @@ private fun LiveHeader(session: Session, target: LiveTarget) {
             stringResource(R.string.r_task_live, stringResource(if (target is LiveTarget.Linux) R.string.r_task_live_linux else R.string.r_task_live_phone)),
             Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = P.ink,
         )
-        if (userHolds) PButton(stringResource(R.string.r_task_give_back), { container.inputLeases.release(target.resource, Principal.User, "returned by the user") }, style = ButtonStyle.Alt, tiny = true)
-        else PButton(stringResource(R.string.r_task_take_over), { container.inputLeases.takeBack(target.resource) }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.hand)
+        if (userHolds) PButton(stringResource(R.string.r_task_give_back), { container.returnControl(target.resource, session.id) }, style = ButtonStyle.Alt, tiny = true)
+        else PButton(stringResource(R.string.r_task_take_over), { container.takeOver(target.resource, session.id) }, style = ButtonStyle.Alt, tiny = true, icon = PIcons.hand)
     }
 }
 

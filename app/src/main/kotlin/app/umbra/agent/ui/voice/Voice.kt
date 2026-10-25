@@ -2,11 +2,9 @@ package app.umbra.agent.ui.voice
 
 import android.Manifest
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -97,8 +95,13 @@ class VoiceListener(private val context: Context) {
 
     fun start() {
         release()
+        mutableLevel.value = 0f
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            mutable.value = State.Failed(R.string.r_voice_unavailable)
+            return
+        }
         val r = runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull()
-        if (r == null || !SpeechRecognizer.isRecognitionAvailable(context)) {
+        if (r == null) {
             mutable.value = State.Failed(R.string.r_voice_unavailable)
             return
         }
@@ -108,15 +111,18 @@ class VoiceListener(private val context: Context) {
             override fun onReadyForSpeech(params: Bundle?) = Unit
             override fun onBeginningOfSpeech() = Unit
             override fun onRmsChanged(rmsdB: Float) {
+                if (recognizer !== r) return
                 // The recognizer reports roughly -2 dB (silence) to 10 dB (a raised voice).
                 mutableLevel.value = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
             }
             override fun onBufferReceived(buffer: ByteArray?) = Unit
             override fun onEndOfSpeech() {
+                if (recognizer !== r) return
                 mutableLevel.value = 0f
                 mutable.value = State.Settling(heardSoFar())
             }
             override fun onError(error: Int) {
+                if (recognizer !== r) return
                 mutableLevel.value = 0f
                 val heard = heardSoFar()
                 // A pause after some words is the end of what was said, not a failure.
@@ -125,12 +131,14 @@ class VoiceListener(private val context: Context) {
                 release()
             }
             override fun onResults(results: Bundle?) {
+                if (recognizer !== r) return
                 val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty().ifBlank { heardSoFar() }
                 mutableLevel.value = 0f
                 mutable.value = if (text.isBlank()) State.Failed(R.string.r_voice_nothing) else State.Heard(text)
                 release()
             }
             override fun onPartialResults(partialResults: Bundle?) {
+                if (recognizer !== r) return
                 val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
                 if (text.isNotBlank()) mutable.value = when (mutable.value) {
                     is State.Settling -> State.Settling(text)
@@ -139,12 +147,15 @@ class VoiceListener(private val context: Context) {
             }
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
         })
-        r.startListening(
-            Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName),
-        )
+        try {
+            r.startListening(SpeechInput.intent(context.packageName, partialResults = true))
+        } catch (_: SecurityException) {
+            release()
+            mutable.value = State.Failed(R.string.r_voice_needs_mic)
+        } catch (_: RuntimeException) {
+            release()
+            mutable.value = State.Failed(R.string.r_voice_unavailable)
+        }
     }
 
     /** Stops hearing now; what was said so far becomes the result. */
@@ -152,20 +163,27 @@ class VoiceListener(private val context: Context) {
         val now = mutable.value
         if (now is State.Listening) {
             mutable.value = State.Settling(now.heard)
-            recognizer?.stopListening()
+            try { recognizer?.stopListening() } catch (_: RuntimeException) {
+                release()
+                mutableLevel.value = 0f
+                mutable.value = if (now.heard.isBlank()) State.Failed(R.string.r_voice_stopped) else State.Heard(now.heard)
+            }
         }
     }
 
     fun cancel() {
-        recognizer?.cancel()
-        release()
+        val old = recognizer
+        recognizer = null
+        runCatching { old?.cancel() }
+        runCatching { old?.destroy() }
         mutableLevel.value = 0f
         mutable.value = State.Idle
     }
 
     fun release() {
-        recognizer?.destroy()
+        val old = recognizer
         recognizer = null
+        runCatching { old?.destroy() }
     }
 
     private fun heardSoFar(): String = when (val s = mutable.value) {

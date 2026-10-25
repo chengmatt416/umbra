@@ -105,6 +105,7 @@ internal class ObservationExecutor(private val env: PipelineEnv) {
         var unchanged = false
         if (level != ObserveLevel.BRIEF && snapshot != null) {
             val key = c.displayId ?: 0
+            c.state.lastTrees[key] = trees
             val sig = uiSignature(UiSnapshot(trees), null).first
             val previous = c.state.lastObservation.put(key, sig)
             unchanged = previous == sig

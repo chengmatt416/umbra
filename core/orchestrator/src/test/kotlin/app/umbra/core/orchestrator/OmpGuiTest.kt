@@ -35,7 +35,7 @@ import org.junit.jupiter.api.io.TempDir
  * bash, branch, fork) with the view following each of them. Only the model is scripted.
  */
 class OmpGuiTest {
-    @TempDir
+    @TempDir(factory = UuidTempDirFactory::class)
     lateinit var dir: Path
 
     private val ompBinary: File? = listOf(
@@ -161,7 +161,7 @@ class OmpGuiTest {
 }
 
 class LockdownTest {
-    @TempDir
+    @TempDir(factory = UuidTempDirFactory::class)
     lateinit var dir: Path
 
     private val ompBinary: File? = listOf(System.getenv("OMP_BIN"), "${System.getProperty("user.home")}/.bun/bin/omp").filterNotNull().map(::File).firstOrNull { it.canExecute() }
@@ -203,7 +203,7 @@ class LockdownTest {
 }
 
 class PlanRevisionTest {
-    @TempDir
+    @TempDir(factory = UuidTempDirFactory::class)
     lateinit var dir: Path
 
     private val ompBinary: File? = listOf(System.getenv("OMP_BIN"), "${System.getProperty("user.home")}/.bun/bin/omp").filterNotNull().map(::File).firstOrNull { it.canExecute() }
@@ -235,7 +235,7 @@ class PlanRevisionTest {
 }
 
 class AdmissionTest {
-    @TempDir
+    @TempDir(factory = UuidTempDirFactory::class)
     lateinit var dir: Path
 
     private val ompBinary: File? = listOf(System.getenv("OMP_BIN"), "${System.getProperty("user.home")}/.bun/bin/omp").filterNotNull().map(::File).firstOrNull { it.canExecute() }

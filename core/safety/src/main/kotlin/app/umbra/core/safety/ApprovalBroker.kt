@@ -90,19 +90,28 @@ class ApprovalBroker(
 ) {
     private val waiters = ConcurrentHashMap<String, CompletableDeferred<ApprovalDecision>>()
     private val requests = ConcurrentHashMap<String, ApprovalRequest>()
+    private val sessionTimeouts = ConcurrentHashMap<String, Long>()
+    fun setSessionTimeout(sessionId: String, timeoutMs: Long?) {
+        if (timeoutMs == null) sessionTimeouts.remove(sessionId)
+        else { require(timeoutMs in 1..600_000L); sessionTimeouts[sessionId] = timeoutMs }
+    }
     private val _pending = MutableStateFlow<List<ApprovalRequest>>(emptyList())
 
     /** Oldest first. Observed by the approval UI, the overlay and the notification. */
     val pending: StateFlow<List<ApprovalRequest>> = _pending.asStateFlow()
 
-    suspend fun request(request: ApprovalRequest): ApprovalDecision {
+    suspend fun request(input: ApprovalRequest): ApprovalDecision {
+        val request = sessionTimeouts[input.sessionId]?.let { input.copy(timeoutMs = minOf(input.timeoutMs, it)) } ?: input
+        require(request.timeoutMs > 0)
         val deferred = CompletableDeferred<ApprovalDecision>()
         waiters[request.id] = deferred
         requests[request.id] = request
         _pending.update { it + request }
         record(request, "requested", null)
         val decision = try {
-            withTimeoutOrNull(request.timeoutMs) { deferred.await() } ?: ApprovalDecision.TimedOut
+            val remaining = request.timeoutMs - (clock.nowMs() - request.createdAtMs).coerceAtLeast(0)
+            if (remaining <= 0) ApprovalDecision.TimedOut
+            else withTimeoutOrNull(remaining) { deferred.await() } ?: ApprovalDecision.TimedOut
         } catch (e: CancellationException) {
             // The caller was cancelled (session stopped); still leave a trace in the ledger.
             withContext(NonCancellable) { record(request, "cancelled", null) }
@@ -119,6 +128,10 @@ class ApprovalBroker(
     /** Called by the UI. Returns false if the request is gone (already decided, timed out or cancelled). */
     fun resolve(id: String, decision: ApprovalDecision): Boolean {
         val request = requests[id] ?: return false
+        if (clock.nowMs() - request.createdAtMs >= request.timeoutMs) {
+            waiters[id]?.complete(ApprovalDecision.TimedOut)
+            return false
+        }
         if (decision is ApprovalDecision.Approved && decision.remember != null && decision.remember !in request.rememberOptions) return false
         return waiters[id]?.complete(decision) ?: false
     }

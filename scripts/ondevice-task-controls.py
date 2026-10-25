@@ -76,10 +76,12 @@ def main():
     try:
         b.control('ui.set', {'mode': 'simple', 'onboarded': True})
         b.control('test.command.clear')
-        task = b.control('test.task.fixture')['id']
+        task = b.control('test.task.fixture', {'summary': '**Synthetic task result:** implementation and tests passed.\n\n- `Markdown` rendering verified.'})['id']
         open_session(task)
         until(lambda: find('Result summary'))
         assert find('Synthetic task result: implementation and tests passed.') is not None
+        assert find('Markdown rendering verified.') is not None
+        assert find('**Synthetic task result:** implementation and tests passed.') is None
         screenshot('result-summary')
 
         tap('AI usage limit')

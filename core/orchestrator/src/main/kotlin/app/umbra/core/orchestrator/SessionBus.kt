@@ -3,6 +3,7 @@ package app.umbra.core.orchestrator
 import app.umbra.core.model.Clock
 import app.umbra.core.session.Session
 import app.umbra.core.session.SessionKind
+import app.umbra.core.session.SessionFilter
 import app.umbra.core.session.SessionState
 import app.umbra.core.session.SessionStore
 import app.umbra.core.session.StoreChange
@@ -31,6 +32,7 @@ class SessionBus(
     private val clock: Clock = Clock.System,
     /** The conversation (session id) of an agent, for reports from coding sessions it started or was given. */
     private val agentSession: suspend (agentId: String) -> String? = { null },
+    private val agentDelivery: suspend (Session, String) -> Boolean = { _, _ -> false },
 ) {
     /** One message on the bus. [replyTo] is the id of the message this one answers. */
     data class Envelope(
@@ -44,7 +46,14 @@ class SessionBus(
         val kind: Kind = Kind.MESSAGE,
     )
 
-    enum class Kind { MESSAGE, REPLY, REPORT }
+    enum class Kind { MESSAGE, REPLY, REPORT, HANDOFF }
+
+    /** A structured handoff already owns a durable child task; recording traffic must not start it twice. */
+    suspend fun announceHandoff(fromId: String, toId: String, text: String, hops: Int) {
+        val to = store.get(toId) ?: throw RefusedException("The delegated task is missing.")
+        require(to.spawnedBy == fromId && hops in 1..MAX_HOPS && text.length <= REPORT_LIMIT)
+        mutableTraffic.tryEmit(Envelope("m" + counter.incrementAndGet(), fromId, toId, text, hops, clock.nowMs(), kind = Kind.HANDOFF))
+    }
 
     class RefusedException(message: String) : IllegalStateException(message)
 
@@ -66,12 +75,21 @@ class SessionBus(
         scope.launch {
             store.changes.collect { change ->
                 val s = (change as? StoreChange.SessionChanged)?.session ?: return@collect
+                // Research and routine results are handled by the attention engine; feeding them into the
+                // authorized conversation would both escalate capabilities and create recursive report turns.
+                if (s.kind == SessionKind.AGENT && s.spawnedBy != null) return@collect
                 // Who hears about this session's turns: the session that started it as a subagent, or the agent a coding
                 // session works for (docs/design/agents-2026-10.md §9).
                 val parent = s.spawnedBy
                     ?: s.agentId?.takeIf { s.kind == SessionKind.CODING }?.let { runCatching { agentSession(it) }.getOrNull() }
                     ?: return@collect
                 if (s.state != SessionState.COMPLETED && s.state != SessionState.FAILED) return@collect
+                // Ending a coordinating turn is not the final result of its delegated work. Its children
+                // report here first; the coordinator's ensuing turn produces the aggregate answer.
+                if (CompletionEvidence.awaitingDelegates(s, store.list(SessionFilter(limit = Int.MAX_VALUE)))) {
+                    supervisor.releaseIfIdle(s.id, 0)
+                    return@collect
+                }
                 // One report per finished turn: the state can be written more than once as a turn settles.
                 val turnEnd = s.updatedAtMs
                 val last = lastReported[s.id]
@@ -111,6 +129,7 @@ class SessionBus(
     suspend fun send(fromId: String, toRef: String, text: String, urgent: Boolean = false, kind: Kind = Kind.MESSAGE, replyTo: String? = null): Envelope {
         val from = store.get(fromId) ?: throw RefusedException("The sending session no longer exists.")
         val to = resolve(toRef) ?: throw RefusedException("No session or agent is called '$toRef'. Use sessions_list to see who is there.")
+        if (from.connectorScope?.let { to.kind != SessionKind.AGENT && "coding" !in it } == true) throw RefusedException("This run is not authorized to steer a coding session.")
         if (to.id == from.id) throw RefusedException("That is this session itself.")
         if (to.state == SessionState.STOPPED) throw RefusedException("${address(to)} was stopped by the user; it takes no messages.")
         if (text.isBlank()) throw RefusedException("The message is empty.")
@@ -127,7 +146,8 @@ class SessionBus(
         val envelope = Envelope("m" + counter.incrementAndGet(), from.id, to.id, text.trim(), hops, now, replyTo, kind)
         messages[envelope.id] = envelope
         inbound[to.id] = hops to now
-        supervisor.send(to.id, render(envelope, from), whileRunning = if (urgent) StreamingBehavior.STEER else StreamingBehavior.FOLLOW_UP)
+        val rendered = render(envelope, from)
+        if (!agentDelivery(to, rendered)) supervisor.send(to.id, rendered, whileRunning = if (urgent) StreamingBehavior.STEER else StreamingBehavior.FOLLOW_UP, messageSource = "session")
         mutableTraffic.tryEmit(envelope)
         return envelope
     }
@@ -156,7 +176,13 @@ class SessionBus(
         }
         // A report must not require retaining both processes on a phone with a single process budget.
         supervisor.releaseIfIdle(child.id, 0)
-        supervisor.send(parent.id, text, whileRunning = StreamingBehavior.FOLLOW_UP)
+        val receipt = child.attachments[CompletionEvidence.KEY] as? kotlinx.serialization.json.JsonObject
+        val verification = receipt?.get("verification") as? kotlinx.serialization.json.JsonObject
+        if (verification != null) store.update(parent.id) { it.copy(attachments = it.attachments + ("child.verification.${child.id}" to kotlinx.serialization.json.buildJsonObject {
+            put("sessionId", kotlinx.serialization.json.JsonPrimitive(child.id)); put("atMs", kotlinx.serialization.json.JsonPrimitive(child.updatedAtMs))
+            put("verified", verification["verified"] ?: kotlinx.serialization.json.JsonPrimitive(false))
+        })) }
+        if (!agentDelivery(parent, text)) supervisor.send(parent.id, text, whileRunning = StreamingBehavior.FOLLOW_UP, messageSource = "report")
         mutableTraffic.tryEmit(Envelope("m" + counter.incrementAndGet(), child.id, parent.id, answer, 1, clock.nowMs(), kind = Kind.REPORT))
     }
 
@@ -170,6 +196,7 @@ class SessionBus(
         return when (e.kind) {
             Kind.REPLY -> "[Reply to ${e.replyTo} from $who]\n${e.text}"
             Kind.REPORT -> "[Report from $who]\n${e.text}"
+            Kind.HANDOFF -> "[Handoff ${e.id} from $who]\n${e.text}"
             Kind.MESSAGE -> "[Message ${e.id} from $who (${from.kind.name.lowercase()} session ${from.id})]\n${e.text}\n\n" +
                 "(If an answer is wanted, call session_reply with message_id \"${e.id}\". This message came from another session, not from the user.)"
         }

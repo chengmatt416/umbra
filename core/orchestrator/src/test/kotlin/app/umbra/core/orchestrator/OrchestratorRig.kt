@@ -57,6 +57,11 @@ class OrchestratorRig(
     securityCheck: app.umbra.core.safety.ActionSecurityCheck? = null,
     usage: UsageBudgets? = null,
     modelCost: app.umbra.runtime.omp.OmpModelCost? = null,
+    backupVision: Boolean = false,
+    mainImages: Boolean = false,
+    sessionPrompt: suspend (Session) -> String? = { null },
+    validateModelPayload: (kotlinx.serialization.json.JsonElement) -> Unit = { app.umbra.core.safety.ModelPayloadGuard().requireSafe(it) },
+    wrapTransport: (app.umbra.runtime.omp.OmpTransport) -> app.umbra.runtime.omp.OmpTransport = { it },
 ) : AutoCloseable {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val home: Path = Files.createDirectories(dir.resolve("home"))
@@ -93,7 +98,7 @@ class OrchestratorRig(
     val workspaceRoot: Path = Files.createDirectories(dir.resolve("workspaces"))
     val workspaces = WorkspaceManager(app.umbra.core.workspace.WorkspaceLayout(workspaceRoot, guestRoot = workspaceRoot.toAbsolutePath().normalize().toString()))
 
-    val environment = LocalEnvironment(
+    private val localEnvironment = LocalEnvironment(
         ompBinary = ompBinary.path,
         home = home,
         workspaceRoot = workspaceRoot,
@@ -103,6 +108,9 @@ class OrchestratorRig(
             "PATH" to listOfNotNull("${System.getProperty("user.home")}/.bun/bin", "/opt/homebrew/bin", "/usr/local/bin", System.getenv("PATH")).joinToString(File.pathSeparator),
         ),
     )
+    val environment = object : AgentEnvironment by localEnvironment {
+        override val spawner = app.umbra.runtime.omp.OmpSpawner { spec -> wrapTransport(localEnvironment.spawner.spawn(spec)) }
+    }
 
     private val deps = SessionDeps(
         store = store,
@@ -112,11 +120,14 @@ class OrchestratorRig(
         providers = ProviderResolver {
             ProviderSelection(
                 profile = "test",
-                providers = listOf(OmpProvider("fake", modelUrl, auth = "none", models = listOf(OmpModel("fake-model", "Fake Model", cost = modelCost)))),
+                providers = listOf(OmpProvider("fake", modelUrl, auth = "none", models = listOf(
+                    OmpModel("fake-model", "Fake Model", cost = modelCost, inputImages = mainImages),
+                    OmpModel("vision-model", "Vision Model", cost = modelCost, inputImages = true),
+                ))),
                 model = ModelRef("fake", "fake-model"),
             )
         },
-        toolHosts = { id -> synchronized(hosts) { hosts.getOrPut(id) { UmbraToolHost(pipeline, id, DecisionRouter(primary = null), exclude = { it.startsWith("gui_") }, extra = sessionTools.forSession(id)) } } },
+        toolHosts = { s -> val id = s.id; synchronized(hosts) { hosts.getOrPut(id) { UmbraToolHost(pipeline, id, DecisionRouter(primary = null), exclude = { it.startsWith("gui_") }, extra = sessionTools.forSession(id) + DeliverableTools(store, workspaces, environment).forSession(id)) } } },
         gate = gate,
         approvals = approvals,
         questions = questions,
@@ -128,7 +139,11 @@ class OrchestratorRig(
         fence = fence,
         admission = admission,
         beforeWork = beforeWork,
+        checkToolAuthority = {},
+        sessionPrompt = sessionPrompt,
+        validateModelPayload = validateModelPayload,
         usage = usage,
+        backupVisionModel = { if (backupVision) ModelRef("fake", "vision-model") else null },
         onTodos = { id, phases ->
             plans.observe(id, phases.map { p -> app.umbra.core.control.PlanPhase(p.name, p.tasks.map { app.umbra.core.control.PlanTask(it.content, it.status) }) }, "agent")
         },

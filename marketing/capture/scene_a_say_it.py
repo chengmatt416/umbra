@@ -19,7 +19,7 @@ model = ScriptedModel([
 bridge.control("provider.set", {"id": "scripted", "base_url": model.url_for_emulator, "model": "scripted-model", "key": ""})
 bridge.control("approval_mode", {"mode": "autonomous"})
 bridge.control("capsule.set", {"on": False})
-ui_set(bridge, mode="simple", onboarded=True, effort="auto")
+ui_set(bridge, mode="simple", onboarded=True, effort="auto", homeAgents=False)
 sh("pm", "grant", "app.umbra.agent", "android.permission.RECORD_AUDIO")
 sh("input", "keyevent", "3")
 sh("am", "force-stop", "com.android.settings")

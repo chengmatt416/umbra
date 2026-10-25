@@ -75,7 +75,7 @@ fun PConfirm(
         // Apple: an alert's continuous large radius on the elevated surface (a dialog window has no live backdrop to refract)
         containerColor = if (Theme.apple) AppleColors.elevated(Theme.dark).copy(alpha = if (Theme.current.appleGlass) 0.96f else 1f) else pc(0xFFF2F6EF),
         shape = RoundedCornerShape(if (Theme.apple) 30.dp else P.radius),
-        title = { Text(title, fontFamily = P.serif, fontSize = 22.sp, lineHeight = 26.sp, color = P.ink) },
+        title = { Text(title, fontFamily = P.serif, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, letterSpacing = (-0.2).sp, fontSize = 22.sp, lineHeight = 26.sp, color = P.ink) },
         text = {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (body.isNotBlank()) Text(body, fontSize = 14.sp, lineHeight = 21.sp, color = P.sub)

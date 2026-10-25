@@ -6,7 +6,7 @@ import time
 from lib import *
 
 b = umbractl.Bridge(); umbractl.setup()
-ui_set(b, mode="simple", onboarded=True, effort="auto")
+ui_set(b, mode="simple", onboarded=True, effort="auto", homeAgents=False)
 b.control("capsule.set", {"on": False})
 sh("input", "keyevent", "3")
 fresh_app("home", 3)

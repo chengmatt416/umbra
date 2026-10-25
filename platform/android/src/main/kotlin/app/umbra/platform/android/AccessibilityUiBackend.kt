@@ -26,6 +26,7 @@ import app.umbra.core.model.observation.UiTree
 import app.umbra.platform.api.AndroidKeys
 import app.umbra.platform.api.BackendException
 import app.umbra.platform.api.CapturedImage
+import app.umbra.platform.api.CredentialTarget
 import app.umbra.platform.api.NodeActionArgs
 import app.umbra.platform.api.ScreenshotBackend
 import app.umbra.platform.api.SnapshotOptions
@@ -68,6 +69,7 @@ class AccessibilityUiBackend(
 
     @Volatile
     private var registry: Map<String, AccessibilityNodeInfo> = emptyMap()
+    @Volatile private var registryAtMs: Long = 0
 
     private fun service(): UmbraAccessibilityService =
         UmbraAccessibilityService.instance ?: throw BackendException(
@@ -130,7 +132,108 @@ class AccessibilityUiBackend(
             )
         }
         registry = nodes
+        registryAtMs = now
         UiSnapshot(trees.sortedWith(compareBy<UiTree>({ it.displayId }, { -it.layer })), now)
+    }
+
+    suspend fun credentialTarget(nodeId: String): CredentialTarget = withContext(Dispatchers.Default) {
+        require(clock.nowMs() - registryAtMs in 0..60_000) { "Observe the current field again before requesting secure input" }
+        val node = requireNotNull(registry[nodeId]) { "Use a field reference from the latest Android observation" }
+        require(node.refresh() && node.isEditable && node.isEnabled && node.isVisibleToUser) { "The credential field is no longer editable" }
+        val window = requireNotNull(node.window) { "The credential window is unavailable" }
+        val pkg = requireNotNull(node.packageName?.toString())
+        require(pkg != service().packageName) { "Agent requests cannot fill Umbra's own input or approval surfaces" }
+        requireNativeCredentialField(node)
+        CredentialTarget(nodeId, pkg, window.id, window.displayId, node.viewIdResourceName, node.className?.toString(), node.isPassword,
+            if (node.isPassword) "Password field" else "Editable field", credentialFormHash(requireNotNull(window.root)))
+    }
+
+    private fun requireNativeCredentialField(node: AccessibilityNodeInfo) {
+        val pkg = node.packageName?.toString()
+        require(pkg != null && pkg != service().packageName) { "Secure handoff cannot operate Umbra's own fields" }
+        val browsers = service().packageManager.queryIntentActivities(android.content.Intent(android.content.Intent.ACTION_VIEW,
+            android.net.Uri.parse("https://example.invalid")), android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+        require(browsers.none { it.activityInfo?.packageName == pkg }) { "Browser credentials require direct user takeover; the native panel cannot verify a web origin" }
+        var ancestor: AccessibilityNodeInfo? = node
+        repeat(32) {
+            require(ancestor?.className?.toString()?.contains("WebView", ignoreCase = true) != true) { "WebView credentials require direct user takeover" }
+            ancestor = ancestor?.parent
+        }
+    }
+
+    private fun credentialFormHash(root: AccessibilityNodeInfo): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val pending = java.util.ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
+        var count = 0
+        var bytes = 0
+        fun field(value: String?) {
+            val data = value.orEmpty().toByteArray(Charsets.UTF_8)
+            bytes += data.size
+            require(bytes <= 2_000_000) { "The native form is too large to bind safely" }
+            digest.update(java.nio.ByteBuffer.allocate(4).putInt(data.size).array()); digest.update(data)
+        }
+        while (pending.isNotEmpty()) {
+            require(++count <= 2000) { "The native form is too large to bind safely" }
+            val node = pending.removeLast()
+            field(node.className?.toString()); field(node.viewIdResourceName)
+            field(if (node.isPassword) "[PASSWORD_FIELD]" else node.text?.toString())
+            field(node.hintText?.toString()); field(node.contentDescription?.toString())
+            val children = node.childCount
+            require(children in 0..1000)
+            field(children.toString())
+            for (index in children - 1 downTo 0) node.getChild(index)?.let(pending::add)
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun matchesCredential(node: AccessibilityNodeInfo, target: CredentialTarget): Boolean =
+        node.refresh() && node.packageName?.toString() == target.packageName && node.windowId == target.windowId &&
+            node.window?.displayId == target.displayId && node.viewIdResourceName == target.resourceId &&
+            node.className?.toString() == target.className && node.isPassword == target.password && node.isEditable && node.isEnabled
+
+    private suspend fun credentialNode(target: CredentialTarget): AccessibilityNodeInfo? {
+        require(target.packageName != service().packageName) { "Secure handoff cannot operate Umbra's own fields" }
+        registry[target.nodeId]?.takeIf { matchesCredential(it, target) }?.let { return it }
+        snapshot(SnapshotOptions(displayId = target.displayId))
+        return registry[target.nodeId]?.takeIf { matchesCredential(it, target) }
+    }
+
+    suspend fun injectCredential(target: CredentialTarget, value: String): Boolean = withContext(Dispatchers.Default) {
+        require(value.length in 4..4096)
+        val node = requireNotNull(credentialNode(target)) { "The target field changed. Cancel and request a fresh handoff." }
+        requireNativeCredentialField(node)
+        require(node.isVisibleToUser) { "Keep the target field visible while entering a credential" }
+        require(credentialFormHash(requireNotNull(node.window?.root)) == target.formHash) { "The form changed after the request. Cancel and observe it again before entering a credential." }
+        app.umbra.platform.api.DispatchFence.checkCurrent()
+        node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) })
+    }
+
+    suspend fun credentialFieldClear(target: CredentialTarget, clear: Boolean): Boolean = withContext(Dispatchers.Default) {
+        val node = credentialNode(target)
+        if (node != null) {
+            if (clear) {
+                app.umbra.platform.api.DispatchFence.checkCurrent()
+                require(node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "") })) { "The field could not be cleared" }
+                node.refresh()
+            }
+            node.isShowingHintText || node.text?.isEmpty() == true
+        } else {
+            // Going Home is not proof that authentication finished: require the same app on the target display.
+            val windows = service().windowsOnAllDisplays[target.displayId].orEmpty()
+            val ambiguous = registry.values.any { candidate ->
+                candidate.packageName?.toString() == target.packageName && candidate.isEditable && candidate.isPassword == target.password &&
+                    (target.resourceId == null || candidate.viewIdResourceName == target.resourceId) && !candidate.isShowingHintText && candidate.text?.isEmpty() != true
+            }
+            !ambiguous && windows.any { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.root?.packageName?.toString() == target.packageName }
+        }
+    }
+
+    suspend fun credentialContextClear(target: CredentialTarget, protectedValues: Collection<String>): Boolean {
+        val snapshot = snapshot(SnapshotOptions(displayId = target.displayId))
+        if (snapshot.windows.isEmpty() || snapshot.windows.any { it.truncated }) return false
+        return snapshot.windows.flatMap { it.nodes }.filter { it.isVisible && !it.isPassword }.none { node ->
+            listOfNotNull(node.text, node.contentDescription, node.hint).any { text -> protectedValues.any { it.isNotEmpty() && it in text } }
+        }
     }
 
     // ---- node actions ----
@@ -149,6 +252,7 @@ class AccessibilityUiBackend(
                 else -> Unit
             }
         }
+        app.umbra.platform.api.DispatchFence.checkCurrent()
         info.performAction(id, bundle)
     }
 
@@ -170,6 +274,7 @@ class AccessibilityUiBackend(
 
     private suspend fun dispatch(displayId: Int?, stroke: GestureDescription.StrokeDescription): Boolean {
         val svc = service()
+        app.umbra.platform.api.DispatchFence.checkCurrent()
         return suspendCancellableCoroutine { cont ->
             val builder = GestureDescription.Builder().addStroke(stroke)
             if (displayId != null) builder.setDisplayId(displayId)
@@ -225,6 +330,7 @@ class AccessibilityUiBackend(
             ?: throw BackendException(ErrorCode.NOT_ACTIONABLE, "No text field has input focus.", retryable = true)
         val current = focused.text?.takeIf { !focused.isShowingHintText }?.toString().orEmpty()
         val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, current + text) }
+        app.umbra.platform.api.DispatchFence.checkCurrent()
         if (!focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
             throw BackendException(ErrorCode.NOT_ACTIONABLE, "The focused field refused the text.", retryable = true)
         }
@@ -232,6 +338,7 @@ class AccessibilityUiBackend(
 
     override suspend fun global(action: GlobalAction): Boolean = withContext(Dispatchers.Main) {
         val svc = service()
+        app.umbra.platform.api.DispatchFence.checkCurrent()
         svc.performGlobalAction(
             when (action) {
                 GlobalAction.BACK -> AccessibilityService.GLOBAL_ACTION_BACK

@@ -63,7 +63,7 @@ fun UpdatePrompt() {
     offer?.let { u ->
         AlertDialog(
             onDismissRequest = { offer = null },
-            title = { Text(stringResource(R.string.r_upd_title, u.version), fontFamily = P.serif, fontSize = 22.sp, color = P.ink) },
+            title = { Text(stringResource(R.string.r_upd_title, u.version), fontFamily = P.serif, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, letterSpacing = (-0.2).sp, fontSize = 22.sp, color = P.ink) },
             text = { Text(stringResource(R.string.r_upd_body, Formatter.formatShortFileSize(context, u.bytes)), fontSize = 14.5.sp, lineHeight = 22.sp, color = P.sub) },
             confirmButton = { PButton(stringResource(R.string.r_upd_now), { offer = null; following = true; updater.updateNow() }) },
             dismissButton = {

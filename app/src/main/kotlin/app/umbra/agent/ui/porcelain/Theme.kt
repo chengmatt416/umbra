@@ -43,6 +43,10 @@ data class ThemeSpec(
     val liquid: Boolean get() = style == ThemeStyle.LIQUID
     val apple: Boolean get() = style == ThemeStyle.APPLE
     val porcelain: Boolean get() = style == ThemeStyle.PORCELAIN
+    val mono: Boolean get() = style == ThemeStyle.MONO
+
+    /** Solid, opaque surfaces with Material's own windows: Porcelain and Ink (no glass anywhere). */
+    val plain: Boolean get() = porcelain || mono
 
     /** Surfaces are glass: always under Liquid, under Apple when its Liquid Glass is on. */
     val glass: Boolean get() = liquid || (apple && appleGlass)
@@ -55,6 +59,7 @@ data class ThemeSpec(
             ThemeStyle.PORCELAIN -> Tokens.Porcelain
             ThemeStyle.LIQUID -> Tokens.liquid(hue, dark)
             ThemeStyle.APPLE -> Tokens.apple(accentColor, dark)
+            ThemeStyle.MONO -> Tokens.mono(dark)
         }
     }
 
@@ -63,6 +68,7 @@ data class ThemeSpec(
         ThemeStyle.PORCELAIN -> Color(argb)
         ThemeStyle.LIQUID -> cache.getOrPut(argb) { Retint.adapt(argb, hue, dark) }
         ThemeStyle.APPLE -> cache.getOrPut(argb) { Retint.apple(argb, accentColor, dark) }
+        ThemeStyle.MONO -> cache.getOrPut(argb) { Retint.mono(argb, dark) }
     }
 
     /** A colour that is dark by nature (consoles, the capsule's glaze, the orb): it takes the hue but keeps its lightness. */
@@ -70,6 +76,7 @@ data class ThemeSpec(
         ThemeStyle.PORCELAIN -> Color(argb)
         ThemeStyle.LIQUID -> fixedCache.getOrPut(argb) { Retint.hueOnly(argb, hue) }
         ThemeStyle.APPLE -> fixedCache.getOrPut(argb) { Retint.appleFixed(argb) }
+        ThemeStyle.MONO -> fixedCache.getOrPut(argb) { Retint.monoFixed(argb) }
     }
 
     companion object {
@@ -96,6 +103,7 @@ object Theme {
     val apple: Boolean get() = current.apple
     val glass: Boolean get() = current.glass
     val dark: Boolean get() = current.dark
+    val mono: Boolean get() = current.mono
 }
 
 /** iOS's system colours (light, dark), as UIKit defines them. */
@@ -133,6 +141,9 @@ object AppleColors {
 /** A colour of the design ("Color(0xFF...)" as the reference writes it), in the current theme. */
 fun pc(argb: Long): Color = Theme.current.adapt(argb)
 
+/** A decorative colour (an avatar, an illustration): like [pc], but under Ink always a neutral grey, never a status colour. */
+fun pcGrey(argb: Long): Color = if (Theme.current.mono) Retint.monoNeutral(argb, Theme.current.dark) else Theme.current.adapt(argb)
+
 /** A colour that stays dark in every theme (consoles, the capsule, the orb): only its hue follows the theme. */
 fun pcHue(argb: Long): Color = Theme.current.hueOnly(argb)
 
@@ -157,6 +168,32 @@ class Tokens(
             primaryButton = Brush.linearGradient(listOf(Color(0xFF758F78), Color(0xFF4E6D55)), start = Offset.Zero, end = Offset(300f, 200f)),
             page = Brush.linearGradient(listOf(Color(0xFFE2E9DD), Color(0xFFD8E1D4)), start = Offset.Zero, end = Offset(1200f, 2400f)),
         )
+
+        /**
+         * Ink: white and black. Light is a near-white page with pure white cards and black ink and buttons; dark is
+         * true black with charcoal cards and white ink and buttons. Red, amber and green appear only where they mean
+         * something (failure, attention, done).
+         */
+        fun mono(dark: Boolean): Tokens {
+            val solid = { c: Color -> Brush.linearGradient(listOf(c, c)) }
+            return if (!dark) Tokens(
+                base = Color(0xFFF7F7F7), base2 = Color(0xFFEFEFEF), ink = Color(0xFF0A0A0A), muted = Color(0xFF8C8C8C), sub = Color(0xFF5C5C5C),
+                accent = Color(0xFF111111), accent2 = Color(0xFF000000), accent3 = Color(0xFFEBEBEB), line = Color(0x1F000000), line2 = Color(0x12000000),
+                danger = Color(0xFFD93025), amber = Color(0xFFB26A00), good = Color(0xFF1E8E3E), night = Color(0xFF0A0A0A), eyebrow = Color(0xFF8A8A8A),
+                highlight = Color(0xFFFFFFFF), fold = Color(0xFFEDEDED), code = Color(0xFF0A0A0A), codeText = Color(0xFFEDEDED),
+                ceramic = solid(Color.White), ceramic2 = solid(Color(0xFFF2F2F2)),
+                night2 = Brush.linearGradient(listOf(Color(0xFF1C1C1C), Color(0xFF0A0A0A)), start = Offset.Zero, end = Offset(900f, 700f)),
+                primaryButton = solid(Color(0xFF0A0A0A)), page = solid(Color(0xFFF7F7F7)),
+            ) else Tokens(
+                base = Color(0xFF000000), base2 = Color(0xFF111111), ink = Color(0xFFF5F5F5), muted = Color(0xFF7A7A7A), sub = Color(0xFFA6A6A6),
+                accent = Color(0xFFEDEDED), accent2 = Color(0xFFFFFFFF), accent3 = Color(0xFF262626), line = Color(0x29FFFFFF), line2 = Color(0x17FFFFFF),
+                danger = Color(0xFFFF6B5E), amber = Color(0xFFF5A623), good = Color(0xFF4CC96F), night = Color(0xFF161616), eyebrow = Color(0xFF808080),
+                highlight = Color(0xFF141414), fold = Color(0xFF1F1F1F), code = Color(0xFF0D0D0D), codeText = Color(0xFFE6E6E6),
+                ceramic = solid(Color(0xFF131313)), ceramic2 = solid(Color(0xFF1A1A1A)),
+                night2 = Brush.linearGradient(listOf(Color(0xFF222222), Color(0xFF111111)), start = Offset.Zero, end = Offset(900f, 700f)),
+                primaryButton = solid(Color.White), page = solid(Color.Black),
+            )
+        }
 
         /** iOS: grouped greys, white (or #1C1C1E) cards, labels at UIKit's opacities, the system accent and status colours. */
         fun apple(accent: Color, dark: Boolean): Tokens {
@@ -301,6 +338,41 @@ internal object Retint {
         val nl = if (dark) appleDark(l) else if (l > 0.85f) min(0.995f, 0.85f + (l - 0.85f) * 1.45f) else l * 0.82f
         return hsl(240f, min(0.06f, s * 0.25f), nl, a)
     }
+
+    /**
+     * Ink: every glaze becomes a neutral grey with stretched contrast (the page near white, surfaces white, text near
+     * black; in the dark, black, charcoal and near white). The glaze's greens are its accents and become ink; clay and
+     * amber keep their hue because they carry meaning.
+     */
+    fun mono(argb: Long, dark: Boolean): Color {
+        val c = Color(argb)
+        val (h, s, l) = toHsl(c)
+        val a = c.alpha
+        if (s < 0.05f && l > 0.97f) return if (dark) c.copy(alpha = a * 0.10f) else c
+        if (h < 60f && s > 0.1f) return hsl(h, min(0.8f, s * 1.1f), if (dark) curve(monoDarkCurve, l).coerceAtLeast(if (l < 0.62f) 0.62f else 0f) else l, a)
+        if (s >= 0.13f && l in 0.28f..0.74f) return hsl(0f, 0f, if (dark) 0.94f else 0.08f, a)
+        return hsl(0f, 0f, curve(if (dark) monoDarkCurve else monoLightCurve, l), a)
+    }
+
+    /** Ink, decorative: lightness only, whatever the hue. */
+    fun monoNeutral(argb: Long, dark: Boolean): Color {
+        val c = Color(argb)
+        val l = toHsl(c)[2]
+        if (l > 0.97f) return if (dark) c.copy(alpha = c.alpha * 0.10f) else c
+        return hsl(0f, 0f, curve(if (dark) monoDarkCurve else monoLightCurve, l), c.alpha)
+    }
+
+    /** Ink, for things dark by nature (consoles, the capsule, the orb): the same lightness, no colour. */
+    fun monoFixed(argb: Long): Color {
+        val c = Color(argb)
+        val (h, s, l) = toHsl(c)
+        if (s < 0.05f && l > 0.97f) return c
+        if (h < 60f && s > 0.1f) return c
+        return hsl(0f, 0f, l * 0.85f, c.alpha)
+    }
+
+    private val monoLightCurve = floatArrayOf(0f, 0f, 0.23f, 0.07f, 0.43f, 0.36f, 0.55f, 0.55f, 0.70f, 0.80f, 0.80f, 0.92f, 0.88f, 0.965f, 0.93f, 0.985f, 0.96f, 1f, 1f, 1f)
+    private val monoDarkCurve = floatArrayOf(0f, 1f, 0.23f, 0.95f, 0.43f, 0.70f, 0.55f, 0.55f, 0.70f, 0.32f, 0.80f, 0.20f, 0.88f, 0.13f, 0.93f, 0.10f, 0.97f, 0.08f, 1f, 0.07f)
 
     /** Apple, for things dark by nature: a neutral graphite of the same lightness. */
     fun appleFixed(argb: Long): Color {

@@ -65,6 +65,7 @@ class AndroidClipboardBackend(private val context: Context) : ClipboardBackend {
 
     override suspend fun set(text: String) {
         withContext(Dispatchers.Main) {
+            app.umbra.platform.api.DispatchFence.checkCurrent()
             context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("umbra", text))
         }
     }

@@ -29,14 +29,19 @@ class LayaSidecar internal constructor(
     private val host: Host,
     private val scope: CoroutineScope,
     private val endpoint: DecisionEngine = LayaHttpEngine("http://127.0.0.1:8765",
-        OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build(), model = MODEL),
+        OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build(), model = MODEL, apiKey = { host.apiKey }),
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     internal interface Host {
         var wanted: Boolean
         val ready: Boolean
         suspend fun ensureReady(): Boolean
-        suspend fun exec(argv: List<String>, timeoutMs: Long = 30_000, maxOutputBytes: Int = 64 * 1024): ShellResult
+        /** The sidecar's private bearer key; it reaches the server only through [exec]'s secrets. */
+        val apiKey: String?
+        suspend fun exec(argv: List<String>, timeoutMs: Long = 30_000, maxOutputBytes: Int = 64 * 1024, secrets: Map<String, String> = emptyMap()): ShellResult
+        /** When the last install failed (wall clock), kept across app restarts; null after a success or a manual retry. */
+        var installFailedAt: Long?
+        fun wallNowMs(): Long = System.currentTimeMillis()
     }
 
     constructor(container: AppContainer, scope: CoroutineScope) : this(object : Host {
@@ -46,8 +51,18 @@ class LayaSidecar internal constructor(
         override val ready: Boolean
             get() = container.guest.state.value in setOf(GuestManager.State.Ready, GuestManager.State.Installed)
         override suspend fun ensureReady() = container.guest.ensureReady()
-        override suspend fun exec(argv: List<String>, timeoutMs: Long, maxOutputBytes: Int) =
-            container.guest.runtime.exec(argv, cwd = "/home/agent", timeoutMs = timeoutMs, maxOutputBytes = maxOutputBytes)
+        override val apiKey: String by lazy {
+            container.secrets.get(KEY_SECRET) ?: java.security.SecureRandom().let { random ->
+                ByteArray(32).also(random::nextBytes).joinToString("") { "%02x".format(it) }
+            }.also { container.secrets.put(KEY_SECRET, it) }
+        }
+        private val store = container.context.getSharedPreferences("laya", android.content.Context.MODE_PRIVATE)
+        override var installFailedAt: Long?
+            get() = store.getLong("install_failed_at", 0L).takeIf { it > 0 }
+            set(value) { store.edit().apply { if (value == null) remove("install_failed_at") else putLong("install_failed_at", value) }.apply() }
+        override suspend fun exec(argv: List<String>, timeoutMs: Long, maxOutputBytes: Int, secrets: Map<String, String>) =
+            if (secrets.isEmpty()) container.guest.runtime.exec(argv, cwd = "/home/agent", timeoutMs = timeoutMs, maxOutputBytes = maxOutputBytes)
+            else container.guest.runtime.execWithSecrets(argv, secrets, cwd = "/home/agent", timeoutMs = timeoutMs, maxOutputBytes = maxOutputBytes)
     }, scope)
 
     enum class State { NEEDS_LINUX, NOT_INSTALLED, INSTALLING, STOPPED, STARTING, RUNNING, FAILED }
@@ -114,13 +129,20 @@ class LayaSidecar internal constructor(
     private suspend fun installNow() {
         mutable.value = State.INSTALLING
         message = null
+        // pip unpacks each wheel into a temporary folder that an interrupted install leaves behind (hundreds of MB per
+        // attempt for torch and its CUDA wheels). It gets its own folder, removed whatever happens, and leftovers of
+        // earlier attempts in the shared /tmp go first.
         val out = host.exec(
-            listOf("bash", "-o", "pipefail", "-c", "python3 -m pip install --user --break-system-packages --no-cache-dir 'laya[serve]' 2>&1 | tail -5"),
+            listOf("bash", "-o", "pipefail", "-c", INSTALL_SCRIPT),
             timeoutMs = 60 * 60_000L,
         )
         if (out.ok && host.exec(listOf("bash", "-c", "test -x $bin")).ok) {
+            host.installFailedAt = null
             mutable.value = State.STOPPED
         } else {
+            // A failed install (about 1 GB of wheels) is not part of the start backoff: it is tried again by itself at
+            // most once a day, across restarts, or at once when the person asks ([install]/[download]).
+            host.installFailedAt = host.wallNowMs()
             message = out.combined.lines().filter { it.isNotBlank() }.takeLast(3).joinToString(" ").take(300).ifBlank { "pip did not finish" }
             mutable.value = State.FAILED
         }
@@ -159,7 +181,11 @@ class LayaSidecar internal constructor(
     private suspend fun ensureRunning() {
         refreshNow()
         if (!host.wanted || mutable.value == State.NEEDS_LINUX || mutable.value == State.RUNNING) return
-        if (mutable.value == State.NOT_INSTALLED) installNow()
+        if (mutable.value == State.NOT_INSTALLED) {
+            val failedAt = host.installFailedAt
+            if (failedAt != null && host.wallNowMs() - failedAt in 0 until INSTALL_RETRY_MS) { mutable.value = State.FAILED; return }
+            installNow()
+        }
         else if (mutable.value == State.FAILED) mutable.value = State.STOPPED
         if (host.wanted && mutable.value == State.STOPPED) startNow()
     }
@@ -167,7 +193,7 @@ class LayaSidecar internal constructor(
     /** Starts `laya-serve` in the background and waits until it answers (the first start also downloads the weights). */
     fun start() {
         host.wanted = true
-        launch { retryAtMs = 0; ensureRunning() }
+        launch { retryAtMs = 0; host.installFailedAt = null; ensureRunning() }
     }
 
     private suspend fun startNow() {
@@ -189,6 +215,7 @@ class LayaSidecar internal constructor(
                             "exec $bin > \$HOME/.umbra/laya.log 2>&1 < /dev/null",
                     ),
                     timeoutMs = SERVE_MS,
+                    secrets = listOfNotNull(host.apiKey?.let { "LAYA_API_KEY" to it }).toMap(),
                 )
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (_: Exception) { /* The health probe reports startup failures. */ }
@@ -266,9 +293,21 @@ class LayaSidecar internal constructor(
     @Volatile private var server: kotlinx.coroutines.Job? = null
 
     private companion object {
+        /** A failed install retries by itself at most this often (an explicit download retries at once). */
+        const val INSTALL_RETRY_MS = 24 * 60 * 60_000L
+        /**
+         * The phone has no CUDA: PyTorch comes from its CPU-only index first (PyPI's Linux build would pull several GB of
+         * GPU libraries), then Laya, which reuses it. If the CPU wheel is unavailable, pip falls back to its usual choice.
+         */
+        internal const val INSTALL_SCRIPT = "find /tmp -maxdepth 1 -name 'pip-unpack-*' -user \"\$(id -u)\" -mmin +5 -exec rm -rf {} + 2>/dev/null; " +
+            "t=\"\$HOME/.cache/umbra-pip-tmp\"; rm -rf \"\$t\"; mkdir -p \"\$t\"; " +
+            "TMPDIR=\"\$t\" python3 -m pip install --user --break-system-packages --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch 2>&1 | tail -2; " +
+            "TMPDIR=\"\$t\" python3 -m pip install --user --break-system-packages --no-cache-dir 'laya[serve]' 2>&1 | tail -5; rc=\${PIPESTATUS[0]}; " +
+            "rm -rf \"\$t\"; exit \$rc"
         /** Renewed by maintenance when the guest's execution lease ends. */
         const val SERVE_MS = 24 * 60 * 60_000L
         /** The typed-decisions checkpoint of `convaiinnovations/laya` (README: "the typed-decisions workflows"). */
         const val MODEL = "laya-typed-decisions"
+        const val KEY_SECRET = "LAYA_API_KEY"
     }
 }

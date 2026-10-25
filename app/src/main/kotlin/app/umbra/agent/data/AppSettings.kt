@@ -44,6 +44,7 @@ data class ApprovalPrefs(val mode: ApprovalMode = ApprovalMode.BALANCED)
 data class AppPrefs(
     val providers: List<ProviderConfig> = emptyList(),
     val defaultModel: ModelRef? = null,
+    val backupVisionModel: ModelRef? = null,
     /** The effort the user chose for new tasks, used when [autoEffort] is off (null: omp's default). */
     val thinkingLevel: String? = null,
     /** "Auto" effort: Laya reads each new task and picks how hard the model thinks (omp's own judge without Laya). */
@@ -53,6 +54,10 @@ data class AppPrefs(
     /** Appended to the agent's instructions in every session. */
     val standingInstructions: String = "",
     val notifyOnApproval: Boolean = true,
+    /** On for new installations (shown in setup, off any time in Settings); earlier installations keep their choice (prefs 3). */
+    val shareUsageCounts: Boolean = true,
+    /** How proactive a new agent starts (chosen in setup, changed in Settings → Proactive agents). */
+    val proactiveDefaults: ProactiveDefaults = ProactiveDefaults(),
     /** The Capsule (§3.1): drawn over other apps at the camera, idle or busy. */
     val overlayEnabled: Boolean = false,
     /**
@@ -103,14 +108,24 @@ data class AppPrefs(
     val agentPauseLowBattery: Boolean = true,
     /** The Capsule at rest talks to the default agent (its card, its field, circle-select); off: it starts coding sessions as before. */
     val capsuleToAgent: Boolean = true,
+    /** Where the Capsule sits: around the camera, in the top corner, or (Auto) aside when another capsule app holds the camera. */
+    val capsulePlacement: CapsulePlacement = CapsulePlacement.AUTO,
 )
 
 /** Simple shows the essentials, Power adds the working views, Dev every control the app has, resources by hand. */
 @Serializable
 enum class UiMode { SIMPLE, POWER, DEV }
 
+/** The proactivity a new agent starts with: its level (0–4) and when its briefs arrive (minutes after midnight, null off). */
 @Serializable
-enum class ThemeStyle { PORCELAIN, LIQUID, APPLE }
+data class ProactiveDefaults(val level: Int = 3, val morningMinute: Int? = 8 * 60, val eveningMinute: Int? = null)
+
+/** CENTRE: a plain pill in the middle of the status-bar row, wherever the camera is (it moves to the corner beside another capsule app). */
+enum class CapsulePlacement { AUTO, CAMERA, CORNER, CENTRE }
+
+/** MONO (Ink) is the default look: white and black, with colour kept for meaning only. */
+@Serializable
+enum class ThemeStyle { PORCELAIN, LIQUID, APPLE, MONO }
 
 /** The Apple theme's tint: the system colours iOS offers as accents. */
 @Serializable
@@ -125,9 +140,9 @@ enum class ThemeAppearance { LIGHT, DARK, SYSTEM }
  */
 @Serializable
 data class ThemePrefs(
-    val style: ThemeStyle = ThemeStyle.PORCELAIN,
+    val style: ThemeStyle = ThemeStyle.MONO,
     val hue: Float = 204f,
-    val appearance: ThemeAppearance = ThemeAppearance.LIGHT,
+    val appearance: ThemeAppearance = ThemeAppearance.SYSTEM,
     /** Liquid's backdrop flows; off, it holds still (the system's "remove animations" also stills it). */
     val motion: Boolean = true,
     val appleAccent: AppleAccent = AppleAccent.BLUE,
@@ -159,21 +174,19 @@ class AppSettings(context: Context) {
 
     @Synchronized
     fun update(change: (AppPrefs) -> AppPrefs) {
-        val next = change(state.value).copy(prefsVersion = VERSION)
-        prefs.edit().putString(KEY, UmbraJson.encodeToString(AppPrefs.serializer(), next)).apply()
+        val previous = state.value
+        val next = change(previous).copy(prefsVersion = VERSION)
+        val editor = prefs.edit().putString(KEY, UmbraJson.encodeToString(AppPrefs.serializer(), next))
+        // A permanent grant or revocation must reach disk before it is visible as saved.
+        if (next.commandApprovals != previous.commandApprovals) {
+            check(editor.commit()) { "Command approvals could not be saved. Please retry." }
+        } else editor.apply()
         state.value = next
     }
 
     private fun load(): AppPrefs = prefs.getString(KEY, null)?.let {
         try {
-            var loaded = UmbraJson.decodeFromString(AppPrefs.serializer(), it)
-            if (loaded.prefsVersion < VERSION) {
-                // Saved before "Auto" existed: a model the person had chosen stays chosen.
-                if ("\"autoModel\"" !in it && loaded.defaultModel != null) loaded = loaded.copy(autoModel = false)
-                // The same for effort: a thinking level the person had set stays set.
-                if ("\"autoEffort\"" !in it && loaded.thinkingLevel != null) loaded = loaded.copy(autoEffort = false)
-                loaded = loaded.copy(prefsVersion = VERSION)
-            }
+            var loaded = migrate(UmbraJson.decodeFromString(AppPrefs.serializer(), it), it)
             loaded.defaultModel?.let { m -> ModelRenames.current(m).takeIf { it != m }?.let { loaded = loaded.copy(defaultModel = it) } }
             loaded
         } catch (_: Exception) {
@@ -184,7 +197,29 @@ class AppSettings(context: Context) {
     companion object {
         private const val KEY = "prefs.v1"
         /** 1: every save carries its version, so a missing switch means its default (see [AppPrefs.prefsVersion]). */
-        const val VERSION = 1
+        /** 2: the Ink (black and white) redesign replaces a Porcelain look once. */
+        /** 3: usage counts default on for new installs; earlier installs keep theirs. */
+        const val VERSION = 3
+
+        /** Brings a save from an earlier [VERSION] up to date; [raw] is its JSON (a switch missing there had its old default). */
+        internal fun migrate(saved: AppPrefs, raw: String): AppPrefs {
+            var loaded = saved
+            val it = raw
+            if (loaded.prefsVersion < VERSION) {
+                // Saved before "Auto" existed: a model the person had chosen stays chosen.
+                // (version 0 only: from 1 on a missing switch means its default)
+                if (loaded.prefsVersion < 1 && "\"autoModel\"" !in it && loaded.defaultModel != null) loaded = loaded.copy(autoModel = false)
+                // The same for effort: a thinking level the person had set stays set.
+                if (loaded.prefsVersion < 1 && "\"autoEffort\"" !in it && loaded.thinkingLevel != null) loaded = loaded.copy(autoEffort = false)
+                // 2: the black-and-white redesign becomes the look once; Porcelain stays one tap away in Appearance.
+                if (loaded.prefsVersion < 2 && loaded.theme.style == ThemeStyle.PORCELAIN) loaded = loaded.copy(theme = loaded.theme.copy(style = ThemeStyle.MONO, appearance = ThemeAppearance.SYSTEM))
+                // 3: usage counts became on by default for new installations; an earlier save without the switch was
+                // saved under "off by default", and turning it off was indistinguishable from never touching it. It stays off.
+                if (loaded.prefsVersion < 3 && "\"shareUsageCounts\"" !in it) loaded = loaded.copy(shareUsageCounts = false)
+                loaded = loaded.copy(prefsVersion = VERSION)
+            }
+            return loaded
+        }
     }
 }
 

@@ -17,6 +17,8 @@ This includes transitive dependencies, rather than only the direct dependencies 
 | Kotlin standard library and kotlinx.coroutines / kotlinx.serialization | Apache-2.0 | https://github.com/JetBrains/kotlin, https://github.com/Kotlin/kotlinx.coroutines, https://github.com/Kotlin/kotlinx.serialization |
 | OkHttp and Okio | Apache-2.0 | https://github.com/square/okhttp, https://github.com/square/okio |
 | ZXing | Apache-2.0 | https://github.com/zxing/zxing |
+| RE2/J | BSD-3-Clause | https://github.com/google/re2j/tree/re2j-1.8; [original license](third_party/gradle/notices/com.google.re2j/re2j/1.8/LICENSE) |
+| jsoup | MIT | https://jsoup.org/; [original license](third_party/gradle/notices/org.jsoup/jsoup/1.23.2/META-INF/jsoup/LICENSE) |
 | Backdrop / AndroidLiquidGlass, including modified catalog examples | Apache-2.0; Copyright 2025 Kyant | https://github.com/Kyant0/AndroidLiquidGlass; modifications documented in [third_party/backdrop](third_party/backdrop/README.md) |
 | Shizuku API, provider, AIDL and shared library | MIT | https://github.com/RikkaApps/Shizuku-API; [original copyright/license](third_party/shizuku/LICENSE) |
 | AndroidHiddenApiBypass | Apache-2.0 | https://github.com/LSPosed/AndroidHiddenApiBypass |

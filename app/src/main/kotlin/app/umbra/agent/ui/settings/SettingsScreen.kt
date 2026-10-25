@@ -31,18 +31,20 @@ import app.umbra.agent.ui.shell.PageColumn
 import app.umbra.agent.ui.shell.PorcelainPage
 import app.umbra.agent.ui.shell.RowGroup
 import app.umbra.agent.ui.shell.SwitchRow
+import kotlinx.coroutines.launch
 
 /**
  * Settings: the mode first, then what people change — accounts, model, look, which hand, the Capsule — then Laya,
  * updates and permissions. Everything else (when to ask, standing instructions, stopping, the helper) is one row away.
  */
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onGo: (Dest) -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onGo: (Dest) -> Unit, onRoute: (String) -> Unit = {}) {
     val context = LocalContext.current
     val container = context.container
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
     val laya by container.laya.state.collectAsStateWithLifecycle()
     var picker by remember { mutableStateOf(false) }
+    var visionPicker by remember { mutableStateOf(false) }
     var permissions by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { container.laya.refresh() }
     PorcelainPage(stringResource(R.string.r_set_title), onBack) {
@@ -54,9 +56,10 @@ fun SettingsScreen(onBack: () -> Unit, onGo: (Dest) -> Unit) {
             RowGroup {
                 NavRow(PIcons.key, stringResource(R.string.r_menu_accounts), stringResource(R.string.r_set_accounts_body, prefs.providers.size)) { onGo(Dest.Accounts) }
                 NavRow(PIcons.spark, stringResource(R.string.r_model_title), value = modelLabel(prefs, container.modelDirectory)) { picker = true }
+                NavRow(PIcons.eye, stringResource(R.string.backup_vision_title), stringResource(R.string.backup_vision_body), value = prefs.backupVisionModel?.modelId ?: stringResource(R.string.backup_vision_off)) { visionPicker = true }
                 NavRow(
                     PIcons.drop, stringResource(R.string.r_set_appearance),
-                    value = stringResource(when (prefs.theme.style) { ThemeStyle.LIQUID -> R.string.theme_liquid; ThemeStyle.APPLE -> R.string.theme_apple; else -> R.string.theme_porcelain }),
+                    value = stringResource(when (prefs.theme.style) { ThemeStyle.LIQUID -> R.string.theme_liquid; ThemeStyle.APPLE -> R.string.theme_apple; app.umbra.agent.data.ThemeStyle.MONO -> R.string.theme_mono; else -> R.string.theme_porcelain }),
                 ) { onGo(Dest.Appearance) }
                 NavRow(PIcons.hand, stringResource(R.string.r_set_hand), value = stringResource(if (prefs.leftHanded) R.string.r_set_hand_left else R.string.r_set_hand_right)) {
                     container.settings.update { it.copy(leftHanded = !it.leftHanded) }
@@ -67,8 +70,24 @@ fun SettingsScreen(onBack: () -> Unit, onGo: (Dest) -> Unit) {
                         context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     }
                 }
+                if (prefs.overlayEnabled) {
+                    val neighbour by container.capsule.neighbourName.collectAsStateWithLifecycle()
+                    val placement = prefs.capsulePlacement
+                    val value = when (placement) {
+                        app.umbra.agent.data.CapsulePlacement.AUTO -> neighbour?.let { stringResource(R.string.cap_place_auto_beside, it) } ?: stringResource(R.string.cap_place_auto)
+                        app.umbra.agent.data.CapsulePlacement.CAMERA -> stringResource(R.string.cap_place_camera)
+                        app.umbra.agent.data.CapsulePlacement.CORNER -> stringResource(R.string.cap_place_corner)
+                        app.umbra.agent.data.CapsulePlacement.CENTRE -> stringResource(R.string.cap_place_centre)
+                    }
+                    NavRow(PIcons.pin, stringResource(R.string.cap_place_title), stringResource(R.string.cap_place_body), value = value) {
+                        container.settings.update { it.copy(capsulePlacement = app.umbra.agent.data.CapsulePlacement.entries[(it.capsulePlacement.ordinal + 1) % app.umbra.agent.data.CapsulePlacement.entries.size]) }
+                    }
+                }
             }
             RowGroup {
+                val defaults = prefs.proactiveDefaults
+                NavRow(PIcons.zap, stringResource(R.string.proactive_agents_title), stringResource(R.string.proactive_agents_sub),
+                    value = "L${defaults.level}" + (defaults.morningMinute?.let { " · " + app.umbra.agent.ui.agents.minuteText(it) } ?: "")) { onRoute("proactive-agents") }
                 NavRow(PIcons.message, stringResource(R.string.ag_message_apps), stringResource(R.string.ag_message_apps_sub)) { onGo(Dest.Messages) }
                 NavRow(PIcons.bell, stringResource(R.string.ag_notification_reader), stringResource(R.string.ag_notification_reader_sub)) { onGo(Dest.Notifications) }
                 val layaOn = prefs.layaWanted && laya != LayaSidecar.State.NOT_INSTALLED && laya != LayaSidecar.State.NEEDS_LINUX
@@ -86,11 +105,17 @@ fun SettingsScreen(onBack: () -> Unit, onGo: (Dest) -> Unit) {
             }
             RowGroup {
                 if (prefs.uiMode != UiMode.SIMPLE) NavRow(PIcons.terminal, stringResource(R.string.r_set_linux)) { onGo(Dest.Linux) }
+                SwitchRow(PIcons.gauge, stringResource(R.string.usage_counts_title), stringResource(R.string.usage_counts_body), prefs.shareUsageCounts) { enabled ->
+                    container.settings.update { it.copy(shareUsageCounts = enabled) }
+                    if (enabled) container.scope.launch(kotlinx.coroutines.Dispatchers.IO) { container.usageCounts.recordOpen() }
+                }
                 NavRow(PIcons.sliders, stringResource(R.string.r_set_more)) { onGo(Dest.MoreSettings) }
             }
         }
     }
     if (picker) ModelPicker(onDismiss = { picker = false }, onConnect = { picker = false; onGo(Dest.Accounts) })
+    if (visionPicker) ModelPicker(onDismiss = { visionPicker = false }, onConnect = { visionPicker = false; onGo(Dest.Accounts) },
+        picked = prefs.backupVisionModel, onPick = { ref -> container.settings.update { it.copy(backupVisionModel = ref) } }, imagesOnly = true)
     if (permissions) PermissionsSheet(onDismiss = { permissions = false })
 }
 

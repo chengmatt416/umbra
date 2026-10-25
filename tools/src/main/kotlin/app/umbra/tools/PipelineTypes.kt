@@ -115,6 +115,8 @@ internal class OpContext(
     val attempts: MutableList<Attempt>,
     /** `strategy@backend` keys already tried whose effect could not be verified; they are skipped on a re-run. */
     val excluded: MutableSet<String> = mutableSetOf(),
+    val checkDispatch: suspend () -> Unit = {},
+    val checkEpoch: () -> Unit = {},
 ) {
     val environment: Environment get() = request.target.environment
     val policy: FailurePolicy get() = request.failure
@@ -132,6 +134,8 @@ internal sealed interface StrategyOutcome {
 
 internal class StrategyRun(val succeeded: Boolean, val backend: String?, val detail: String?, val error: ActionError?)
 
+internal class ActionFencedException(message: String) : Exception(message)
+
 /**
  * Tries [strategies] in order, retrying transient failures of one strategy before moving on, and
  * records every try as an [Attempt] (spec §17 "recovery trail"). A stale element ends the run at
@@ -145,6 +149,7 @@ internal suspend fun runStrategies(env: PipelineEnv, c: OpContext, strategies: L
         while (true) {
             val t0 = env.clock.nowMs()
             val failure: ActionError? = try {
+                c.checkDispatch()
                 when (val r = s.run()) {
                     is StrategyOutcome.Done -> {
                         c.attempts += Attempt(s.name, s.backend, ActionStatus.OK, r.detail, env.clock.nowMs() - t0)
@@ -156,6 +161,8 @@ internal suspend fun runStrategies(env: PipelineEnv, c: OpContext, strategies: L
                     }
                 }
             } catch (e: CancellationException) {
+                throw e
+            } catch (e: ActionFencedException) {
                 throw e
             } catch (e: BackendException) {
                 c.attempts += Attempt(s.name, s.backend, ActionStatus.FAILED, "${e.code.name.lowercase()}: ${e.message}", env.clock.nowMs() - t0)

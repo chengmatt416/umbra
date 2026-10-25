@@ -99,7 +99,7 @@ internal fun rememberCompanionClock(moods: Set<Mood>, moving: Boolean): State<Lo
     val time = remember { mutableLongStateOf(REST) }
     LaunchedEffect(moods, moving) {
         time.longValue = REST
-        if (!moving || moods.none(Crews::moves)) return@LaunchedEffect
+        if (!moving || moods.none(Crews::moves) || moods.all { it == Mood.IDLE }) return@LaunchedEffect
         val breathingOnly = moods.all { it == Mood.IDLE }
         var first = REST
         var last = REST
