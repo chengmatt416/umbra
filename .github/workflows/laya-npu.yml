@@ -116,9 +116,7 @@ jobs:
           - { vendor: mediatek, soc: MT6877 }
           - { vendor: mediatek, soc: MT6878 }
           - { vendor: mediatek, soc: MT6879 }
-          - { vendor: mediatek, soc: MT6886 }
           - { vendor: mediatek, soc: MT6893 }
-          - { vendor: mediatek, soc: MT6895 }
           - { vendor: mediatek, soc: MT6897 }
           - { vendor: mediatek, soc: MT6983 }
           - { vendor: mediatek, soc: MT6985 }
@@ -130,7 +128,7 @@ jobs:
           - { vendor: mediatek, soc: MT8189 }
     env:
       KEY: ${{ matrix.vendor }}-${{ matrix.soc }}
-      WANTED: ${{ inputs.socs }}
+      WANTED: ${{ inputs.socs || 'SM8550,MT6853,MT6877,MT6878,MT6879,MT6893,MT6897,MT6983,MT6985,MT6989,MT6991,MT6993,MT8171,MT8188,MT8189' }}
       SOURCE_OK: ${{ matrix.vendor != 'mediatek' || needs.npu-source.result == 'success' }}
     steps:
       - name: Skip SoCs that were not asked for
@@ -177,7 +175,8 @@ jobs:
         if: steps.want.outputs.run
         run: |
           ( while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/{print "mem " $3 " MB"} /Swap/{print "swap " $3 " MB"}' | tr '\n' ' ')"; done ) &
-          python runtime-build/laya/convert.py aot --out /mnt/laya --socs "${{ matrix.soc }}"
+          python runtime-build/laya/convert.py aot --out /mnt/laya --socs "${{ matrix.soc }}" \
+            --plugin-flags "${{ matrix.vendor == 'qualcomm' && 'qualcomm_enable_weight_sharing=true' || '' }}"
           mv /mnt/laya/npu/aot-report.json "/mnt/laya/npu/$KEY.report.json"
           cat "/mnt/laya/npu/$KEY.report.json"
       - name: Publish

@@ -35,7 +35,8 @@ NPU_TARGETS = {
     "qualcomm": ["SM8350", "SM8450", "SM8475", "SM8550", "SM8650", "SM8750", "SM8845", "SM8850"],
     # Google Tensor is listed for completeness: LiteRT 2.3.0's Tensor compiler download (tensor-ml-sdk 6.1.0) answers
     # 404, so CI cannot build it and Pixels use their GPU.
-    "mediatek": ["MT6853", "MT6877", "MT6878", "MT6879", "MT6886", "MT6893", "MT6895", "MT6897", "MT6983", "MT6985",
+    # (MT6886 and MT6895 are in LiteRT's list, but NeuroPilot's compiler answers "Not a valid platform" for them.)
+    "mediatek": ["MT6853", "MT6877", "MT6878", "MT6879", "MT6893", "MT6897", "MT6983", "MT6985",
                  "MT6989", "MT6991", "MT6993", "MT8171", "MT8188", "MT8189"],
     "google_tensor": ["Tensor_G3", "Tensor_G4", "Tensor_G5", "Tensor_G6"],
 }
@@ -70,9 +71,10 @@ def exportable(model, length, layout="default"):
 
     Inputs: input_ids int32[1,L], key_mask f32[1,L] (0 or MASKED), markers f32[1,K,L], qtype f32[1,3] -> logits f32[1,K]
 
-    layout "npu4d": the same maths, with the option pick (markers x hidden states) as a 4-D batch matmul like the
-    attention's. MediaTek's Neuron compiler refuses a 3-D BATCH_MATMUL ("input rank is invalid"), which left it nothing
-    to compile; this file is only the NPU compilers' input, so the GPU and CPU file stays as it is.
+    layout "npu4d": the same maths, with the option pick (markers x hidden states) shaped like the attention's batch
+    matmuls ([16,K,L] x [16,L,64]). The converter turns the plain pick into BATCH_MATMUL [1,K,L] x [L,H], mixed ranks,
+    which MediaTek's Neuron compiler refuses ("input rank is invalid") and so compiled nothing. This file is only the
+    NPU compilers' input; the GPU and CPU file stays as it is.
     """
     import torch
     import torch.nn.functional as F
@@ -156,7 +158,10 @@ def exportable(model, length, layout="default"):
                     h = h + sa.out_proj(att)
                     h = h + layer.linear2(layer.activation(layer.linear1(norm(layer.norm2, h))))
             if layout == "npu4d":
-                picked = torch.matmul(markers[:, None], h[:, None])[:, 0]
+                k = markers.shape[1]
+                parts = h.reshape(1, length, heads, head_dim).transpose(1, 2)               # [1, 16, L, 64]
+                picks = torch.cat([markers[:, None]] * heads, dim=1)                         # [1, 16, K, L]
+                picked = torch.matmul(picks, parts).transpose(1, 2).reshape(1, k, width)     # [1, K, H]
             else:
                 picked = torch.matmul(markers, h)
             ln, *rest = m.scorer
@@ -403,6 +408,14 @@ def cmd_aot(args):
     if not (sys.platform.startswith("linux") and platform.machine() in ("x86_64", "AMD64")):
         raise SystemExit("aot needs Linux x86_64 (LiteRT ships its NPU compiler plugins only for it)")
     from ai_edge_litert.aot import aot_compile
+    from ai_edge_litert.aot.core import apply_plugin
+    # LiteRT's Python layer passes no compiler flags of its own; these go to the apply_plugin tool as --key=value.
+    # Qualcomm: the two signatures (256 and 1024 tokens) are two graphs with the same weights, which without sharing
+    # are stored twice (1.73 GB for an 0.85 GB model).
+    plugin_flags = dict(f.split("=", 1) for f in args.plugin_flags.split(",") if f)
+    if plugin_flags:
+        call = apply_plugin.ApplyPlugin.__call__
+        apply_plugin.ApplyPlugin.__call__ = lambda self, *a, **kw: call(self, *a, **{**kw, **plugin_flags})
     from ai_edge_litert.aot.vendors.google_tensor import target as tensor
     from ai_edge_litert.aot.vendors.mediatek import target as mediatek
     from ai_edge_litert.aot.vendors.qualcomm import target as qualcomm
@@ -543,6 +556,7 @@ def main():
     p.add_argument("--variants", default="fp32,fp16,int8")
     p.add_argument("--accelerators", default="cpu,gpu,gpu32")
     p.add_argument("--socs", default="", help="aot: comma-separated SoCs or vendors (default: all of NPU_TARGETS)")
+    p.add_argument("--plugin-flags", default="", help="aot: key=value,... passed to LiteRT's apply_plugin tool")
     p.add_argument("--layout", default="default", choices=["default", "npu4d"], help="export: graph layout (see exportable)")
     p.add_argument("--npu-url", default="", help="manifest: where the NPU files are published (default: R2 next to the others)")
     args = p.parse_args()
