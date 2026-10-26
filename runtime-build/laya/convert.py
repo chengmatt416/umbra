@@ -429,6 +429,12 @@ def cmd_aot(args):
                         json.dump({"bytes": os.path.getsize(target), "sha256": sha256(target)}, f)
                 except Exception as e:  # noqa: BLE001 -- one SoC failing must not stop the others
                     report[key] = {"error": str(e)[:1000]}
+                    # The plugin writes why to a temporary file ("See /tmp/....error for details"), gone with tmp.
+                    import re
+                    for detail in re.findall(r"See (\S+\.error)", str(e)):
+                        if os.path.exists(detail):
+                            with open(detail, errors="replace") as f:
+                                report[key]["detail"] = f.read()[-6000:]
             print(key, {k: v for k, v in report[key].items() if k != "report"}, flush=True)
     with open(os.path.join(out, "aot-report.json"), "w") as f:
         json.dump(report, f, indent=1)

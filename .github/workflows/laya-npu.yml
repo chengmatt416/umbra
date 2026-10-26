@@ -82,7 +82,7 @@ jobs:
           - { vendor: google_tensor, soc: Tensor_G6 }
     env:
       KEY: ${{ matrix.vendor }}-${{ matrix.soc }}
-      WANTED: ${{ inputs.socs }}
+      WANTED: ${{ inputs.socs || 'SM8550,MT6989,Tensor_G4' }}
     steps:
       - name: Skip SoCs that were not asked for
         id: want
