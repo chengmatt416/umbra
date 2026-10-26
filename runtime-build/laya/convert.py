@@ -133,11 +133,17 @@ def exportable(model, length, layout="default"):
 
         def forward(self, input_ids, key_mask, markers, qtype):
             m = self.model
+            if layout == "npu4d":
+                # The lookup first: MediaTek runs it on the CPU, and an NPU op before it (the masks) would be a
+                # partition of its own.
+                looked_up = enc.embeddings.tok_embeddings(input_ids.long())
             full = key_mask[:, None, None, :]
             masks = {"full_attention": full, "sliding_attention": full + self.near}
             # nn.Embedding lowers to EMBEDDING_LOOKUP, which Qualcomm's compiler takes and the quantizer stores as fp16
             # (index_select lowers to GATHER_ND plus bounds checks, and its table stays fp32: 100 MB more).
-            h = norm(enc.embeddings.norm, enc.embeddings.tok_embeddings(input_ids.long()))
+            if layout != "npu4d":
+                looked_up = enc.embeddings.tok_embeddings(input_ids.long())
+            h = norm(enc.embeddings.norm, looked_up)
             width = heads * head_dim
             for layer in enc.layers:
                 a = layer.attn
@@ -226,12 +232,19 @@ FP16_RECIPE = [{
 }]
 
 
+# npu4d: the embedding table stays fp32. MediaTek runs the lookup on the CPU, and a DEQUANTIZE of an fp16 table would
+# be an NPU partition with no input of its own, which LiteRT's MediaTek plugin cannot compile ("Failed to identify
+# model I/Os"). 100 MB more, in that file only.
+FP16_NPU4D_RECIPE = FP16_RECIPE + [{"regex": ".*", "operation": "EMBEDDING_LOOKUP", "algorithm_key": "no_quantize"}]
+
+
 def cmd_quantize(args):
     from ai_edge_quantizer import quantizer, recipe
     source = os.path.join(args.out, "laya-typed-decisions-fp32.tflite")
     # int8 (dynamic range) is kept for comparison only: it quantizes activations per tensor, and ModernBERT's outliers
     # (~28,600) leave too little precision for everything else (decisions flipped in verify). The CPU uses fp16 too.
-    for name, rec in (("fp16", FP16_RECIPE), ("int8", recipe.dynamic_wi8_afp32())):
+    fp16 = FP16_NPU4D_RECIPE if args.layout == "npu4d" else FP16_RECIPE
+    for name, rec in (("fp16", fp16), ("int8", recipe.dynamic_wi8_afp32())):
         if name not in args.variants.split(","):
             continue
         started = time.time()
@@ -490,7 +503,8 @@ def cmd_manifest(args):
     # NPU files: the .tflite itself, or the .json the aot step writes next to it (bytes and SHA-256) when the file was
     # compiled and published elsewhere (--npu-url: where they are, as <vendor>-<soc>.tflite).
     npu = os.path.join(args.out, "npu")
-    keys = sorted({os.path.basename(p).rsplit(".", 1)[0] for p in glob.glob(os.path.join(npu, "*.tflite")) + glob.glob(os.path.join(npu, "*-*.json"))})
+    sidecars = [p for p in glob.glob(os.path.join(npu, "*-*.json")) if not p.endswith(".report.json")]
+    keys = sorted({os.path.basename(p).rsplit(".", 1)[0] for p in glob.glob(os.path.join(npu, "*.tflite")) + sidecars})
     for key in keys:
         vendor, soc = key.split("-", 1)
         path = os.path.join(npu, key + ".tflite")

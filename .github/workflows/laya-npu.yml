@@ -75,7 +75,7 @@ jobs:
         run: |
           ( while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/{print "mem " $3 " MB"} /Swap/{print "swap " $3 " MB"}' | tr '\n' ' ')"; done ) &
           python runtime-build/laya/convert.py export --checkpoint /mnt/src/ckpt --out /mnt/src/out --layout npu4d
-          python runtime-build/laya/convert.py quantize --checkpoint /mnt/src/ckpt --out /mnt/src/out --variants fp16
+          python runtime-build/laya/convert.py quantize --checkpoint /mnt/src/ckpt --out /mnt/src/out --variants fp16 --layout npu4d
           rm -f /mnt/src/out/laya-typed-decisions-fp32.tflite
           python runtime-build/laya/convert.py verify --checkpoint /mnt/src/ckpt --out /mnt/src/out --variants fp16 --accelerators cpu
           python - <<'PY'
@@ -127,7 +127,7 @@ jobs:
           - { vendor: mediatek, soc: MT8189 }
     env:
       KEY: ${{ matrix.vendor }}-${{ matrix.soc }}
-      WANTED: ${{ inputs.socs }}
+      WANTED: ${{ inputs.socs || 'MT6853,MT6877,MT6878,MT6879,MT6893,MT6897,MT6983,MT6985,MT6989,MT6991,MT6993,MT8171,MT8188,MT8189' }}
       SOURCE_OK: ${{ matrix.vendor != 'mediatek' || needs.npu-source.result == 'success' }}
     steps:
       - name: Skip SoCs that were not asked for
