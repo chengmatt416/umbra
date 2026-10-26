@@ -11,10 +11,9 @@ name: Laya NPU builds
 # golden requests, and hands it to the MediaTek jobs. It holds only the 1024-token signature: MediaTek's compiler has
 # no weight sharing, so two signatures stored the weights twice (1.7 GB); the app pads shorter rows (LayaFile.buckets). Google Tensor is not built: its compiler is not downloadable.
 
+# By hand only: an app version pins each published file's size and SHA-256, and compiles are not byte-for-byte
+# reproducible, so a published file is never replaced (Publish refuses); a new conversion gets a new $TAG.
 on:
-  push:
-    branches: [laya-npu]
-    paths: ['.github/workflows/laya-npu.yml', 'runtime-build/laya/convert.py']
   workflow_dispatch:
     inputs:
       socs:
@@ -126,7 +125,7 @@ jobs:
           - { vendor: mediatek, soc: MT8189 }
     env:
       KEY: ${{ matrix.vendor }}-${{ matrix.soc }}
-      WANTED: ${{ inputs.socs || 'MT6877,MT6878,MT6879,MT6897,MT6983,MT6985,MT6989,MT6991,MT6993,MT8171,MT8188,MT8189' }}
+      WANTED: ${{ inputs.socs }}
       SOURCE_OK: ${{ matrix.vendor != 'mediatek' || needs.npu-source.result == 'success' }}
     steps:
       - name: Skip SoCs that were not asked for
@@ -185,6 +184,9 @@ jobs:
           cd /mnt/laya/npu
           files="$KEY.report.json"
           if [ -f "$KEY.tflite" ]; then
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' | grep -qx "$KEY.tflite"; then
+              echo "$KEY.tflite is already published and app versions pin it: not replacing it"; exit 1
+            fi
             files="$KEY.tflite $KEY.json $files"
           fi
           gh release upload "$TAG" $files --repo "$GITHUB_REPOSITORY" --clobber
