@@ -33,6 +33,8 @@ NPU_TARGETS = {
     # automotive SA8255/SA8295 are left out). Laya's graph is fp16: a SoC whose NPU cannot take it (Hexagon before v73
     # has no fp16, say) fails its compile, aot-report.json says why, and that SoC uses its GPU instead.
     "qualcomm": ["SM8350", "SM8450", "SM8475", "SM8550", "SM8650", "SM8750", "SM8845", "SM8850"],
+    # Google Tensor is listed for completeness: LiteRT 2.3.0's Tensor compiler download (tensor-ml-sdk 6.1.0) answers
+    # 404, so CI cannot build it and Pixels use their GPU.
     "mediatek": ["MT6853", "MT6877", "MT6878", "MT6879", "MT6886", "MT6893", "MT6895", "MT6897", "MT6983", "MT6985",
                  "MT6989", "MT6991", "MT6993", "MT8171", "MT8188", "MT8189"],
     "google_tensor": ["Tensor_G3", "Tensor_G4", "Tensor_G5", "Tensor_G6"],
@@ -49,7 +51,7 @@ def load_agent(checkpoint_dir):
 MASKED = -1e4  # finite: representable in fp16 and still exp() == 0 next to real scores
 
 
-def exportable(model, length):
+def exportable(model, length, layout="default"):
     """laya.common.DecisionModel.forward (sequential layout, inference) for one fixed sequence length, written so that
     LiteRT's CPU, GPU and NPU backends can all run it. Same weights, same maths; what changes is the shape of the graph:
 
@@ -67,6 +69,10 @@ def exportable(model, length):
       LayerNorm takes (TFLite has no LayerNorm op) do not, so a GPU or NPU computing in fp16 returned inf.
 
     Inputs: input_ids int32[1,L], key_mask f32[1,L] (0 or MASKED), markers f32[1,K,L], qtype f32[1,3] -> logits f32[1,K]
+
+    layout "npu4d": the same maths, with the option pick (markers x hidden states) as a 4-D batch matmul like the
+    attention's. MediaTek's Neuron compiler refuses a 3-D BATCH_MATMUL ("input rank is invalid"), which left it nothing
+    to compile; this file is only the NPU compilers' input, so the GPU and CPU file stays as it is.
     """
     import torch
     import torch.nn.functional as F
@@ -149,7 +155,10 @@ def exportable(model, length):
                                  split_heads(qkv[..., 2 * e:], n, d), full, d)
                     h = h + sa.out_proj(att)
                     h = h + layer.linear2(layer.activation(layer.linear1(norm(layer.norm2, h))))
-            picked = torch.matmul(markers, h)
+            if layout == "npu4d":
+                picked = torch.matmul(markers[:, None], h[:, None])[:, 0]
+            else:
+                picked = torch.matmul(markers, h)
             ln, *rest = m.scorer
             picked = norm(ln, picked)
             for module in rest:
@@ -188,7 +197,7 @@ def cmd_export(args):
     converter = None
     for length in BUCKETS:
         name = "l%d" % length
-        module = exportable(agent.model, length)
+        module = exportable(agent.model, length, args.layout)
         converter = (litert_torch.signature if converter is None else converter.signature)(name, module, sample(length))
     started = time.time()
     with torch.no_grad():
@@ -534,6 +543,7 @@ def main():
     p.add_argument("--variants", default="fp32,fp16,int8")
     p.add_argument("--accelerators", default="cpu,gpu,gpu32")
     p.add_argument("--socs", default="", help="aot: comma-separated SoCs or vendors (default: all of NPU_TARGETS)")
+    p.add_argument("--layout", default="default", choices=["default", "npu4d"], help="export: graph layout (see exportable)")
     p.add_argument("--npu-url", default="", help="manifest: where the NPU files are published (default: R2 next to the others)")
     args = p.parse_args()
     os.makedirs(args.out, exist_ok=True)

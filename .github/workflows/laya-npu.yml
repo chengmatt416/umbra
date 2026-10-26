@@ -5,6 +5,10 @@ name: Laya NPU builds
 # than a laptop has. Each compiled file is published as an asset of the pre-release $TAG (never "Latest"; the APK
 # mirror only looks at vX.Y.Z tags), with a <key>.json next to it holding its size and SHA-256 for the app's manifest
 # (convert.py manifest --npu-url). A SoC whose compile fails publishes only its report; phones with it use the GPU.
+#
+# Qualcomm compiles the same fp16 file the GPU and CPU run. MediaTek's compiler refuses that graph's 3-D batch matmul,
+# so `npu-source` exports the checkpoint again with the `npu4d` layout (same maths), checks it against PyTorch on the
+# golden requests, and hands it to the MediaTek jobs. Google Tensor is not built: its compiler is not downloadable.
 
 on:
   push:
@@ -43,8 +47,56 @@ jobs:
             --title "Laya NPU files ($REVISION)" \
             --notes "Laya (convaiinnovations/laya-typed-decisions @ $REVISION) compiled ahead of time for each phone NPU by LiteRT 2.3.0. The Umbra app downloads the file for its own chip and checks its size and SHA-256 against the list built into the app. Not an app release."
 
+  npu-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Room to work (disk and swap)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile /swapfile
+          sudo fallocate -l 32G /mnt/swapfile && sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile && sudo swapon /mnt/swapfile
+          sudo mkdir -p /mnt/src && sudo chown "$USER" /mnt/src
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: PyTorch, LiteRT Torch, the quantizer and Laya
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install litert-torch ai-edge-quantizer "ai-edge-litert==2.3.0" "laya==0.4.15" huggingface_hub numpy
+          pip list 2>/dev/null | grep -i -E "torch|litert|quantizer|laya|transformers"
+      - name: Checkpoint at the pinned revision
+        run: |
+          python -c "from huggingface_hub import snapshot_download as d; d('convaiinnovations/laya-typed-decisions', revision='1a793eb568e6718f15941d08f85432581df534e3', local_dir='/mnt/src/ckpt')"
+      - name: Export (npu4d), fp16, verify against PyTorch
+        run: |
+          ( while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/{print "mem " $3 " MB"} /Swap/{print "swap " $3 " MB"}' | tr '\n' ' ')"; done ) &
+          python runtime-build/laya/convert.py export --checkpoint /mnt/src/ckpt --out /mnt/src/out --layout npu4d
+          python runtime-build/laya/convert.py quantize --checkpoint /mnt/src/ckpt --out /mnt/src/out --variants fp16
+          rm -f /mnt/src/out/laya-typed-decisions-fp32.tflite
+          python runtime-build/laya/convert.py verify --checkpoint /mnt/src/ckpt --out /mnt/src/out --variants fp16 --accelerators cpu
+          python - <<'PY'
+          import json
+          r = json.load(open("/mnt/src/out/verify-report.json"))["fp16/cpu"]
+          print(r)
+          assert r.get("argmax_flips") == 0 and r.get("max_abs_logit_diff", 9) <= 0.6, r
+          PY
+          sha256sum /mnt/src/out/laya-typed-decisions-fp16.tflite
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npu4d-source
+          path: |
+            /mnt/src/out/laya-typed-decisions-fp16.tflite
+            /mnt/src/out/verify-report.json
+          retention-days: 7
+          compression-level: 0
+
   compile:
-    needs: release
+    needs: [release, npu-source]
+    if: always() && needs.release.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 340
     strategy:
@@ -76,17 +128,15 @@ jobs:
           - { vendor: mediatek, soc: MT8171 }
           - { vendor: mediatek, soc: MT8188 }
           - { vendor: mediatek, soc: MT8189 }
-          - { vendor: google_tensor, soc: Tensor_G3 }
-          - { vendor: google_tensor, soc: Tensor_G4 }
-          - { vendor: google_tensor, soc: Tensor_G5 }
-          - { vendor: google_tensor, soc: Tensor_G6 }
     env:
       KEY: ${{ matrix.vendor }}-${{ matrix.soc }}
-      WANTED: ${{ inputs.socs || 'SM8550,MT6989,Tensor_G4' }}
+      WANTED: ${{ inputs.socs }}
+      SOURCE_OK: ${{ matrix.vendor != 'mediatek' || needs.npu-source.result == 'success' }}
     steps:
       - name: Skip SoCs that were not asked for
         id: want
         run: |
+          if [ "$SOURCE_OK" != "true" ]; then echo "the npu4d source was not built"; exit 1; fi
           if [ -z "$WANTED" ] || echo ",$WANTED," | grep -q ",${{ matrix.soc }},"; then echo "run=1" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/checkout@v4
         if: steps.want.outputs.run
@@ -109,9 +159,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # The SDK packages download the vendor's compiler while they install (QAIRT, NeuroPilot, Tensor ML SDK).
+          # Qualcomm's compiler plugin is linked against LLVM's libc++, which the runner lacks.
+          sudo apt-get update -qq && sudo apt-get install -y -qq libc++1 libc++abi1
           pip install "ai-edge-litert==2.3.0" "ai-edge-litert-sdk-${{ matrix.vendor == 'google_tensor' && 'google-tensor' || matrix.vendor }}==2.3.0" numpy
+      - name: Laya's npu4d file (MediaTek)
+        if: steps.want.outputs.run && matrix.vendor == 'mediatek'
+        uses: actions/download-artifact@v4
+        with:
+          name: npu4d-source
+          path: /mnt/laya
       - name: Laya's fp16 file
-        if: steps.want.outputs.run
+        if: steps.want.outputs.run && matrix.vendor != 'mediatek'
         run: |
           curl -fL --retry 5 -o /mnt/laya/laya-typed-decisions-fp16.tflite "$FP16_URL"
           echo "$FP16_SHA256  /mnt/laya/laya-typed-decisions-fp16.tflite" | sha256sum -c -
