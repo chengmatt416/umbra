@@ -104,7 +104,6 @@ jobs:
       max-parallel: 10
       matrix:
         include:
-          - { vendor: qualcomm, soc: SM8350 }
           - { vendor: qualcomm, soc: SM8450 }
           - { vendor: qualcomm, soc: SM8475 }
           - { vendor: qualcomm, soc: SM8550 }
@@ -128,7 +127,7 @@ jobs:
           - { vendor: mediatek, soc: MT8189 }
     env:
       KEY: ${{ matrix.vendor }}-${{ matrix.soc }}
-      WANTED: ${{ inputs.socs || 'SM8550,MT6853,MT6877,MT6878,MT6879,MT6893,MT6897,MT6983,MT6985,MT6989,MT6991,MT6993,MT8171,MT8188,MT8189' }}
+      WANTED: ${{ inputs.socs }}
       SOURCE_OK: ${{ matrix.vendor != 'mediatek' || needs.npu-source.result == 'success' }}
     steps:
       - name: Skip SoCs that were not asked for

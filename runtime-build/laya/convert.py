@@ -32,7 +32,8 @@ NPU_TARGETS = {
     # Every phone and tablet SoC LiteRT 2.3.0's compilers name (ai_edge_litert/aot/vendors/*/target.py; Qualcomm's
     # automotive SA8255/SA8295 are left out). Laya's graph is fp16: a SoC whose NPU cannot take it (Hexagon before v73
     # has no fp16, say) fails its compile, aot-report.json says why, and that SoC uses its GPU instead.
-    "qualcomm": ["SM8350", "SM8450", "SM8475", "SM8550", "SM8650", "SM8750", "SM8845", "SM8850"],
+    # (SM8350, Hexagon v68, refuses the fp16 Gather and GELU: it uses its GPU.)
+    "qualcomm": ["SM8450", "SM8475", "SM8550", "SM8650", "SM8750", "SM8845", "SM8850"],
     # Google Tensor is listed for completeness: LiteRT 2.3.0's Tensor compiler download (tensor-ml-sdk 6.1.0) answers
     # 404, so CI cannot build it and Pixels use their GPU.
     # (MT6886 and MT6895 are in LiteRT's list, but NeuroPilot's compiler answers "Not a valid platform" for them.)
@@ -74,7 +75,7 @@ def exportable(model, length, layout="default"):
     layout "npu4d": the same maths, with the option pick (markers x hidden states) shaped like the attention's batch
     matmuls ([16,K,L] x [16,L,64]). The converter turns the plain pick into BATCH_MATMUL [1,K,L] x [L,H], mixed ranks,
     which MediaTek's Neuron compiler refuses ("input rank is invalid") and so compiled nothing. This file is only the
-    NPU compilers' input; the GPU and CPU file stays as it is.
+    NPU compilers' input; the GPU and CPU file stays as it is. Its attention is written in 3-D too (see attend).
     """
     import torch
     import torch.nn.functional as F
@@ -112,6 +113,12 @@ def exportable(model, length, layout="default"):
         return x.reshape(1, length, n, d).transpose(1, 2)
 
     def attend(q, k, v, mask, d):
+        if layout == "npu4d":
+            # In 3-D ([heads, L, d], mask [1, L, L]): the converter folds the batch of 1 out of the scores but not out
+            # of the mask, and MediaTek's MDLA refuses ADD <16 x L x L> + <1 x 1 x L x L>.
+            q, k, v, mask = q[0], k[0], v[0], mask[0]
+            scores = torch.matmul(q, k.transpose(-1, -2)) * (d ** -0.5) + mask
+            return torch.matmul(torch.softmax(scores, dim=-1), v).transpose(0, 1).reshape(1, length, -1)
         scores = torch.matmul(q, k.transpose(-1, -2)) * (d ** -0.5) + mask
         return torch.matmul(torch.softmax(scores, dim=-1), v).transpose(1, 2).reshape(1, length, -1)
 
