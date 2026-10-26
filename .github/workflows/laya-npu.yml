@@ -8,7 +8,8 @@ name: Laya NPU builds
 #
 # Qualcomm compiles the same fp16 file the GPU and CPU run. MediaTek's compiler refuses that graph's 3-D batch matmul,
 # so `npu-source` exports the checkpoint again with the `npu4d` layout (same maths), checks it against PyTorch on the
-# golden requests, and hands it to the MediaTek jobs. Google Tensor is not built: its compiler is not downloadable.
+# golden requests, and hands it to the MediaTek jobs. It holds only the 1024-token signature: MediaTek's compiler has
+# no weight sharing, so two signatures stored the weights twice (1.7 GB); the app pads shorter rows (LayaFile.buckets). Google Tensor is not built: its compiler is not downloadable.
 
 on:
   push:
@@ -74,7 +75,7 @@ jobs:
       - name: Export (npu4d), fp16, verify against PyTorch
         run: |
           ( while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/{print "mem " $3 " MB"} /Swap/{print "swap " $3 " MB"}' | tr '\n' ' ')"; done ) &
-          python runtime-build/laya/convert.py export --checkpoint /mnt/src/ckpt --out /mnt/src/out --layout npu4d
+          python runtime-build/laya/convert.py export --checkpoint /mnt/src/ckpt --out /mnt/src/out --layout npu4d --buckets 1024
           python runtime-build/laya/convert.py quantize --checkpoint /mnt/src/ckpt --out /mnt/src/out --variants fp16 --layout npu4d
           rm -f /mnt/src/out/laya-typed-decisions-fp32.tflite
           python runtime-build/laya/convert.py verify --checkpoint /mnt/src/ckpt --out /mnt/src/out --variants fp16 --accelerators cpu
@@ -111,11 +112,9 @@ jobs:
           - { vendor: qualcomm, soc: SM8750 }
           - { vendor: qualcomm, soc: SM8845 }
           - { vendor: qualcomm, soc: SM8850 }
-          - { vendor: mediatek, soc: MT6853 }
           - { vendor: mediatek, soc: MT6877 }
           - { vendor: mediatek, soc: MT6878 }
           - { vendor: mediatek, soc: MT6879 }
-          - { vendor: mediatek, soc: MT6893 }
           - { vendor: mediatek, soc: MT6897 }
           - { vendor: mediatek, soc: MT6983 }
           - { vendor: mediatek, soc: MT6985 }
@@ -127,7 +126,7 @@ jobs:
           - { vendor: mediatek, soc: MT8189 }
     env:
       KEY: ${{ matrix.vendor }}-${{ matrix.soc }}
-      WANTED: ${{ inputs.socs || 'MT6853,MT6877,MT6878,MT6879,MT6893,MT6897,MT6983,MT6985,MT6989,MT6991,MT6993,MT8171,MT8188,MT8189' }}
+      WANTED: ${{ inputs.socs || 'MT6877,MT6878,MT6879,MT6897,MT6983,MT6985,MT6989,MT6991,MT6993,MT8171,MT8188,MT8189' }}
       SOURCE_OK: ${{ matrix.vendor != 'mediatek' || needs.npu-source.result == 'success' }}
     steps:
       - name: Skip SoCs that were not asked for

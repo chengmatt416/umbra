@@ -37,7 +37,8 @@ NPU_TARGETS = {
     # Google Tensor is listed for completeness: LiteRT 2.3.0's Tensor compiler download (tensor-ml-sdk 6.1.0) answers
     # 404, so CI cannot build it and Pixels use their GPU.
     # (MT6886 and MT6895 are in LiteRT's list, but NeuroPilot's compiler answers "Not a valid platform" for them.)
-    "mediatek": ["MT6853", "MT6877", "MT6878", "MT6879", "MT6893", "MT6897", "MT6983", "MT6985",
+    # (MT6853 and MT6893, older APUs, refuse a dozen of its ops: they use their GPU.)
+    "mediatek": ["MT6877", "MT6878", "MT6879", "MT6897", "MT6983", "MT6985",
                  "MT6989", "MT6991", "MT6993", "MT8171", "MT8188", "MT8189"],
     "google_tensor": ["Tensor_G3", "Tensor_G4", "Tensor_G5", "Tensor_G6"],
 }
@@ -213,7 +214,7 @@ def cmd_export(args):
     import litert_torch
     agent = load_agent(args.checkpoint)
     converter = None
-    for length in BUCKETS:
+    for length in (int(b) for b in args.buckets.split(",")):
         name = "l%d" % length
         module = exportable(agent.model, length, args.layout)
         converter = (litert_torch.signature if converter is None else converter.signature)(name, module, sample(length))
@@ -389,9 +390,12 @@ def cmd_verify(args):
                 report["%s/%s" % (variant, accel_name)] = {"error": str(e)[:300]}
                 continue
             worst, flips, times = 0.0, 0, []
+            # A file exported with fewer buckets (--buckets) answers a short row padded to the next length it has.
+            have = sorted(int(n[1:]) for n in model.get_signature_list())
             for fx in golden["requests"]:
                 for r in fx["rows"]:
-                    length, inputs = graph_inputs(r["ids"], r["markers"], r["qtype"], pad)
+                    length, inputs = graph_inputs(r["ids"], r["markers"], r["qtype"], pad,
+                                                  next(n for n in have if n >= bucket_for(len(r["ids"]))))
                     started = time.time()
                     logits = run_litert(model, "l%d" % length, inputs)
                     times.append((length, time.time() - started))
@@ -466,9 +470,14 @@ def cmd_aot(args):
                     shutil.move(produced[0], target)
                     report[key] = {"seconds": round(time.time() - started), "bytes": os.path.getsize(target),
                                    "report": result.compilation_report()[:2000]}
-                    # What the manifest needs, for a file that is published from this machine and never copied back.
+                    # What the manifest needs, for a file that is published from this machine and never copied back,
+                    # with the sequence lengths it holds when not all of BUCKETS (the app pads up to them).
+                    meta = {"bytes": os.path.getsize(target), "sha256": sha256(target)}
+                    held = signature_lengths(source)
+                    if held != list(BUCKETS):
+                        meta["buckets"] = held
                     with open(os.path.join(out, key + ".json"), "w") as f:
-                        json.dump({"bytes": os.path.getsize(target), "sha256": sha256(target)}, f)
+                        json.dump(meta, f)
                 except Exception as e:  # noqa: BLE001 -- one SoC failing must not stop the others
                     report[key] = {"error": str(e)[:1000]}
                     # The plugin writes why to a temporary file ("See /tmp/....error for details"), gone with tmp.
@@ -480,6 +489,14 @@ def cmd_aot(args):
             print(key, {k: v for k, v in report[key].items() if k != "report"}, flush=True)
     with open(os.path.join(out, "aot-report.json"), "w") as f:
         json.dump(report, f, indent=1)
+
+
+def signature_lengths(path):
+    """The sequence lengths a converted file has signatures for ("l256", "l1024")."""
+    from ai_edge_litert import schema_py_generated as schema
+    with open(path, "rb") as f:
+        model = schema.Model.GetRootAsModel(f.read(), 0)
+    return sorted(int(model.SignatureDefs(i).SignatureKey().decode()[1:]) for i in range(model.SignatureDefsLength()))
 
 
 def sha256(path):
@@ -515,6 +532,11 @@ def cmd_manifest(args):
                 meta = json.load(f)
             size, digest = meta["bytes"], meta["sha256"]
         entry = {"name": "npu/%s.tflite" % key, "backend": "npu", "vendor": vendor, "soc": soc, "bytes": size, "sha256": digest}
+        if os.path.exists(os.path.join(npu, key + ".json")):
+            with open(os.path.join(npu, key + ".json")) as f:
+                held = json.load(f).get("buckets")
+            if held:
+                entry["buckets"] = held
         if args.npu_url:
             entry["url"] = args.npu_url.rstrip("/") + "/%s.tflite" % key
         files.append(entry)
@@ -578,6 +600,7 @@ def main():
     p.add_argument("--accelerators", default="cpu,gpu,gpu32")
     p.add_argument("--socs", default="", help="aot: comma-separated SoCs or vendors (default: all of NPU_TARGETS)")
     p.add_argument("--plugin-flags", default="", help="aot: key=value,... passed to LiteRT's apply_plugin tool")
+    p.add_argument("--buckets", default=",".join(map(str, BUCKETS)), help="export: sequence lengths to give signatures")
     p.add_argument("--layout", default="default", choices=["default", "npu4d"], help="export: graph layout (see exportable)")
     p.add_argument("--npu-url", default="", help="manifest: where the NPU files are published (default: R2 next to the others)")
     args = p.parse_args()
