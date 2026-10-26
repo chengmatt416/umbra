@@ -72,6 +72,7 @@ class SessionTools(
                 string("model", "Which model: \"auto\" (default: the same as yours), or provider/id such as \"anthropic/claude-sonnet-5-5\". A light model suits mechanical work.")
                 enum("effort", listOf("auto", "minimal", "low", "medium", "high", "xhigh", "max"), "How hard it thinks (default: auto).")
                 boolean("wait", "Wait until it finishes and return its answer (default false: it runs while you continue, and its answer arrives as a message).")
+                integer("timeout_s", "Required when wait=true: how long you are prepared to wait (5–1800 seconds).")
             }) { args, progress -> start(sessionId, args, progress) })
             add(tool("subagent_status", "How a subagent is doing: its state, model, effort and what it did lately.", objectSchema {
                 string("name", "Its handle (with or without #).", required = true)
@@ -88,7 +89,7 @@ class SessionTools(
             })
             add(tool("subagent_wait", "Wait for subagents to finish their current work and get their answers.", objectSchema {
                 stringArray("names", "Handles to wait for (default: all of yours that are working).")
-                integer("timeout_s", "Give up waiting after this many seconds (default 600, at most 1800).")
+                integer("timeout_s", "How long you are prepared to wait (5–1800 seconds).", required = true)
             }) { args, progress -> wait(sessionId, args, progress) })
             add(tool("subagent_stop", "Stop a subagent (its work so far stays in the folder).", objectSchema {
                 string("name", "Its handle.", required = true)
@@ -148,6 +149,8 @@ class SessionTools(
     }
 
     private suspend fun start(selfId: String, args: JsonObject, progress: HostToolProgress): HostToolPayload {
+        val timeout = if (args.bool("wait") == true) args.waitTimeout()
+            ?: return err(timeoutRequired("subagent_start with wait=true")) else null
         val parent = store.get(selfId) ?: return err("This session no longer exists.")
         // One level of subagents: a subagent does its part itself (a phone runs few agents at once).
         if (parent.kind == SessionKind.SUBAGENT) return err("A subagent cannot start subagents of its own. Do this part yourself, or tell the session that started you what else is needed.")
@@ -176,7 +179,7 @@ class SessionTools(
         }
         if (args.bool("wait") == true) {
             bus.markConsumed(child.id)
-            val done = awaitTurn(listOf(child.id), 600_000, progress)
+            val done = awaitTurn(listOf(child.id), timeout!! * 1000L, progress)
             return HostToolPayload.text("Subagent $where:\n" + done.joinToString("\n\n"))
         }
         return HostToolPayload.text("Started $where. It works in your folder with your permissions. Its answer arrives in this conversation as a message each time it finishes; follow it with subagent_status, steer it with subagent_send.")
@@ -194,36 +197,41 @@ class SessionTools(
     }
 
     private suspend fun wait(selfId: String, args: JsonObject, progress: HostToolProgress): HostToolPayload {
+        val timeout = args.waitTimeout() ?: return err(timeoutRequired("subagent_wait"))
         val names = (args["names"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
         val mine = store.list().filter { it.spawnedBy == selfId }
         val targets = if (names.isNullOrEmpty()) mine.filter { !it.state.isTerminal } else names.mapNotNull { n -> mine.firstOrNull { bus.handleOf(it) == Handles.clean(n) } }
         if (targets.isEmpty()) return HostToolPayload.text("No subagent of yours is working.")
         targets.forEach { bus.markConsumed(it.id) }
-        val timeout = ((args.int("timeout_s") ?: 600).coerceIn(5, 1800)) * 1000L
-        return HostToolPayload.text(awaitTurn(targets.map { it.id }, timeout, progress).joinToString("\n\n"))
+        return HostToolPayload.text(awaitTurn(targets.map { it.id }, timeout * 1000L, progress).joinToString("\n\n"))
     }
 
     /** Waits until each session has finished its current turn; returns each one's answer (or where it stands at the timeout). */
     private suspend fun awaitTurn(ids: List<String>, timeoutMs: Long, progress: HostToolProgress): List<String> {
         val results = LinkedHashMap<String, String>()
-        withTimeoutOrNull(timeoutMs) {
-            while (results.size < ids.size) {
-                for (id in ids) {
-                    if (id in results) continue
-                    val s = store.get(id)
-                    if (s == null) {
-                        results[id] = "($id was deleted)"
-                        continue
+        try {
+            withTimeoutOrNull(timeoutMs) {
+                while (results.size < ids.size) {
+                    for (id in ids) {
+                        if (id in results) continue
+                        val s = store.get(id)
+                        if (s == null) {
+                            results[id] = "($id was deleted)"
+                            continue
+                        }
+                        if (s.state == SessionState.COMPLETED || s.state == SessionState.FAILED || s.state == SessionState.STOPPED) {
+                            results[id] = "${bus.address(s)} ${s.state.name.lowercase()}:\n" + supervisor.finalText(id).ifBlank { s.lastError ?: "(no answer)" }.take(SessionBus.REPORT_LIMIT)
+                        }
                     }
-                    if (s.state == SessionState.COMPLETED || s.state == SessionState.FAILED || s.state == SessionState.STOPPED) {
-                        results[id] = "${bus.address(s)} ${s.state.name.lowercase()}:\n" + supervisor.finalText(id).ifBlank { s.lastError ?: "(no answer)" }.take(SessionBus.REPORT_LIMIT)
+                    if (results.size < ids.size) {
+                        runCatching { progress.update(HostToolPayload.text("Waiting for ${ids.size - results.size} subagent(s)…")) }
+                        delay(1_000)
                     }
-                }
-                if (results.size < ids.size) {
-                    runCatching { progress.update(HostToolPayload.text("Waiting for ${ids.size - results.size} subagent(s)…")) }
-                    delay(1_000)
                 }
             }
+        } finally {
+            // Cancellation, like a timeout, must not swallow a later report.
+            ids.filterNot { it in results }.forEach(bus::unmarkConsumed)
         }
         for (id in ids) if (id !in results) {
             val s = store.get(id)
@@ -239,20 +247,12 @@ class SessionTools(
 
     // ---- small helpers ----
 
-    private fun mayRead(caller: Session?, target: Session, records: Map<String, Session>): Boolean {
-        if (caller == null) return false
-        if (caller.agentId == null || target.agentId == caller.agentId || target.id == caller.id) return true
-        val visited = mutableSetOf<String>()
-        var cursor: Session? = target
-        while (cursor != null && visited.size < 32 && visited.add(cursor.id)) {
-            if (cursor.id == caller.id || cursor.agentId == caller.agentId) return true
-            cursor = cursor.spawnedBy?.let(records::get)
-        }
-        return false
-    }
-
     private fun tool(name: String, description: String, schema: JsonObject, run: suspend (JsonObject, HostToolProgress) -> HostToolPayload) =
         HostSideTool(HostToolDefinition(name, description, schema)) { call: HostToolCall, progress -> run(call.arguments, progress) }
+
+    private fun JsonObject.waitTimeout(): Int? = (this["timeout_s"] as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull?.takeIf { it in 5..1800 }
+
+    private fun timeoutRequired(tool: String) = "$tool needs timeout_s: how long, in seconds, you are prepared to wait (5–1800)"
 
     private fun err(message: String) = HostToolPayload.error(message)
 
@@ -267,4 +267,16 @@ class SessionTools(
         private const val SEND_DESCRIPTION = "Send a message to another session or agent on this phone (like messaging a colleague). It arrives in their conversation after their current turn (or at once with urgent). Their answer, if any, comes back into this conversation as a message; do not wait for it unless you need it."
         private const val START_DESCRIPTION = "Start a subagent: a separate agent that works on part of your task in your folder, with your permissions, while you continue. Choose its model and effort to suit the work. Give it a complete, self-contained task. Its answer comes back as a message when it finishes; you can follow it with subagent_status and steer it with subagent_send."
     }
+}
+
+internal fun mayRead(caller: Session?, target: Session, records: Map<String, Session>): Boolean {
+    if (caller == null) return false
+    if (caller.agentId == null || target.agentId == caller.agentId || target.id == caller.id) return true
+    val visited = mutableSetOf<String>()
+    var cursor: Session? = target
+    while (cursor != null && visited.size < 32 && visited.add(cursor.id)) {
+        if (cursor.id == caller.id || cursor.agentId == caller.agentId) return true
+        cursor = cursor.spawnedBy?.let(records::get)
+    }
+    return false
 }

@@ -1,74 +1,69 @@
-# Laya on the phone's GPU (design, for approval)
+# Laya on the phone's NPU, GPU and CPU
 
-Owner request 2026-10-25: "Design the laya to run on the GPU for the program and prevent download cuda."
+Owner requests 2026-10-25: "Design the laya to run on the GPU for the program and prevent download cuda", then
+"design both GPU and NPU. Use NPU first and use GPU when NPU is not available. Use CPU as the final backup. Put all
+converted files on R2". Status: implemented for the next release (after 0.6.1); not yet verified on a physical phone.
 
-## Where Laya runs today
+## What changed
 
-- Laya 0.4.15 (Apache-2.0, ADR 0005) is a non-autoregressive decision model: one encoder forward pass answers typed
-  questions (`noul`, `choose`, `score`) with calibrated probabilities. Checkpoints: 322M (multilingual) and 421M
-  (English / typed decisions).
-- Umbra installs it with `pip install "laya[serve]"` into the Debian guest and runs `laya-serve` (FastAPI) on
-  loopback; `LayaHttpEngine` talks to it with a per-install bearer key. Laya's backends are PyTorch (eager / compile /
-  TileLang) and ONNX Runtime (`onnx_agent.py`: CUDA execution provider if present, else CPU).
-- **No phone has CUDA.** Until 0.6.1 the pip install still pulled PyTorch's Linux CUDA build: ~3.3 GB of `nvidia-*`
-  wheels plus `triton`, unusable on a phone (found on the QA emulator: the guest home grew to 5.6 GB).
+Until 0.6.1 Laya ran as `laya-serve` (Python, PyTorch) inside the Linux environment: a 2 GB pip install that pulled
+CUDA wheels a phone cannot use, then CPU only. Now the typed-decisions checkpoint is converted to LiteRT and runs inside
+the app process, behind the existing `DecisionEngine` interface, so the router, thresholds and callers are unchanged.
 
-## Already done in this pass (prevents the CUDA download)
+| Order | Backend | File | How it is chosen |
+| --- | --- | --- | --- |
+| 1 | NPU | the SoC's file compiled ahead of time (`npu/<vendor>-<soc>.tflite`) when R2 has one; else, on Qualcomm, the fp16 file compiled on the phone (cached, so once) | LiteRT reports an NPU, and the SoC (`Build.SOC_MANUFACTURER/SOC_MODEL`) has a file or is Qualcomm |
+| 2 | GPU | `laya-typed-decisions-fp16.tflite` (849 MB) | LiteRT reports a GPU |
+| 3 | CPU | the same fp16 file, so falling back downloads nothing more | always |
 
-- The installer takes PyTorch from its CPU-only index first (`download.pytorch.org/whl/cpu`, verified: 2.14.1+cpu for
-  aarch64/cp313 is the version Laya resolves), then `laya[serve]`, which reuses it. No `nvidia-*`, no `triton`.
-- pip unpacks into a private temp folder removed after every attempt; a failed install retries by itself at most
-  once a day, and that limit survives app restarts.
+Each candidate must open **and** reproduce the PyTorch logits of a reference question (tolerance 0.35, same answer)
+before it answers anything; a candidate that fails is remembered for that app version and skipped on later starts.
+Settings → Laya shows which processor answers and why better ones were skipped.
 
-This keeps Laya on the guest **CPU**. A Linux guest cannot use the phone's GPU: the vendor GPU drivers (Adreno,
-Mali, Xclipse) are Android (bionic) libraries, and the open-source alternatives (Mesa Turnip for Adreno over
-`/dev/kgsl-3d0`) cover one vendor, need device access inside the guest and are not a product-grade path.
+## Pieces
 
-## Proposal: a native Laya engine in the app, on the GPU
+- `runtime-build/laya/convert.py`: export (one signature per bucket, 256 and 1024 tokens; static shapes for GPU/NPU),
+  fp16 quantize, golden fixtures, verify, AOT compile (Linux x86_64), manifest, upload to R2, remote check.
+- `core/decision`: `LayaTokenizer` (ModernBERT byte-level BPE from `tokenizer.json`), `LayaEncoding` (Laya 0.4.15's
+  `build_sequence`, `render_options` and `_decode_answers`), `LayaNativeEngine`. JVM tests pin all three to fixtures
+  written by Laya's own Python code (token ids, sequences, markers, answers).
+- `app/.../data/laya`: `LayaPlan` (the order above), `LayaNative` (verified resumable downloads, LiteRT graph on its own
+  thread, the reference check), `LayaSidecar` (same API as before: state, engine, download/start/stop/remove).
+- The APK carries `assets/laya/laya-native.json` with every file's size and SHA-256, the checkpoint config and the
+  tokenizer. Nothing fetched from the network can change what the engine loads.
+- R2: `laya/<revision>/<file>` behind the site's `/download/` route (Range, immutable caching).
+- Qualcomm's QNN runtime (140 MB: HTP v73–v81 stubs and skeletons, `libQnnHtpPrepare.so` for compiling on the phone)
+  ships **inside the APK**: QTI's licence allows distributing it only as part of an application, so it is staged at
+  build time (`runtime-build/laya/fetch-qnn.sh`) and never committed or hosted on its own. MediaTek and Google Tensor
+  NPUs use the phone's own vendor libraries.
 
-Run Laya's encoder **inside the Umbra app process** with an Android accelerator, behind the existing
-`core/decision` `DecisionEngine` interface, so the `DecisionRouter`, thresholds and callers do not change.
+## What the conversion had to fix (all checked against PyTorch on golden requests)
 
-| Choice | Runtime | Accelerators | Coverage | Verdict |
+1. `topk` lowered to `STABLEHLO_SORT`, which no LiteRT backend runs: the act head is dropped (Umbra never reads it).
+2. Padded positions beyond ModernBERT's 64-token sliding window see no key; softmax over nothing is NaN in LiteRT and
+   `0 × NaN` reached real tokens: masks are additive with a finite −10⁴.
+3. HF's attention reshapes are 5-D (224 ops the GPU refused, splitting the graph into CPU islands) and the option
+   gather is `GATHER_ND`: attention is written in 4-D, markers and question type come in one-hot.
+4. ModernBERT's residual stream holds outliers near 28,600; the decomposed LayerNorm squares them (inf in fp16):
+   LayerNorm divides each token by its largest |x| first (scale-invariant; epsilon scaled with it).
+5. int8 dynamic-range weights quantize activations per tensor; the same outliers ruined them (decisions flipped), so
+   the CPU uses fp16 too.
+
+## Measured (Apple M1, LiteRT 2.3.0, 12 golden questions)
+
+| Run | Largest logit difference | Answers changed | 256 tokens | 1024 tokens |
 | --- | --- | --- | --- | --- |
-| **A (recommended)** | LiteRT (TensorFlow Lite) | GPU delegate (OpenCL / OpenGL ES, fp16), XNNPACK CPU fallback; NPU later via LiteRT's compiled-model accelerators | Adreno, Mali, PowerVR, Xclipse; works on the emulator's GPU through OpenGL ES | Broadest GPU support on Android; mature |
-| B | ONNX Runtime Android | QNN (Snapdragon NPU/GPU), NNAPI (deprecated since Android 15), XNNPACK CPU | Best on Snapdragon; weak elsewhere | Keep as a Snapdragon option later |
-| C | Guest Vulkan (Mesa Turnip + ncnn) | Adreno only | One vendor, needs `/dev/kgsl` in the guest | Rejected |
-| D | Guest CPU (today) | none | All | Stays as fallback |
+| CPU, fp16 file | 0.000 | 0 | 1.9 s | 8.9 s |
+| GPU (Metal) fp16 | 0.193 | 1 (two options 0.01 apart) | 0.13 s | 0.8 s |
+| GPU (Metal) fp32 | 0.000 | 0 | 0.17 s | 8.7 s |
 
-### Parts
+The app runs the GPU in fp16 (the NPU computes in fp16 too). Phone numbers will differ; the emulator check covers the
+CPU path and the fallback chain.
 
-1. **Model conversion (offline, `runtime-build/laya/`)**: export each checkpoint's encoder + heads from PyTorch with
-   `ai-edge-torch` (or ONNX → `onnx2tf`) to `.tflite`, fp16 weights, static sequence-length buckets (128 / 256 / 512)
-   because GPU delegates need static shapes. Publish the files with SHA-256 next to `models.json` (R2), like the APK.
-2. **Kotlin pre/post-processing (`core/decision/laya-native`)**: the tokenizer (from the checkpoint's
-   `tokenizer.json`), Laya's state/question encoding, answer decoding and calibration (temperatures, confidence), ported
-   from `onnx_agent.py` (~900 lines). Golden fixtures generated by the Python agent pin parity (answers and
-   probabilities within tolerance) in JVM tests.
-3. **Runtime (`app`)**: `LayaNativeEngine : DecisionEngine` loads the model with the GPU delegate, falls back to
-   XNNPACK on delegate failure, warms up once, and reports `GPU` / `CPU` and measured latency in Settings → Laya.
-   Memory: fp16 322M ≈ 650 MB, so it loads on demand and unloads when idle (the "keep resident" switch applies).
-4. **Routing**: prefer the native engine when its model is present; the guest `laya-serve` remains a fallback for a
-   checkpoint not yet converted. The download becomes one file per checkpoint (no Python, no pip, no 2 GB guest
-   install), with resumable download and SHA-256 check.
+## Not done / not verified
 
-### Phases and verification
-
-1. Convert the multilingual checkpoint; generate golden fixtures; JVM parity tests for tokenizer + decoding.
-2. LiteRT GPU integration; emulator check (GPU delegate through OpenGL ES) for correctness and fallback.
-3. Physical-phone benchmark (Snapdragon and one Mali/Exynos): latency, memory, energy per 100 decisions vs guest CPU.
-4. Make native the default; keep guest CPU as fallback; update ADR 0005.
-
-### Risks
-
-- GPU delegate op coverage for attention/layer norm is good in fp16, but any unsupported op falls back to CPU for that
-  partition; the conversion step reports delegate coverage and fails the build below a threshold.
-- fp16 can shift calibrated probabilities near thresholds: parity tests gate on agreement of the routed decision, not
-  only raw closeness.
-- Each Laya release needs re-conversion (automated in the build script).
-
-## Decisions needed from the owner
-
-- Approve **A (LiteRT GPU, in-app)** as the direction, with guest CPU kept as fallback?
-- May converted Laya weights be published on Umbra's R2 (Apache-2.0 permits redistribution with notice)?
-- Add the Snapdragon NPU path (B, QNN) after A, or not?
+- **NPU files compiled ahead of time are not on R2 yet.** LiteRT's NPU compiler plugins exist only for Linux x86_64
+  and compiling a 421M-parameter model needs far more memory than this 8 GB Mac has; `convert.py aot` is ready for such
+  a machine (Qualcomm SM8550–SM8850, MediaTek MT6985–MT6993, Google Tensor G3–G5). Until then: Qualcomm compiles on the
+  phone (first load takes minutes, then cached); MediaTek and Google Tensor phones use the GPU.
+- No physical phone: NPU and GPU behaviour on Adreno/Mali/Hexagon is unverified; the reference check is the guard.

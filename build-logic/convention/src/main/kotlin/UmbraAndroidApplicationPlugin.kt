@@ -4,7 +4,7 @@ import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure
 
 /**
- * The single application module. targetSdk comes from the catalog (28, see ADR 0002) and is
+ * The single application module. targetSdk comes from the catalog (36, see ADR 0002) and is
  * set explicitly because AGP 9 no longer defaults it to minSdk.
  */
 class UmbraAndroidApplicationPlugin : Plugin<Project> {

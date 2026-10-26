@@ -5,8 +5,11 @@ export default {
     if (req.headers.get('x-token') !== env.TOKEN) return new Response('forbidden', { status: 403 });
     const u = new URL(req.url);
     const key = u.searchParams.get('key');
-    if (!key || !/^umbra-[\w.\-]+$/.test(key)) return new Response('bad key', { status: 400 });
-    const type = key.endsWith('.apk') ? 'application/vnd.android.package-archive' : 'text/plain; charset=utf-8';
+    // Release files, and Laya's converted model files (laya/<revision>/[npu/]<file>, as the download route serves them).
+    const laya = /^laya\/[0-9a-f]{12}\/(?:npu\/)?[A-Za-z0-9][\w.\-]*\.(?:tflite|json)$/.test(key || '');
+    if (!key || !(laya || /^umbra-[\w.\-]+$/.test(key))) return new Response('bad key', { status: 400 });
+    const type = key.endsWith('.apk') ? 'application/vnd.android.package-archive'
+      : key.endsWith('.json') ? 'application/json' : laya ? 'application/octet-stream' : 'text/plain; charset=utf-8';
     if (u.pathname === '/put') {
       const o = await env.BUCKET.put(key, req.body, { httpMetadata: { contentType: type } });
       return Response.json({ etag: o.httpEtag, size: o.size });

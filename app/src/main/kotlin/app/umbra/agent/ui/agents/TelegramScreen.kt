@@ -20,7 +20,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -50,6 +49,7 @@ import app.umbra.agent.ui.porcelain.PIcon
 import app.umbra.agent.ui.porcelain.PIcons
 import app.umbra.agent.ui.porcelain.Tone
 import app.umbra.agent.ui.porcelain.pc
+import app.umbra.agent.ui.rememberPolled
 import app.umbra.agent.ui.shell.NavRow
 import app.umbra.agent.ui.shell.PageColumn
 import app.umbra.agent.ui.shell.PorcelainPage
@@ -59,7 +59,6 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** A QR code of [text], drawn module by module. */
@@ -89,7 +88,7 @@ fun TelegramScreen(agentId: String, onBack: () -> Unit) {
     val state by bot.state.collectAsStateWithLifecycle()
     val health by bot.health.collectAsStateWithLifecycle()
     // The link's state changes with time (the code expires) as well as with the bot's state.
-    val link by produceState(bot.link, state) { while (true) { value = bot.link; delay(2_000) } }
+    val link by rememberPolled(bot.link, state, periodMs = 2_000) { bot.link }
     var token by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }

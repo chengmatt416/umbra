@@ -83,6 +83,7 @@ object AgentPrompts {
                 appendLine("For work that splits into independent parts, `subagent_start` starts a subagent in your folder with your permissions; choose its model and effort for the part (a light model and low effort for mechanical work, a strong one for hard reasoning). The phone runs only a few agents at once, so start subagents only when the parts are big enough to be worth it. Their answers arrive as `[Subagent #name finished]` messages; `subagent_wait` waits for them when you need the results before continuing.")
             }
         }
+        if ("wait_until" in hostTools) appendLine("Use `wait_until` instead of polling with sleep; always choose timeout_s from how long the work should take, and prefer it over omp’s own `wait` for sessions.")
         if (session.kind == app.umbra.core.session.SessionKind.SUBAGENT) {
             val me = "#" + (session.handle ?: "subagent")
             val boss = parent?.let { "#" + (it.handle ?: Handles.fromTitle(it.title, it.id)) } ?: "the session that started you"

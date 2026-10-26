@@ -95,6 +95,72 @@ class ProactiveStore(private val root: File) {
         require(card.preparedAction.actionType in setOf("start_coding", "send_message_draft", "create_goal", "run_skill", "agent_turn"))
         write(card.agentId, "opportunities.json", OpportunityCard.serializer(), (opportunities(card.agentId).filterNot { it.id == card.id } + card).takeLast(200))
     }
+    /** What [proposeOpportunity] did: saved [card] as new, or found it repeats [card] (open, or settled by the user). */
+    sealed interface Proposal { val card: OpportunityCard
+        data class Created(override val card: OpportunityCard) : Proposal
+        data class Updated(override val card: OpportunityCard) : Proposal
+        data class Duplicate(override val card: OpportunityCard) : Proposal
+    }
+    /**
+     * Saves [card] unless it repeats an earlier suggestion ([OpportunityDedup]): the agent's own open card about the same
+     * thing takes the new words instead; another agent's open card, or one the user dismissed or adopted lately, stops it.
+     */
+    @Synchronized fun proposeOpportunity(card: OpportunityCard, otherAgents: List<String>, now: Long): Proposal {
+        val own = opportunities(card.agentId)
+        OpportunityDedup.match(card, own, now)?.let { earlier ->
+            if (earlier.state != OpportunityCard.State.PENDING || !proposed(earlier)) return Proposal.Duplicate(earlier)
+            val merged = earlier.copy(kind = card.kind, title = card.title, summary = card.summary,
+                evidenceRefs = (earlier.evidenceRefs + card.evidenceRefs).distinct().take(100), urgency = card.urgency, confidence = card.confidence,
+                preparedAction = card.preparedAction, expiresAtMs = card.expiresAtMs ?: earlier.expiresAtMs, sourceSessionId = card.sourceSessionId, updatedAtMs = now)
+            saveOpportunity(merged)
+            return Proposal.Updated(merged)
+        }
+        val others = otherAgents.filter { it != card.agentId }.flatMap { id -> runCatching { opportunities(id) }.getOrDefault(emptyList()) }
+        OpportunityDedup.match(card, others, now)?.let { return Proposal.Duplicate(it) }
+        saveOpportunity(card)
+        return Proposal.Created(card)
+    }
+    /**
+     * Folds open cards that are the same suggestion ([OpportunityDedup.same]) into the newest one, from before proposals
+     * were matched. Returns how many were removed.
+     */
+    @Synchronized fun collapseDuplicates(agentId: String): Int {
+        val all = opportunities(agentId)
+        val open = all.filter { it.state == OpportunityCard.State.PENDING && proposed(it) }.sortedByDescending { it.updatedAtMs ?: it.createdAtMs }
+        val kept = mutableListOf<OpportunityCard>()
+        val gone = mutableSetOf<String>()
+        for (card in open) {
+            val i = kept.indexOfFirst { OpportunityDedup.same(it, card) }
+            if (i < 0) { kept += card; continue }
+            kept[i] = kept[i].copy(evidenceRefs = (kept[i].evidenceRefs + card.evidenceRefs).distinct().take(100), createdAtMs = minOf(kept[i].createdAtMs, card.createdAtMs))
+            gone += card.id
+        }
+        if (gone.isEmpty()) return 0
+        val merged = kept.associateBy { it.id }
+        write(agentId, "opportunities.json", OpportunityCard.serializer(), all.filterNot { it.id in gone }.map { merged[it.id] ?: it })
+        if (attention(agentId).any { it.id in gone }) write(agentId, "attention.json", AttentionItem.serializer(), attention(agentId).filterNot { it.id in gone })
+        return gone.size
+    }
+    /** An agent's own proposal ("opp…"), not one Umbra keeps by itself (a goal's deadline), which only Umbra changes. */
+    fun proposed(card: OpportunityCard) = card.id.startsWith("opp")
+    /** Changes the agent's own pending card (the user has not acted on it yet). */
+    @Synchronized fun updateOpportunity(agentId: String, id: String, now: Long, transform: (OpportunityCard) -> OpportunityCard): OpportunityCard {
+        val card = requireNotNull(opportunities(agentId).find { it.id == id }) { "No suggestion $id. List them with opportunity_list." }
+        require(proposed(card)) { "Umbra keeps $id up to date by itself" }
+        require(card.state == OpportunityCard.State.PENDING) { "The user already ${if (card.state == OpportunityCard.State.DISMISSED) "dismissed" else "acted on"} this suggestion; it cannot change now" }
+        val next = transform(card).copy(id = card.id, agentId = card.agentId, state = card.state, createdAtMs = card.createdAtMs, updatedAtMs = now)
+        saveOpportunity(next)
+        return next
+    }
+    /** Deletes the agent's own pending card and its delivery, so it leaves the Capsule, Today and the brief. */
+    @Synchronized fun removeOpportunity(agentId: String, id: String): OpportunityCard {
+        val card = requireNotNull(opportunities(agentId).find { it.id == id }) { "No suggestion $id. List them with opportunity_list." }
+        require(proposed(card)) { "Umbra keeps $id up to date by itself" }
+        require(card.state == OpportunityCard.State.PENDING) { "The user already ${if (card.state == OpportunityCard.State.DISMISSED) "dismissed" else "acted on"} this suggestion; it cannot be withdrawn" }
+        write(agentId, "opportunities.json", OpportunityCard.serializer(), opportunities(agentId).filterNot { it.id == id })
+        if (attention(agentId).any { it.id == id }) write(agentId, "attention.json", AttentionItem.serializer(), attention(agentId).filterNot { it.id == id })
+        return card
+    }
     @Synchronized fun claimOpportunity(agentId: String, id: String, now: Long): OpportunityCard {
         val card = requireNotNull(opportunities(agentId).find { it.id == id })
         require(card.state == OpportunityCard.State.PENDING) { "This suggestion has already been handled" }

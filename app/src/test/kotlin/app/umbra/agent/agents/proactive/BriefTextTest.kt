@@ -8,13 +8,13 @@ class BriefTextTest {
     private val brief = DailyBrief("brief", "2026-10-24", DailyBrief.Kind.MORNING, "Today’s readout",
         scheduleHighlights = listOf(BriefItem("Meeting", "Office")),
         conflictsDetected = listOf(ConflictAlert("conflict", "overlap", "Two meetings overlap", emptyList())),
-        overnightCompleted = listOf(BriefItem("Report", "Verified and saved")), attentionNeeded = listOf(decision),
+        tasks = listOf(BriefTask("Report", "completed", "Verified and saved"), BriefTask("Sync", "failed", "Connection lost")), attentionNeeded = listOf(decision),
         lowPriorityDigest = "Parcel arrives tomorrow", generatedAtMs = 1)
 
-    @Test fun channelReadoutIncludesDecisionsConflictsScheduleCompletionsAndDigest() {
+    @Test fun channelReadoutIncludesDecisionsConflictsScheduleTasksAndDigest() {
         val text = BriefText.format(brief)
         for (content in listOf("2026-10-24", "Today’s readout", "Review renewal: Approve the draft", "Two meetings overlap",
-            "Meeting: Office", "Report: Verified and saved", "Parcel arrives tomorrow")) assertTrue(content in text, content)
+            "Meeting: Office", "Tasks", "[completed] Report: Verified and saved", "[failed] Sync: Connection lost", "Parcel arrives tomorrow")) assertTrue(content in text, content)
         assertTrue(text.indexOf("Needs your attention") < text.indexOf("Schedule"))
         assertTrue(text.indexOf("Conflicts") < text.indexOf("Schedule"))
     }
@@ -26,7 +26,15 @@ class BriefTextTest {
             scheduleHighlights = List(50) { BriefItem("Meeting", "x".repeat(1000)) }, lowPriorityDigest = "x".repeat(20_000)))
         assertTrue(large.length <= 16_000)
         assertTrue("Review renewal" in large)
-        assertTrue("Completed" in large && "Report: Verified and saved" in large)
+        assertTrue("Tasks" in large && "[completed] Report: Verified and saved" in large)
         assertTrue("Schedule" in large && "Updates" in large)
+    }
+
+    @Test fun tasksBeyond20AreIncludedAndLegacyCompletionsAreNotShown() {
+        val text = BriefText.format(brief.copy(tasks = (1..30).map { BriefTask("Task $it", "running", "x".repeat(1000)) },
+            overnightCompleted = listOf(BriefItem("Legacy completion", "Old data"))))
+        assertTrue("[running] Task 30" in text)
+        assertFalse("Legacy completion" in text)
+        assertFalse("Completed" in text)
     }
 }

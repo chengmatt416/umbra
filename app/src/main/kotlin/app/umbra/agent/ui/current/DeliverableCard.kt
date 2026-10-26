@@ -1,6 +1,5 @@
 package app.umbra.agent.ui.current
 
-import android.content.Intent
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
@@ -16,7 +15,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import app.umbra.agent.R
 import app.umbra.agent.container
 import app.umbra.agent.ui.porcelain.*
@@ -29,8 +27,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 
 @Composable
-internal fun DeliverableCard(session: Session) {
+internal fun DeliverableCard(session: Session, onOpenFile: (String, String?) -> Unit) {
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val container = context.container
     val bundle = session.attachments[CompletionEvidence.KEY] as? JsonObject ?: return
     val receipt = bundle["verification"] as? JsonObject ?: return
@@ -50,11 +49,9 @@ internal fun DeliverableCard(session: Session) {
                             val file = withContext(Dispatchers.IO) {
                                 app.umbra.agent.data.DeliverableFiles.copyVerified(container, session, artifact, java.io.File(context.cacheDir, "share/deliverables"))
                             }
-                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-                            context.startActivity(Intent.createChooser(Intent(Intent.ACTION_VIEW).setDataAndType(uri, artifact["mimeType"]?.jsonPrimitive?.content ?: "application/octet-stream")
-                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), null))
+                            onOpenFile(file.path, session.id)
                         } catch (e: CancellationException) { throw e }
-                        catch (e: Exception) { error = e.message ?: "The artifact could not be opened" }
+                        catch (e: Exception) { error = e.message ?: resources.getString(R.string.files_open_failed) }
                     }
                 }, style = ButtonStyle.Ghost)
             }

@@ -16,7 +16,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +36,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.umbra.agent.R
 import app.umbra.agent.capsule.TaskCompanion
 import app.umbra.agent.container
+import app.umbra.agent.ui.PollWhileStarted
 import app.umbra.agent.ui.displays.rememberCapture
 import app.umbra.agent.ui.porcelain.AlertDialog
 import app.umbra.agent.ui.porcelain.ButtonStyle
@@ -44,6 +44,7 @@ import app.umbra.agent.ui.porcelain.P
 import app.umbra.agent.ui.porcelain.PButton
 import app.umbra.agent.ui.porcelain.PIcons
 import app.umbra.agent.ui.porcelain.pc
+import app.umbra.agent.ui.rememberPolled
 import app.umbra.core.control.LeaseState
 import app.umbra.core.control.Principal
 import app.umbra.core.model.action.Environment
@@ -51,7 +52,6 @@ import app.umbra.core.orchestrator.Block
 import app.umbra.core.orchestrator.ChatItem
 import app.umbra.core.orchestrator.ConversationState
 import app.umbra.core.session.Session
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** A screen the task is driving: a background Android display, or the Linux desktop. */
@@ -69,15 +69,11 @@ sealed interface LiveTarget {
 fun rememberLiveTarget(session: Session, conversation: ConversationState): LiveTarget? {
     val container = LocalContext.current.container
     val lastTool = (conversation.items.lastOrNull { it is ChatItem.Assistant } as? ChatItem.Assistant)?.blocks?.filterIsInstance<Block.ToolCall>()?.lastOrNull()?.name
-    val target by produceState<LiveTarget?>(null, session.id, conversation.working, lastTool) {
-        while (true) {
-            value = when {
-                !conversation.working -> null
-                lastTool?.startsWith("gui_") == true -> LiveTarget.Linux
-                else -> container.leases.leases().firstOrNull { it.sessionId == session.id && it.displayId != 0 }?.let { LiveTarget.Android(it.displayId) }
-            }
-            if (!conversation.working) break
-            delay(1_500)
+    if (!conversation.working) return null
+    val target by rememberPolled<LiveTarget?>(null, session.id, conversation.working, lastTool, periodMs = 1_500) {
+        when {
+            lastTool?.startsWith("gui_") == true -> LiveTarget.Linux
+            else -> container.leases.leases().firstOrNull { it.sessionId == session.id && it.displayId != 0 }?.let { LiveTarget.Android(it.displayId) }
         }
     }
     return target
@@ -88,7 +84,7 @@ fun rememberLiveTarget(session: Session, conversation: ConversationState): LiveT
 fun LiveDisplayCard(session: Session, target: LiveTarget, onExpand: () -> Unit) {
     val container = LocalContext.current.container
     var tick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(target) { while (true) { delay(1_000); tick++ } }
+    PollWhileStarted(target, periodMs = 1_000) { tick++ }
     val image = rememberCapture(container, if (target is LiveTarget.Linux) Environment.LINUX_GUI else Environment.ANDROID, (target as? LiveTarget.Android)?.displayId, tick)
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(pc(0xFFF6F8F2)).padding(12.dp),
@@ -126,7 +122,7 @@ private fun LiveHeader(session: Session, target: LiveTarget) {
 fun LiveDisplayDialog(session: Session, target: LiveTarget, onDismiss: () -> Unit) {
     val container = LocalContext.current.container
     var tick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(target) { while (true) { delay(800); tick++ } }
+    PollWhileStarted(target, periodMs = 800) { tick++ }
     val image = rememberCapture(container, if (target is LiveTarget.Linux) Environment.LINUX_GUI else Environment.ANDROID, (target as? LiveTarget.Android)?.displayId, tick)
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     AlertDialog(

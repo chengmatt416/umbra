@@ -102,13 +102,20 @@ internal fun capabilityDetector(container: AppContainer): CapabilityDetector {
                 else no(CapabilityId.MODEL_PROVIDERS, "No provider with a key and a chosen model.", "Add a provider in Models.")
             },
             probe(CapabilityId.EXEC_FROM_APP_DATA) {
-                // The Termux-style design needs binaries to run from app data (targetSdk 28): try it for real.
+                // Targeting Android 16, SELinux refuses exec() of files in app data (W^X); programs there still run when
+                // the system linker maps them, which is how proot's loader starts every program of the Linux
+                // environment. Try that for real (root mode does not depend on it).
                 val copy = File(context.filesDir, "exec-probe")
                 try {
                     File("/system/bin/true").copyTo(copy, overwrite = true)
                     copy.setExecutable(true)
-                    val code = ProcessBuilder(copy.path).start().waitFor()
-                    if (code == 0) ok(CapabilityId.EXEC_FROM_APP_DATA, "A program in app data ran.") else no(CapabilityId.EXEC_FROM_APP_DATA, "Exit code $code.")
+                    val direct = runCatching { ProcessBuilder(copy.path).start().waitFor() }.getOrNull()
+                    val linked = ProcessBuilder("/system/bin/linker64", copy.path).start().waitFor()
+                    when {
+                        linked == 0 && direct == 0 -> ok(CapabilityId.EXEC_FROM_APP_DATA, "Programs in app data run, directly and through the linker.")
+                        linked == 0 -> ok(CapabilityId.EXEC_FROM_APP_DATA, "Programs in app data run through the linker (proot's way); direct exec is refused, as Android 16 requires.")
+                        else -> no(CapabilityId.EXEC_FROM_APP_DATA, "Programs in app data do not run (linker exit $linked).")
+                    }
                 } catch (e: Exception) {
                     no(CapabilityId.EXEC_FROM_APP_DATA, "Blocked: ${e.message}")
                 } finally {

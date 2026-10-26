@@ -38,8 +38,8 @@ for the app. Root access, device compromise, exported files and files in shared 
   model directory requests `/models.json` from the project site. Cloudflare processes ordinary web
   request information, including IP address, requested URL and request headers. These requests do
   not need your task transcripts or API keys. Update controls are in Settings → About.
-- **Downloads and agent activity:** optional Laya setup contacts package/model hosts such as PyPI and
-  Hugging Face. Linux packages, sign-in flows, browsers, tools and commands may contact other sites.
+- **Downloads and agent activity:** optional Laya setup downloads its model file from the project site
+  (Cloudflare R2, the same as app updates); Laya then runs on the phone and sends nothing. Linux packages, sign-in flows, browsers, tools and commands may contact other sites.
   The destinations and transmitted data depend on the task and installed software.
 - **Speech input:** the Android speech-recognition service you use may process audio remotely under
   that service's own policy.
@@ -53,6 +53,7 @@ for the app. Root access, device compromise, exported files and files in shared 
   details. Cloudflare still processes ordinary web request information as described above. Turning
   the setting off stops future reports; existing aggregate counts remain. The local identifier is
   removed when app-private storage is cleared or the app is uninstalled.
+  APK downloads are counted as anonymous totals (one object per download, with nothing about the requester), and the website shows download and usage totals.
 
 The app source does not include an advertising or automatic crash-reporting SDK. Its usage
 counter is limited to the install and monthly-active measurements described above. This does not
@@ -86,3 +87,5 @@ contact the maintainer through the [project's GitHub profile](https://github.com
 Use a private contact method listed there for sensitive information; do not put it in a public issue.
 Provider-held data requests must also be directed to the relevant provider. Applicable statutory
 rights are unaffected. Material policy changes will update the effective date in this file.
+
+See the [terms of service](TERMS.md) for use of the website and software.

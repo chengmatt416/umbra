@@ -110,7 +110,31 @@ data class AppPrefs(
     val capsuleToAgent: Boolean = true,
     /** Where the Capsule sits: around the camera, in the top corner, or (Auto) aside when another capsule app holds the camera. */
     val capsulePlacement: CapsulePlacement = CapsulePlacement.AUTO,
+    /** CUSTOM placement: the camera's place on the screen as the user set it in Size and position. */
+    val capsuleAnchor: CapsuleAnchor? = null,
 )
+
+/**
+ * Where the camera is, as the user placed the red circle over it (Settings → Capsule → Size and position), in pixels of
+ * the screen in its natural orientation ([screenWidth] × [screenHeight] when it was saved): the Capsule wraps this
+ * rectangle the way it wraps the cutout Android reports, on that screen or the same one at another resolution (scaled;
+ * not rotated, not another display).
+ */
+@Serializable
+data class CapsuleAnchor(val x: Int, val y: Int, val width: Int, val height: Int, val screenWidth: Int, val screenHeight: Int) {
+    /**
+     * The rectangle for a screen of [w] × [h] pixels: as saved on the same size, scaled when only the resolution changed
+     * (the phone's display-resolution setting keeps the shape), null on a screen of another shape (rotated, another display).
+     */
+    fun on(w: Int, h: Int): android.graphics.Rect? {
+        if (w == screenWidth && h == screenHeight) return android.graphics.Rect(x, y, x + width, y + height)
+        if (w <= 0 || h <= 0 || screenWidth <= 0 || screenHeight <= 0) return null
+        if (kotlin.math.abs(w.toLong() * screenHeight - h.toLong() * screenWidth) > w.toLong() * screenHeight / 100) return null
+        val s = w.toDouble() / screenWidth
+        fun px(v: Int) = kotlin.math.round(v * s).toInt()
+        return android.graphics.Rect(px(x), px(y), px(x) + px(width).coerceAtLeast(1), px(y) + px(height).coerceAtLeast(1))
+    }
+}
 
 /** Simple shows the essentials, Power adds the working views, Dev every control the app has, resources by hand. */
 @Serializable
@@ -120,8 +144,11 @@ enum class UiMode { SIMPLE, POWER, DEV }
 @Serializable
 data class ProactiveDefaults(val level: Int = 3, val morningMinute: Int? = 8 * 60, val eveningMinute: Int? = null)
 
-/** CENTRE: a plain pill in the middle of the status-bar row, wherever the camera is (it moves to the corner beside another capsule app). */
-enum class CapsulePlacement { AUTO, CAMERA, CORNER, CENTRE }
+/**
+ * CENTRE: a plain pill in the middle of the status-bar row, wherever the camera is (it moves to the corner beside another
+ * capsule app). CUSTOM: around the camera where the user placed it ([AppPrefs.capsuleAnchor]), whatever the screen reports.
+ */
+enum class CapsulePlacement { AUTO, CAMERA, CORNER, CENTRE, CUSTOM }
 
 /** MONO (Ink) is the default look: white and black, with colour kept for meaning only. */
 @Serializable

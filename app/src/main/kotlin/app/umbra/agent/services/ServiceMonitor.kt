@@ -14,10 +14,7 @@ import app.umbra.platform.privileged.PrivilegedClient
 import app.umbra.platform.privileged.ServerShell
 import app.umbra.platform.api.ShellIdentity
 import app.umbra.runtime.linux.LinuxMode
-import java.net.InetSocketAddress
-import java.net.Socket
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,7 +22,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 
 /**
  * A shared service Umbra runs or depends on (architecture spec §9). [singleton] says why it may not be replicated
@@ -48,7 +44,7 @@ class ServiceMonitor(private val c: AppContainer) {
         SharedService(HELPER, "Privileged helper", "Shell-level helper: background displays, settings, input", "One per phone, privileged: a copy would be a second door", supervised = true),
         SharedService(ROOT_HELPER, "Root helper", "Runs the chroot and root's commands", "One per phone, root: never replicated", supervised = false),
         SharedService(X_DESKTOP, "Linux desktop (X server)", "Xvfb, openbox and the accessibility bridge", "A display is a singleton: two would be two desktops", supervised = false),
-        SharedService(LAYA, "Laya decision sidecar", "Fast typed decisions on loopback", "Stateless, but one model in memory (~2 GB): a second copy would not fit", supervised = false),
+        SharedService(LAYA, "Laya decision model", "Fast typed decisions inside the app, on the NPU, GPU or CPU", "Stateless, but one model in memory (~1 GB): a second copy would not fit", supervised = false),
     )
 
     fun declareAll() {
@@ -79,7 +75,7 @@ class ServiceMonitor(private val c: AppContainer) {
         val live = c.sessionStore.list().filter { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL || it.state == SessionState.PAUSED }
         val terminals = runCatching { c.terminals.terminals.value }.getOrDefault(emptyList()).filter { it.status != TerminalStatus.SERVER_LOST }
         val layaServes = c.laya.state.value == LayaSidecar.State.RUNNING
-        val linuxConsumers = live.map { "session:${it.id}" }.toSet() + terminals.map { "terminal:${it.record.id}" } + (if (layaServes) setOf("laya") else emptySet())
+        val linuxConsumers = live.map { "session:${it.id}" }.toSet() + terminals.map { "terminal:${it.record.id}" }
         c.services.sync(LINUX, linuxConsumers)
         c.services.sync(HELPER, if (c.helper.configured) live.map { "session:${it.id}" }.toSet() else emptySet())
         // Under chroot the Linux environment itself runs through root.
@@ -139,17 +135,15 @@ class ServiceMonitor(private val c: AppContainer) {
         return health(l1, l2, l3, l4, instance = "pid $pid")
     }
 
-    private suspend fun probeLaya(): ServiceHealth {
+    private fun probeLaya(): ServiceHealth {
         val state = c.laya.state.value
-        if (state == LayaSidecar.State.NOT_INSTALLED || state == LayaSidecar.State.NEEDS_LINUX) return health(unknown("not installed"), unknown("not installed"), unknown("not installed"), unknown("not installed"))
-        val pid = guest(listOf("sh", "-c", "pgrep -f laya-serve | head -1"))?.stdout?.trim()?.toIntOrNull()
-        val l1 = if (pid != null) pass("pid $pid") else fail("not running")
-        val l2 = withContext(Dispatchers.IO) {
-            runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", 8765), 1_000) }; pass("port 8765 accepts") }.getOrElse { fail("port 8765 refuses") }
-        }
-        val l3 = if (state == LayaSidecar.State.RUNNING) pass("its health endpoint answers") else fail("state ${state.name.lowercase()}")
-        // A real decision would load the model and spend seconds of inference: not a probe.
-        return health(l1, l2, l3, unknown("not probed: a decision would run the model"), instance = pid?.let { "pid $it" })
+        if (state == LayaSidecar.State.NOT_INSTALLED) return health(unknown("not downloaded"), unknown("not downloaded"), unknown("not downloaded"), unknown("not downloaded"))
+        val backend = c.laya.backend.value
+        val l1 = if (state != LayaSidecar.State.INSTALLING) pass("files downloaded and verified") else fail("downloading")
+        val l2 = if (backend != null) pass("loaded on the ${backend.uppercase()}") else fail("state ${state.name.lowercase()}")
+        val l3 = if (state == LayaSidecar.State.RUNNING) pass("its reference decision matched when it loaded") else fail("state ${state.name.lowercase()}")
+        // A real decision would spend a model pass: not a probe.
+        return health(l1, l2, l3, unknown("not probed: a decision would run the model"), instance = backend)
     }
 
     private suspend fun probeTmux(group: String): ServiceHealth {

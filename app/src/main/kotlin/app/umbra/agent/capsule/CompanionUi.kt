@@ -102,7 +102,6 @@ internal fun rememberCompanionClock(moods: Set<Mood>, moving: Boolean): State<Lo
         if (!moving || moods.none(Crews::moves) || moods.all { it == Mood.IDLE }) return@LaunchedEffect
         val breathingOnly = moods.all { it == Mood.IDLE }
         var first = REST
-        var last = REST
         while (true) {
             val now = withFrameMillis { it }
             if (first == REST) first = now
@@ -110,10 +109,10 @@ internal fun rememberCompanionClock(moods: Set<Mood>, moving: Boolean): State<Lo
                 time.longValue = REST
                 break
             }
-            if (now - last >= FRAME_MS) {
-                last = now
-                time.longValue = now
-            }
+            time.longValue = now
+            // Ask for the next frame only when it is due: waiting on every vsync (120 a second on many phones) for a
+            // 30 fps motion kept the Capsule's window drawing all the time a task ran.
+            kotlinx.coroutines.delay(FRAME_MS - 8)
         }
     }
     return time

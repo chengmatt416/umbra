@@ -17,6 +17,8 @@ class UmbraApp : Application() {
             android.webkit.WebView.setDataDirectorySuffix("json-transforms")
             return
         }
+        // Laya's model runs alone in its own process (data/laya/LayaService): none of the app starts there.
+        if (getProcessName() == "$packageName:laya") return
         container = AppContainer(this)
         container.start()
         // The saved look, before the first frame (the activity and the Capsule both draw in it).

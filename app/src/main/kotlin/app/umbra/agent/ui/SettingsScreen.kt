@@ -3,6 +3,8 @@ package app.umbra.agent.ui
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -26,6 +29,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -168,8 +172,6 @@ fun MoreSettingsScreen(onBack: () -> Unit, onGo: (app.umbra.agent.ui.shell.Dest)
                     }
                 }
             }
-            Gap(10.dp)
-            PCard(style = app.umbra.agent.ui.porcelain.CardStyle.Soft) { LayaSection() }
 
             SectionHead(stringResource(R.string.set_section_about), Modifier.padding(top = 20.dp))
             UpdateSection()
@@ -263,6 +265,16 @@ internal fun UpdateSection() {
 @Composable
 fun UnverifiedTag() = Tag(stringResource(R.string.unverified), Tone.Warn)
 
+private fun layaSize(bytes: Long): String =
+    if (bytes >= 1L shl 30) "%.1f GB".format(bytes / (1L shl 30).toDouble()) else "${bytes shr 20} MB"
+
+@Composable
+private fun layaBackend(backend: String?) = stringResource(when (backend) {
+    "npu" -> R.string.laya_backend_npu
+    "gpu" -> R.string.laya_backend_gpu
+    else -> R.string.laya_backend_cpu
+})
+
 @Composable
 internal fun LayaSection() {
     val container = LocalContext.current.container
@@ -274,19 +286,24 @@ internal fun LayaSection() {
         UnverifiedTag()
     }
     Subtle(stringResource(R.string.set_laya_body), Modifier.padding(top = 4.dp))
+    val backend by container.laya.backend.collectAsStateWithLifecycle()
+    val progress by container.laya.progress.collectAsStateWithLifecycle()
     val label = when (state) {
-        LayaSidecar.State.NEEDS_LINUX -> stringResource(R.string.laya_needs_linux)
-        LayaSidecar.State.NOT_INSTALLED -> stringResource(R.string.laya_not_installed)
-        LayaSidecar.State.INSTALLING -> stringResource(R.string.laya_installing)
+        LayaSidecar.State.NEEDS_LINUX, LayaSidecar.State.NOT_INSTALLED ->
+            stringResource(R.string.laya_not_installed, layaSize(container.laya.downloadSize()))
+        LayaSidecar.State.INSTALLING -> stringResource(R.string.laya_installing,
+            progress?.let { stringResource(R.string.laya_progress, layaSize(it.have), layaSize(it.total)) }.orEmpty())
         LayaSidecar.State.STOPPED -> stringResource(R.string.laya_stopped)
         LayaSidecar.State.STARTING -> stringResource(R.string.laya_starting)
-        LayaSidecar.State.RUNNING -> stringResource(R.string.laya_running)
+        LayaSidecar.State.RUNNING -> stringResource(R.string.laya_running, layaBackend(backend))
         LayaSidecar.State.FAILED -> stringResource(R.string.laya_failed, container.laya.message ?: stringResource(R.string.laya_see_log))
     }
     Text(label, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = P.ink)
+    LayaProcessors(state, backend)
     Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         when (state) {
-            LayaSidecar.State.NOT_INSTALLED, LayaSidecar.State.FAILED -> PButton(stringResource(R.string.laya_install), { container.laya.install() }, style = ButtonStyle.Alt, tiny = true)
+            LayaSidecar.State.NEEDS_LINUX, LayaSidecar.State.NOT_INSTALLED, LayaSidecar.State.FAILED ->
+                PButton(stringResource(R.string.laya_install), { container.laya.install() }, style = ButtonStyle.Alt, tiny = true)
             LayaSidecar.State.STOPPED -> PButton(stringResource(R.string.laya_start), { container.laya.start() }, style = ButtonStyle.Alt, tiny = true)
             LayaSidecar.State.RUNNING -> PButton(stringResource(R.string.laya_stop), { container.laya.stop() }, style = ButtonStyle.Alt, tiny = true)
             else -> Unit
@@ -294,6 +311,65 @@ internal fun LayaSection() {
         if (state != LayaSidecar.State.RUNNING && prefs.layaWanted) {
             PButton(stringResource(R.string.laya_stop), { container.laya.stop() }, style = ButtonStyle.Alt, tiny = true)
         }
+        if (state == LayaSidecar.State.STOPPED || (state == LayaSidecar.State.FAILED && !prefs.layaWanted)) {
+            PButton(stringResource(R.string.laya_remove), { container.laya.remove() }, style = ButtonStyle.Ghost, tiny = true)
+        }
     }
     Disclosure(stringResource(R.string.details)) { Subtle(stringResource(R.string.unverified_detail)) }
+}
+
+/**
+ * NPU, GPU and CPU, always shown: the one Laya answers on is filled in, and each says why it is or is not used (not on
+ * this phone, no build for this chip, failed its check and how, skipped for memory). Kept across starts, so it is there
+ * while Laya is stopped or after it failed too.
+ */
+@Composable
+private fun LayaProcessors(state: LayaSidecar.State, backend: String?) {
+    val container = LocalContext.current.container
+    val processors = remember(state, backend) { container.laya.processors() }
+    if (processors.isEmpty()) return
+    val chip = remember { container.laya.chip() }
+    Text(stringResource(R.string.laya_processor) + (chip?.let { " · $it" }.orEmpty()), Modifier.padding(top = 12.dp), fontSize = 12.sp, color = P.sub)
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (p in processors) {
+            val inUse = p.status == app.umbra.agent.data.laya.LayaNative.Processor.Status.IN_USE
+            val shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+            Column(
+                Modifier.weight(1f).clip(shape)
+                    .background(if (inUse) P.ink else androidx.compose.ui.graphics.Color.Transparent)
+                    .border(1.dp, if (inUse) P.ink else P.line, shape)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    androidx.compose.foundation.layout.Box(Modifier.size(7.dp).clip(androidx.compose.foundation.shape.CircleShape).background(processorDot(p.status, inUse)))
+                    Text(layaBackend(p.backend.key), fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, color = if (inUse) P.base else P.ink)
+                }
+                Text(stringResource(processorWord(p.status)), Modifier.padding(top = 2.dp), fontSize = 11.sp, color = if (inUse) P.base.copy(alpha = 0.8f) else P.sub, maxLines = 1)
+            }
+        }
+    }
+    // Why each one is or is not used, in a line each.
+    Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        for (p in processors) p.detail?.takeIf { it.isNotBlank() }?.let { Subtle("${layaBackend(p.backend.key)}: $it") }
+    }
+    if (processors.any { it.status == app.umbra.agent.data.laya.LayaNative.Processor.Status.REFUSED }) {
+        PButton(stringResource(R.string.laya_retry_processors), { container.laya.retryProcessors() }, Modifier.padding(top = 6.dp), style = ButtonStyle.Ghost, tiny = true)
+    }
+}
+
+private fun processorWord(status: app.umbra.agent.data.laya.LayaNative.Processor.Status): Int = when (status) {
+    app.umbra.agent.data.laya.LayaNative.Processor.Status.IN_USE -> R.string.laya_proc_in_use
+    app.umbra.agent.data.laya.LayaNative.Processor.Status.READY -> R.string.laya_proc_ready
+    app.umbra.agent.data.laya.LayaNative.Processor.Status.REFUSED -> R.string.laya_proc_failed
+    app.umbra.agent.data.laya.LayaNative.Processor.Status.SKIPPED -> R.string.laya_proc_skipped
+    app.umbra.agent.data.laya.LayaNative.Processor.Status.UNAVAILABLE -> R.string.laya_proc_unavailable
+    app.umbra.agent.data.laya.LayaNative.Processor.Status.UNKNOWN -> R.string.laya_proc_unknown
+}
+
+private fun processorDot(status: app.umbra.agent.data.laya.LayaNative.Processor.Status, inUse: Boolean) = when (status) {
+    app.umbra.agent.data.laya.LayaNative.Processor.Status.IN_USE -> P.good
+    app.umbra.agent.data.laya.LayaNative.Processor.Status.READY -> P.good.copy(alpha = 0.55f)
+    app.umbra.agent.data.laya.LayaNative.Processor.Status.REFUSED -> P.danger
+    app.umbra.agent.data.laya.LayaNative.Processor.Status.SKIPPED -> P.amber
+    else -> if (inUse) P.base else P.line2
 }

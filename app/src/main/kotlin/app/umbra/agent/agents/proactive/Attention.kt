@@ -1,7 +1,6 @@
 package app.umbra.agent.agents.proactive
 
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 
 data class InterruptionContext(val inCallOrMeeting: Boolean = false, val immersiveOrTyping: Boolean = false,
@@ -26,36 +25,60 @@ object AttentionRanker {
     }
 }
 
+/**
+ * Finds what is worth asking about in a calendar; it decides nothing. Pairs that overlap (or leave too little time to
+ * travel) go to [ConflictJudge]; only what it judges a conflict becomes one. A date that disagrees with its own
+ * stated weekday is a fact about one entry, so it is reported as it is.
+ */
 object ConflictDetector {
-    fun detect(events: List<CalendarItem>, now: Long): List<ConflictAlert> {
+    fun candidates(events: List<CalendarItem>, now: Long): List<ConflictCandidate> {
         val upcoming = events.filter { it.endMs > now && it.startMs < now + 7 * 86_400_000L }.sortedBy { it.startMs }
-        val result = mutableListOf<ConflictAlert>()
-        fun conflict(a: CalendarItem, b: CalendarItem, kind: String, text: String) {
-            val payload = kotlinx.serialization.json.buildJsonObject {
-                put("instruction", kotlinx.serialization.json.JsonPrimitive("Prepare a rescheduling draft for ${a.title} or ${b.title}. Ask before sending or editing either event."))
-            }.toString()
-            result += ConflictAlert("${a.source}:${a.id}:${b.source}:${b.id}:$kind", kind, text,
-                listOf("${a.source}:${a.id}", "${b.source}:${b.id}"), listOf(PreparedNextStep("Prepare rescheduling draft", "agent_turn", payload)))
-        }
+        val result = mutableListOf<ConflictCandidate>()
         for ((i, a) in upcoming.withIndex()) {
             for (b in upcoming.drop(i + 1)) {
                 if (b.startMs >= a.endMs + 120 * 60_000L) break
-                if (a.startMs < b.endMs && b.startMs < a.endMs) conflict(a, b, "hard_overlap", "${a.title} overlaps ${b.title}.")
+                if (a.startMs < b.endMs && b.startMs < a.endMs) result += ConflictCandidate(a, b, ConflictJudge.OVERLAP)
                 else if (a.location.isNotBlank() && b.location.isNotBlank() && a.location != b.location && a.travelMinutes != null && b.startMs - a.endMs < a.travelMinutes * 60_000L)
-                    conflict(a, b, "travel_buffer_tight", "Only ${(b.startMs - a.endMs) / 60_000} minutes between ${a.title} and ${b.title}; travel needs ${a.travelMinutes} minutes.")
+                    result += ConflictCandidate(a, b, ConflictJudge.TRAVEL)
             }
-            if (a.declaredWeekday != null && Instant.ofEpochMilli(a.startMs).atZone(ZoneId.systemDefault()).dayOfWeek.value != a.declaredWeekday)
-                result += ConflictAlert("${a.source}:${a.id}:weekday", "commitment_mismatch", "The date and stated weekday for ${a.title} disagree.", listOf("${a.source}:${a.id}"))
         }
-        return result.distinctBy { it.id }
+        return result.distinctBy { it.key }
     }
+
+    fun weekdayMismatches(events: List<CalendarItem>, now: Long): List<ConflictAlert> =
+        events.filter { it.endMs > now && it.startMs < now + 7 * 86_400_000L }.mapNotNull { a ->
+            if (a.declaredWeekday != null && Instant.ofEpochMilli(a.startMs).atZone(ZoneId.systemDefault()).dayOfWeek.value != a.declaredWeekday)
+                ConflictAlert("${a.source}:${a.id}:weekday", "commitment_mismatch", "The date and stated weekday for ${a.title} disagree.", listOf("${a.source}:${a.id}"))
+            else null
+        }
+
+    /**
+     * The alerts from judged pairs: a conflict is one, the same event twice or two that fit together are not. A pair
+     * nothing could judge (Laya off, no model to ask) is shown as a possible conflict, saying it may be one event.
+     */
+    fun alerts(readings: List<ConflictReading>): List<ConflictAlert> = readings.mapNotNull { r ->
+        val (a, b, kind) = r.candidate
+        val text = when (r.verdict) {
+            ConflictVerdict.CONFLICT -> if (kind == ConflictJudge.TRAVEL) "Only ${(b.startMs - a.endMs) / 60_000} minutes between ${a.title} and ${b.title}; travel needs ${a.travelMinutes} minutes."
+                else "${a.title} overlaps ${b.title}."
+            null -> "${a.title} overlaps ${b.title}; it may be the same event on two calendars (not checked: Laya is off and no model answered)."
+            else -> return@mapNotNull null
+        } + (r.why?.let { " ($it)" }.orEmpty())
+        val severity = if (r.verdict == null) ConflictJudge.POSSIBLE else kind
+        val payload = kotlinx.serialization.json.buildJsonObject {
+            put("instruction", kotlinx.serialization.json.JsonPrimitive("Prepare a rescheduling draft for ${a.title} or ${b.title}. Ask before sending or editing either event."))
+        }.toString()
+        ConflictAlert("${a.source}:${a.id}:${b.source}:${b.id}:$kind", severity, text,
+            listOf("${a.source}:${a.id}", "${b.source}:${b.id}"), if (r.verdict == ConflictVerdict.CONFLICT) listOf(PreparedNextStep("Prepare rescheduling draft", "agent_turn", payload)) else emptyList())
+    }.distinctBy { it.id }
 }
 
 /** One sentence a person would say about the day, in the phone's language (Traditional Chinese or English). */
 object BriefHeadline {
-    fun of(kind: DailyBrief.Kind, events: Int, decisions: Int, conflicts: Int, done: Int, zh: Boolean = java.util.Locale.getDefault().language == "zh"): String {
+    fun of(kind: DailyBrief.Kind, events: Int, decisions: Int, conflicts: Int, done: Int, zh: Boolean = java.util.Locale.getDefault().language == "zh",
+        failed: Int = 0, running: Int = 0, waiting: Int = 0, paused: Int = 0, stopped: Int = 0): String {
         val morning = kind == DailyBrief.Kind.MORNING
-        if (events + decisions + conflicts + done == 0) return when {
+        if (events + decisions + conflicts + done + failed + running + waiting + paused + stopped == 0) return when {
             zh && morning -> "早安，今天目前沒有需要你處理的事。"
             zh -> "今晚一切平靜，沒有需要你處理的事。"
             morning -> "A clear morning: nothing needs you yet."
@@ -67,18 +90,30 @@ object BriefHeadline {
             if (decisions > 0) add("$decisions 件事等你決定")
             if (events > 0) add("行程 $events 項")
             if (done > 0) add("已完成 $done 項")
+            if (failed > 0) add("$failed 項任務失敗")
+            if (running > 0) add("$running 項任務執行中")
+            if (waiting > 0) add("$waiting 項任務等待核准")
+            if (paused > 0) add("$paused 項任務已暫停")
+            if (stopped > 0) add("$stopped 項任務已停止")
         } else buildList {
             if (conflicts > 0) add(n(conflicts, "conflict to settle", "conflicts to settle"))
             if (decisions > 0) add(n(decisions, "decision waiting", "decisions waiting"))
             if (events > 0) add(n(events, "event", "events") + if (morning) " today" else " tomorrow")
             if (done > 0) add(n(done, "thing done", "things done"))
+            if (failed > 0) add(n(failed, "task failed", "tasks failed"))
+            if (running > 0) add(n(running, "task running", "tasks running"))
+            if (waiting > 0) add(n(waiting, "task awaiting approval", "tasks awaiting approval"))
+            if (paused > 0) add(n(paused, "task paused", "tasks paused"))
+            if (stopped > 0) add(n(stopped, "task stopped", "tasks stopped"))
         }
         return if (zh) parts.joinToString("，") + "。" else parts.joinToString(", ").replaceFirstChar { it.uppercase() } + "."
     }
 }
 
 class DailyBriefEngine(private val store: ProactiveStore, private val zone: ZoneId = ZoneId.systemDefault()) {
-    fun generate(agentId: String, kind: DailyBrief.Kind, now: Long, schedule: List<CalendarItem> = emptyList(), completed: List<BriefItem> = emptyList()): DailyBrief {
+    /** [conflicts]: the overlapping pairs of [schedule] as [ConflictJudge] judged them. */
+    fun generate(agentId: String, kind: DailyBrief.Kind, now: Long, schedule: List<CalendarItem> = emptyList(), tasks: List<BriefTask> = emptyList(),
+        conflicts: List<ConflictReading> = emptyList()): DailyBrief {
         val date = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
         val id = "brief_${date}_${kind.name.lowercase()}"
         store.briefs(agentId).find { it.id == id }?.let { return it }
@@ -86,11 +121,17 @@ class DailyBriefEngine(private val store: ProactiveStore, private val zone: Zone
         val staged = store.attention(agentId).filter { it.createdAtMs in (prior + 1)..now }
         val actionable = store.opportunities(agentId).filter { it.state == OpportunityCard.State.PENDING && (it.expiresAtMs == null || it.expiresAtMs > now) }
             .sortedByDescending { .6 * it.urgency + .4 * it.confidence }.take(5)
-        val conflicts = ConflictDetector.detect(schedule, now)
-        val today = schedule.filter { Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate() == date }.map { BriefItem(it.title, it.location) }
+        val alerts = ConflictDetector.alerts(conflicts) + ConflictDetector.weekdayMismatches(schedule, now)
+        // One meeting on two calendars is listed once.
+        val copies = conflicts.filter { it.verdict == ConflictVerdict.SAME_EVENT }.map { "${it.candidate.b.source}:${it.candidate.b.id}" }.toSet()
+        val today = schedule.filter { Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate() == date && "${it.source}:${it.id}" !in copies }.map { BriefItem(it.title, it.location) }
         val digest = staged.filter { it.tier != DeliveryTier.SILENT_LOG }.joinToString("\n") { "${it.title}: ${it.detail.take(500)}" }.take(12_000)
-        return DailyBrief(id, date.toString(), kind, BriefHeadline.of(kind, today.size, actionable.size, conflicts.size, completed.size),
-            today, conflicts, completed.take(20), actionable, digest, now).also { store.saveBrief(agentId, it) }
+        val recentTasks = tasks.take(30)
+        fun count(state: String) = recentTasks.count { it.state == state }
+        return DailyBrief(id, date.toString(), kind, BriefHeadline.of(kind, today.size, actionable.size, alerts.count { it.severity != ConflictJudge.POSSIBLE }, count("completed"),
+            failed = count("failed"), running = count("running"), waiting = count("waiting"), paused = count("paused"), stopped = count("stopped")),
+            scheduleHighlights = today, conflictsDetected = alerts, attentionNeeded = actionable, lowPriorityDigest = digest,
+            generatedAtMs = now, tasks = recentTasks).also { store.saveBrief(agentId, it) }
     }
 }
 

@@ -357,7 +357,7 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
                 t("A light day: one conflict to settle, and the Kyoto plan is nearly ready.", "今天不忙：有一個衝突要處理，京都行程快完成了。"),
                 scheduleHighlights = listOf(app.umbra.agent.agents.proactive.BriefItem("10:00", t("Stand-up · notes ready", "站立會議 · 筆記已備好")), app.umbra.agent.agents.proactive.BriefItem("14:00", t("Dentist · Ren'ai Rd", "牙醫 · 仁愛路")), app.umbra.agent.agents.proactive.BriefItem("14:30", t("Client call · Acme", "客戶通話 · Acme"))),
                 conflictsDetected = listOf(app.umbra.agent.agents.proactive.ConflictAlert("cf1", "hard_overlap", t("Dentist 14:00 and the client call 14:30 overlap; the clinic is 25 min from home.", "14:00 牙醫與 14:30 客戶通話重疊；診所離家 25 分鐘。"), listOf("calendar"))),
-                overnightCompleted = listOf(app.umbra.agent.agents.proactive.BriefItem(t("Login crash fixed, PR opened", "登入閃退已修好，已開 PR"), "#212"), app.umbra.agent.agents.proactive.BriefItem(t("Inbox sorted: 3 need you, 41 archived", "收件匣已整理：3 封需要你，41 封已封存"), "")),
+                tasks = app.umbra.agent.agents.proactive.BriefTasks.of(container.sessionStore.list(app.umbra.core.session.SessionFilter(limit = Int.MAX_VALUE)), id, now, sinceMs = Long.MIN_VALUE, conversationId = container.agents.store.get(id)?.sessionId),
                 attentionNeeded = listOf(conflict),
                 lowPriorityDigest = t("Package arrives tomorrow. Two newsletters saved for the weekend.", "包裹明天到。兩份電子報留到週末看。"), generatedAtMs = now - 2 * hour))
             store.saveWatcher(app.umbra.agent.agents.proactive.AgentWatcher("demo-ryokan", id, t("Ryokan under ¥25,000", "旅館低於 ¥25,000"),
@@ -647,6 +647,62 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
                 container.settings.update { it.copy(approvalMode = app.umbra.core.safety.ApprovalMode.valueOf(mode.uppercase())) }
             }
             buildJsonObject { put("mode", container.settings.value.approvalMode.name) }
+        }
+        "laya.status" -> buildJsonObject {
+            put("state", container.laya.state.value.name)
+            put("backend", container.laya.backend.value ?: "")
+            put("message", container.laya.message ?: "")
+            put("progress", container.laya.progress.value?.let { "${it.file} ${it.have}/${it.total}" } ?: "")
+            put("processors", container.laya.processors().joinToString("; ") { "${it.backend.key}=${it.status}${it.detail?.let { d -> " ($d)" }.orEmpty()}" })
+        }
+        // A native crash (SIGSEGV) in Laya's process: with a model loaded, the app falls back to its rules and stays up;
+        // without one, a bare :laya process is started and crashed, and Android's record of how it ended is returned.
+        "laya.crash" -> {
+            if (container.laya.state.value == app.umbra.agent.data.LayaSidecar.State.RUNNING) {
+                container.laya.crashForTest()
+                buildJsonObject { put("crashed", "the loaded model's process"); put("appPid", android.os.Process.myPid()) }
+            } else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val process = app.umbra.agent.data.laya.LayaProcess.start(container.context)
+                val pid = process.pid
+                val accelerators = runCatching { process.accelerators().sorted().joinToString(",") }.getOrElse { "failed: ${it.message}" }
+                process.crash()
+                val exit = kotlinx.coroutines.withTimeoutOrNull(10_000) { process.died.await() }
+                buildJsonObject {
+                    put("layaPid", pid); put("appPid", android.os.Process.myPid()); put("accelerators", accelerators)
+                    put("crashed", exit?.crashed ?: false); put("reason", exit?.text ?: "no death seen in 10 s")
+                }
+            }
+        }
+        // Opens a file that does not exist on each processor in a bare :laya process: the refusal must be about the
+        // file, which shows the processor was read correctly (no model is loaded).
+        "laya.open.probe" -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            buildJsonObject {
+                for (backend in app.umbra.agent.data.laya.LayaBackend.entries.filter { it != app.umbra.agent.data.laya.LayaBackend.NPU }) {
+                    val process = app.umbra.agent.data.laya.LayaProcess.start(container.context)
+                    val result = try { process.open(java.io.File(container.context.cacheDir, "laya-missing.tflite"), backend, false); "opened" }
+                        catch (e: Exception) { e.message ?: e.javaClass.simpleName } finally { process.stop() }
+                    put(backend.key, result)
+                }
+            }
+        }
+        "laya.decide" -> {
+            // A real decision through the engine the router uses (the native one while Laya runs).
+            val request = app.umbra.core.decision.DecisionRequest(
+                (args["state"] as? JsonPrimitive)?.content ?: "Action: tapped 'Save'. Screen after: a toast reads \"Contact saved\" and the contact card for Mei Lin is shown.",
+                mapOf(
+                    "yes" to app.umbra.core.decision.Question.Noul((args["statement"] as? JsonPrimitive)?.content ?: "The action succeeded."),
+                    "pick" to app.umbra.core.decision.Question.Choice(listOf(
+                        app.umbra.core.decision.Option("e0", "Wi-Fi switch (on)"), app.umbra.core.decision.Option("e1", "Mobile data switch (off)"),
+                        app.umbra.core.decision.Option("e2", "Back button"),
+                    ), "Which element should be tapped to turn on mobile data?"),
+                ),
+            )
+            val response = container.laya.engine.decide(request)
+            buildJsonObject {
+                put("engine", response.engine)
+                put("latencyMs", response.latencyMs)
+                for ((id, answer) in response.answers) put(id, answer.toString())
+            }
         }
         "laya.security.check" -> {
             val request = app.umbra.core.model.action.ActionRequest(

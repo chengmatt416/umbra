@@ -128,6 +128,7 @@
     <string name="r_set_laya">Laya</string>
     <string name="r_set_laya_on">已下載 · 開始任務時自動啟動</string>
     <string name="r_set_laya_off">未下載</string>
+    <string name="r_set_laya_running">在 %1$s 上執行</string>
     <string name="r_set_update">更新</string>
     <string name="r_set_update_body">%1$s · 開啟 App 時自動檢查</string>
     <string name="r_set_update_check">檢查</string>

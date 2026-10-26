@@ -24,6 +24,7 @@ assert.equal((await range.arrayBuffer()).byteLength, 32);
 const latest = await fetch(new URL('/download/latest', base), { redirect: 'manual', signal: AbortSignal.timeout(30_000) });
 assert.equal(latest.status, 302);
 assert.equal(new URL(latest.headers.get('location'), base).pathname, update.url);
+assert.equal(latest.headers.get('cache-control'), 'no-store');
 const checksum = await (await get(`${update.url}.sha256`)).text();
 assert.equal(checksum.trim(), `${expected.sha256}  ${expected.file}`);
 console.log('PASS: download headers, resume range, latest redirect and checksum file');
@@ -39,6 +40,7 @@ console.log(`PASS: published APK SHA-256 (${bytes} bytes)`);
 for (const language of ['en', 'zh-tw']) {
   const html = await (await get(`/${language}/`)).text();
   assert(html.includes(`/download/${expected.file}`), `${language}: download link`);
+  assert(html.includes('href="/download/latest"'), `${language}: stable download link`);
   assert(html.includes(expected.version), `${language}: release version`);
 }
 console.log('PASS: both website languages');

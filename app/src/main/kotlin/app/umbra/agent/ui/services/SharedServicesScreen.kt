@@ -13,7 +13,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.umbra.agent.R
 import app.umbra.agent.container
+import app.umbra.agent.ui.PollWhileStarted
 import app.umbra.agent.ui.porcelain.Disclosure
 import app.umbra.agent.ui.breakerRes
 import app.umbra.agent.ui.displayDetail
@@ -60,7 +60,6 @@ import app.umbra.core.control.HealthLevel
 import app.umbra.core.control.ProbeResult
 import app.umbra.core.control.ServicePolicy
 import app.umbra.core.control.ServiceRecord
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -83,11 +82,8 @@ fun SharedServicesScreen(onOpenSession: (String) -> Unit) {
     val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
     val terminals by container.terminals.terminals.collectAsStateWithLifecycle()
     var message by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            runCatching { container.serviceMonitor.refresh() }
-            delay(10_000)
-        }
+    PollWhileStarted(Unit, periodMs = 10_000) {
+        runCatching { container.serviceMonitor.refresh() }
     }
 
     fun consumerName(consumer: String): String = when {

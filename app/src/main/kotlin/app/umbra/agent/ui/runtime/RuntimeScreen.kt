@@ -25,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.umbra.agent.AppContainer
 import app.umbra.agent.container
 import app.umbra.agent.data.GuestManager
+import app.umbra.agent.ui.PollWhileStarted
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.Callout
 import app.umbra.agent.ui.porcelain.CardStyle
@@ -45,7 +46,6 @@ import app.umbra.agent.ui.porcelain.Tone
 import app.umbra.agent.ui.sessionsFlow
 import app.umbra.core.orchestrator.terminal.TerminalStatus
 import app.umbra.runtime.linux.LinuxMode
-import kotlinx.coroutines.delay
 
 /** A runner's state (spec §14): only what a probe just confirmed. Detached is not dead. */
 enum class RunnerState(@param:androidx.annotation.StringRes val label: Int, val tone: Tone) {
@@ -103,12 +103,9 @@ fun RuntimeScreen(onOpenSession: (String) -> Unit) {
     val contracts by container.contracts.all.collectAsStateWithLifecycle()
     val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
     val log by container.contracts.recent.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) {
-        while (true) {
-            rows = runCatching { probeRunners(container) }.getOrNull()
-            probedAt = System.currentTimeMillis()
-            delay(10_000)
-        }
+    PollWhileStarted(Unit, periodMs = 10_000) {
+        rows = runCatching { probeRunners(container) }.getOrNull()
+        probedAt = System.currentTimeMillis()
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 18.dp)) {

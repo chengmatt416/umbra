@@ -402,7 +402,7 @@ class AgentRuntime(private val container: AppContainer) {
                 backgroundRuns = if (background) WakeBudget.record(state.backgroundRuns, now) else state.backgroundRuns))
             Log.i(TAG, "${p.name}: runs (${reason.word}): ${timers.size} timers, ${fired.size} rules, ${now_.size} now, ${freshQueue.size} queued")
             runCatching { AgentService.start(context) }
-            if (reason == Reason.MANUAL || freshQueue.any { it.addedBy == "user" }) container.supervisor.send(sid, digest, whileRunning = StreamingBehavior.FOLLOW_UP)
+            if (reason == Reason.MANUAL || freshQueue.any { it.addedBy == "user" }) container.supervisor.send(sid, digest + proactive.openSuggestions(agentId), whileRunning = StreamingBehavior.FOLLOW_UP)
             else proactive.discovery(p, digest)
         }
     }

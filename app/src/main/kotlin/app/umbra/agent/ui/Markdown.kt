@@ -160,19 +160,23 @@ internal object MarkdownParser {
     }
 
     private val INLINE = Regex("""`([^`]+)`|\*\*([^*]+)\*\*|\*([^*\s][^*]*)\*|\[([^\]]+)]\(([^)]+)\)""")
+    private val LINE_BREAK = Regex("""<br\s*/?\s*>""", RegexOption.IGNORE_CASE)
+
+    /** Agent replies use HTML breaks inside Markdown; keep all other HTML literal. */
+    private fun lineBreaks(text: String): String = LINE_BREAK.replace(text, "\n")
 
     fun inline(text: String, codeBackground: Color): AnnotatedString = buildAnnotatedString {
         var last = 0
         for (m in INLINE.findAll(text)) {
-            append(text.substring(last, m.range.first))
+            append(lineBreaks(text.substring(last, m.range.first)))
             when {
                 m.groups[1] != null -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBackground, fontSize = 13.sp)) { append(m.groupValues[1]) }
-                m.groups[2] != null -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(m.groupValues[2]) }
-                m.groups[3] != null -> withStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)) { append(m.groupValues[3]) }
-                m.groups[4] != null -> withStyle(SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)) { append(m.groupValues[4]) }
+                m.groups[2] != null -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(lineBreaks(m.groupValues[2])) }
+                m.groups[3] != null -> withStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)) { append(lineBreaks(m.groupValues[3])) }
+                m.groups[4] != null -> withStyle(SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)) { append(lineBreaks(m.groupValues[4])) }
             }
             last = m.range.last + 1
         }
-        append(text.substring(last))
+        append(lineBreaks(text.substring(last)))
     }
 }

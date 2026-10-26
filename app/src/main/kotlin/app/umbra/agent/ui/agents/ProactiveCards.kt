@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.umbra.agent.R
 import app.umbra.agent.agents.proactive.BriefItem
+import app.umbra.agent.agents.proactive.BriefTask
 import app.umbra.agent.agents.proactive.DailyBrief
 import app.umbra.agent.agents.proactive.OpportunityCard
 import app.umbra.agent.agents.proactive.PreparedNextStep
@@ -202,6 +203,16 @@ private fun plain(value: kotlinx.serialization.json.JsonElement): String = when 
 
 private val TIME = Regex("""^\d{1,2}:\d{2}$""")
 
+@Composable
+private fun briefTaskCounts(tasks: List<BriefTask>): List<Pair<String, String>> = buildList {
+    for ((state, label) in listOf("completed" to R.string.proactive_tasks_done, "failed" to R.string.proactive_tasks_failed,
+        "running" to R.string.proactive_tasks_running, "waiting" to R.string.proactive_tasks_waiting,
+        "paused" to R.string.proactive_tasks_paused, "stopped" to R.string.proactive_tasks_stopped)) {
+        val count = tasks.count { it.state == state }
+        if (count > 0) add(state to stringResource(label, count))
+    }
+}
+
 /** The brief's dark head: kind, date, the sentence, and what is inside as counts. Home shows this part alone. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -220,11 +231,14 @@ internal fun BriefHead(brief: DailyBrief, agentName: String?, modifier: Modifier
             trailing?.invoke()
         }
         Text(brief.headline, color = onDark, fontFamily = P.serif, fontSize = 22.sp, lineHeight = 28.sp)
+        val taskCounts = briefTaskCounts(brief.tasks)
         val stats = buildList {
             if (brief.scheduleHighlights.isNotEmpty()) add(Triple(PIcons.clock, stringResource(R.string.home_brief_events, brief.scheduleHighlights.size), false))
             if (brief.conflictsDetected.isNotEmpty()) add(Triple(PIcons.alert, stringResource(R.string.home_brief_conflicts, brief.conflictsDetected.size), true))
             if (brief.attentionNeeded.isNotEmpty()) add(Triple(PIcons.spark, stringResource(R.string.card_brief_decisions, brief.attentionNeeded.size), false))
-            if (brief.overnightCompleted.isNotEmpty()) add(Triple(PIcons.check, stringResource(R.string.home_brief_done, brief.overnightCompleted.size), false))
+            taskCounts.forEach { (state, label) ->
+                add(Triple(when (state) { "completed" -> PIcons.check; "failed" -> PIcons.alert; else -> PIcons.clock }, label, state == "failed" || state == "waiting"))
+            }
         }
         if (stats.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             stats.forEach { (icon, label, warn) ->
@@ -238,7 +252,7 @@ internal fun BriefHead(brief: DailyBrief, agentName: String?, modifier: Modifier
     }
 }
 
-/** The whole brief: the head, then the day as a timeline, conflicts, what needs a decision, what got done, the rest. */
+/** The whole brief keeps session states visible alongside the day's decisions. */
 @Composable
 internal fun BriefCard(brief: DailyBrief, agentName: String? = null, onSuggestion: (OpportunityCard) -> Unit, onOpenSession: (String) -> Unit, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(24.dp)
@@ -356,15 +370,24 @@ private fun BriefBody(brief: DailyBrief, onSuggestion: (OpportunityCard) -> Unit
                 }
             }
         }
-        if (brief.overnightCompleted.isNotEmpty()) Column(Modifier.unrollIn(section++, unroll), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SectionLabel(stringResource(R.string.proactive_brief_done))
-            brief.overnightCompleted.forEach { item ->
-                Row(Modifier.fillMaxWidth().then(if (item.linkedSessionId != null) Modifier.clip(RoundedCornerShape(10.dp)).clickable(role = Role.Button) { onOpenSession(item.linkedSessionId!!) } else Modifier),
+        if (brief.tasks.isNotEmpty()) Column(Modifier.unrollIn(section++, unroll), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionLabel(stringResource(R.string.proactive_brief_tasks))
+            Text(briefTaskCounts(brief.tasks).joinToString(" · ") { it.second }, Modifier.horizontalScroll(rememberScrollState()), color = P.sub, fontSize = 12.sp, maxLines = 1)
+            brief.tasks.forEach { task ->
+                val sessionId = task.linkedSessionId
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(P.highlight)
+                    .then(if (sessionId != null) Modifier.clickable(role = Role.Button) { onOpenSession(sessionId) } else Modifier).padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Box(Modifier.size(20.dp).clip(CircleShape).background(P.good.copy(alpha = .14f)), contentAlignment = Alignment.Center) { PIcon(PIcons.check, size = 12.dp, tint = P.good, strokeWidth = 2.5f) }
-                    Text(item.title, Modifier.weight(1f), color = P.ink, fontSize = 14.sp, lineHeight = 20.sp)
-                    if (item.detail.isNotBlank()) Text(item.detail, color = P.muted, fontSize = 12.sp, maxLines = 1)
-                    if (item.linkedSessionId != null) PIcon(PIcons.arrowRight, size = 14.dp, tint = P.sub)
+                    StatusChip(stringResource(when (task.state) {
+                        "completed" -> R.string.state_done; "failed" -> R.string.state_failed
+                        "running" -> R.string.state_working; "waiting" -> R.string.proactive_task_waiting
+                        "paused" -> R.string.state_paused; else -> R.string.state_stopped
+                    }), when (task.state) { "completed" -> P.good; "failed" -> P.danger; "waiting" -> P.amber; else -> P.sub })
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(task.title, color = P.ink, fontSize = 14.sp, lineHeight = 20.sp)
+                        if (task.detail.isNotBlank()) Text(task.detail, color = P.sub, fontSize = 12.sp, lineHeight = 18.sp)
+                    }
+                    if (sessionId != null) PIcon(PIcons.arrowRight, size = 14.dp, tint = P.sub)
                 }
             }
         }

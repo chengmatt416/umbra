@@ -59,8 +59,7 @@ internal fun Project.configureAndroidCommon(extension: CommonExtension) {
     extension.compileOptions.targetCompatibility = JavaVersion.VERSION_21
     extension.testOptions.unitTests.isReturnDefaultValues = true
     extension.lint.apply {
-        // targetSdk 28 is deliberate (sideload-only Termux-style runtime), so the Play-oriented
-        // target-SDK freshness checks do not apply.
+        // The target SDK follows Android releases by hand (ADR 0002), not by these Play-oriented checks.
         disable += setOf("ExpiredTargetSdkVersion", "OldTargetApi")
         abortOnError = true
     }

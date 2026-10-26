@@ -33,6 +33,8 @@ import kotlinx.serialization.Serializable
     val preparedAction: PreparedNextStep, val state: State = State.PENDING,
     val createdAtMs: Long, val expiresAtMs: Long? = null,
     val executionSessionId: String? = null, val error: String? = null,
+    /** The agent run that last proposed or updated it; its closing words are not delivered as a second item. */
+    val sourceSessionId: String? = null, val updatedAtMs: Long? = null,
 ) {
     @Serializable enum class Kind { TASK_DISCOVERY, CONFLICT_ALERT, FOLLOW_UP, PRICE_OR_MONITOR, GOAL_SUGGESTION }
     @Serializable enum class State { PENDING, ACCEPTING, ACCEPTED, DISMISSED, EXPIRED }
@@ -70,11 +72,16 @@ import kotlinx.serialization.Serializable
 )
 @Serializable data class BriefItem(val title: String, val detail: String, val linkedSessionId: String? = null,
     val linkedGoalId: String? = null, val preparedStep: PreparedNextStep? = null)
+/** Stable states keep stored briefs independent of session enum names. */
+@Serializable data class BriefTask(
+    val title: String, val state: String, val detail: String = "", val linkedSessionId: String? = null,
+    val updatedAtMs: Long = 0,
+)
 @Serializable data class DailyBrief(
     val id: String, val date: String, val kind: Kind, val headline: String,
     val scheduleHighlights: List<BriefItem> = emptyList(), val conflictsDetected: List<ConflictAlert> = emptyList(),
     val overnightCompleted: List<BriefItem> = emptyList(), val attentionNeeded: List<OpportunityCard> = emptyList(),
-    val lowPriorityDigest: String = "", val generatedAtMs: Long,
+    val lowPriorityDigest: String = "", val generatedAtMs: Long, val tasks: List<BriefTask> = emptyList(),
 ) { @Serializable enum class Kind { MORNING, EVENING } }
 
 @Serializable enum class ExecutionTarget { CONNECTOR_API, HEADLESS_BROWSER, ANDROID_VISUAL, LINUX_CLI, REMOTE_NODE, SANDBOX_TRANSFORM }
@@ -168,8 +175,14 @@ import kotlinx.serialization.Serializable
     val authorizedAtMs: Long? = null)
 @Serializable data class ContextEvidence(val source: String, val id: String, val text: String, val atMs: Long,
     val entityType: String = "any", val score: Double = 0.0)
+/**
+ * One calendar entry. [calendar] and [account] name where it lives, [organizer] who sent it, [uid] its iCalendar UID
+ * (one meeting on two accounts usually keeps it): what tells the conflict judge that two overlapping entries are one.
+ */
 @Serializable data class CalendarItem(val id: String, val title: String, val startMs: Long, val endMs: Long,
     val location: String = "", val attendees: List<String> = emptyList(), val source: String = "calendar",
-    val travelMinutes: Int? = null, val declaredWeekday: Int? = null)
+    val travelMinutes: Int? = null, val declaredWeekday: Int? = null,
+    val calendar: String = "", val account: String = "", val organizer: String = "", val allDay: Boolean = false,
+    val free: Boolean = false, val declined: Boolean = false, val uid: String = "")
 @Serializable data class PersonalTask(val id: String, val title: String, val note: String = "", val dueAtMs: Long? = null,
     val completed: Boolean = false, val updatedAtMs: Long)

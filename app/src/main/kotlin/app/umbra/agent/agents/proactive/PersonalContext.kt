@@ -199,10 +199,26 @@ class PersonalContext(private val container: AppContainer) {
         if (grant(agentId, "calendar") == null || !has(Manifest.permission.READ_CALENDAR)) return@withContext emptyList()
         require(to > from && to - from <= 366 * 86_400_000L)
         val uri = CalendarContract.Instances.CONTENT_URI.buildUpon().also { ContentUris.appendId(it, from); ContentUris.appendId(it, to) }.build()
-        container.context.contentResolver.query(uri, arrayOf(CalendarContract.Instances.EVENT_ID, CalendarContract.Instances.TITLE,
-            CalendarContract.Instances.BEGIN, CalendarContract.Instances.END, CalendarContract.Instances.EVENT_LOCATION), null, null, CalendarContract.Instances.BEGIN + " ASC")?.use { cursor ->
+        val base = arrayOf(CalendarContract.Instances.EVENT_ID, CalendarContract.Instances.TITLE,
+            CalendarContract.Instances.BEGIN, CalendarContract.Instances.END, CalendarContract.Instances.EVENT_LOCATION)
+        // Which calendar and account each entry is on, and who sent it: how the conflict judge tells one meeting on two
+        // accounts from two meetings. A provider that lacks a column still gives the basic entries.
+        val more = arrayOf(CalendarContract.Instances.CALENDAR_DISPLAY_NAME, CalendarContract.Calendars.ACCOUNT_NAME, CalendarContract.Instances.ORGANIZER,
+            CalendarContract.Instances.ALL_DAY, CalendarContract.Instances.AVAILABILITY, CalendarContract.Instances.SELF_ATTENDEE_STATUS, CalendarContract.Instances.UID_2445)
+        val resolver = container.context.contentResolver
+        val cursor = runCatching { resolver.query(uri, base + more, null, null, CalendarContract.Instances.BEGIN + " ASC") }.getOrNull()
+            ?: resolver.query(uri, base, null, null, CalendarContract.Instances.BEGIN + " ASC")
+        cursor?.use { c ->
+            val full = c.columnCount > base.size
             buildList {
-                while (size < 300 && cursor.moveToNext()) add(CalendarItem(cursor.getLong(0).toString(), cursor.getString(1).orEmpty().take(500), cursor.getLong(2), cursor.getLong(3), cursor.getString(4).orEmpty().take(500)))
+                while (size < 300 && c.moveToNext()) {
+                    val item = CalendarItem(c.getLong(0).toString(), c.getString(1).orEmpty().take(500), c.getLong(2), c.getLong(3), c.getString(4).orEmpty().take(500))
+                    add(if (!full) item else item.copy(
+                        calendar = c.getString(5).orEmpty().take(120), account = c.getString(6).orEmpty().take(120), organizer = c.getString(7).orEmpty().take(120),
+                        allDay = c.getInt(8) == 1, free = c.getInt(9) == CalendarContract.Instances.AVAILABILITY_FREE,
+                        declined = c.getInt(10) == CalendarContract.Attendees.ATTENDEE_STATUS_DECLINED, uid = c.getString(11).orEmpty().take(200),
+                    ))
+                }
             }
         }.orEmpty()
     }

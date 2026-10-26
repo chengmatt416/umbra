@@ -25,16 +25,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.repeatOnLifecycle
 import app.umbra.agent.R
 import app.umbra.agent.container
+import app.umbra.agent.ui.PollWhileStarted
 import app.umbra.agent.ui.porcelain.*
 import app.umbra.agent.ui.shell.PorcelainPage
 import app.umbra.core.control.NodeTrust
 import app.umbra.core.control.PairedNode
 import app.umbra.core.nodes.JobState
 import app.umbra.core.nodes.shortFingerprint
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 internal const val NODE_INSTALL = "curl -fsSL https://umbra-agent.pages.dev/node | sh"
@@ -66,15 +65,9 @@ fun NodesScreen(onBack: () -> Unit) {
 internal fun RefreshNodes() {
     val c = LocalContext.current.container
     val nodes by c.nodes.all.collectAsStateWithLifecycle()
-    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(nodes.keys, lifecycle) {
-        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
-            while (true) {
-                kotlinx.coroutines.coroutineScope {
-                    nodes.values.filter { it.revocation == null }.map { n -> launch { runCatching { c.nodeConnections.preflight(n.id); c.nodeConnections.reconcile(n.id) } } }.forEach { it.join() }
-                }
-                delay(15_000)
-            }
+    PollWhileStarted(nodes.keys, periodMs = 15_000) {
+        kotlinx.coroutines.coroutineScope {
+            nodes.values.filter { it.revocation == null }.map { n -> launch { runCatching { c.nodeConnections.preflight(n.id); c.nodeConnections.reconcile(n.id) } } }.forEach { it.join() }
         }
     }
 }

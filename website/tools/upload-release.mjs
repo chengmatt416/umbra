@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// node upload-release.mjs <apk path> <object name>
+// node upload-release.mjs <apk path> <object name> [--asset]
 // Uploads a big file to the umbra-releases R2 bucket in 50 MiB parts through a temporary Worker, verifies the size,
 // stores the local SHA-256 next to it as <name>.sha256, writes src/apk.json, then deletes the Worker.
+// --asset uploads any other big file (Laya's model files): no .sha256 object and src/apk.json is left alone.
 // The version and versionCode come from Gradle's output-metadata.json next to the APK; the site's update.json (which
 // the app checks for updates) needs the versionCode.
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -11,7 +12,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const [file, name] = process.argv.slice(2);
+const asset = process.argv.includes('--asset');
+const [file, name] = process.argv.slice(2).filter((a) => a !== '--asset');
 if (!file || !name) { console.error('usage: upload-release.mjs <file> <object name>'); process.exit(2); }
 const dir = join(here, 'r2-uploader');
 const token = randomBytes(24).toString('hex');
@@ -20,7 +22,7 @@ const size = statSync(file).size;
 const PART = 50 * 1024 * 1024;
 const metaFile = join(dirname(file), 'output-metadata.json');
 const meta = existsSync(metaFile) ? JSON.parse(readFileSync(metaFile, 'utf8')).elements?.[0] ?? {} : {};
-if (!meta.versionCode) console.warn('no output-metadata.json next to the APK: set version and versionCode in src/apk.json by hand');
+if (!asset && !meta.versionCode) console.warn('no output-metadata.json next to the APK: set version and versionCode in src/apk.json by hand');
 
 const sha = createHash('sha256');
 { const fd = openSync(file, 'r'); const buf = Buffer.alloc(8 << 20); let n; let pos = 0;
@@ -61,9 +63,11 @@ try {
   const done = await call(`/complete?key=${key}&uploadId=${uploadId}`, { method: 'POST', body: JSON.stringify(parts) });
   console.log('\ncompleted', done);
   if (done.size !== size) throw new Error(`size mismatch: ${done.size} != ${size}`);
-  await call(`/put?key=${encodeURIComponent(name + '.sha256')}`, { method: 'PUT', body: `${digest}  ${name}\n` });
   const mib = (size / 1048576).toFixed(0) + ' MiB';
-  writeFileSync(join(here, '..', 'src', 'apk.json'), JSON.stringify({ file: name, size: mib, sha256: digest, bytes: size, ...(meta.versionCode ? { version: meta.versionName, versionCode: meta.versionCode } : {}) }, null, 2));
+  if (!asset) {
+    await call(`/put?key=${encodeURIComponent(name + '.sha256')}`, { method: 'PUT', body: `${digest}  ${name}\n` });
+    writeFileSync(join(here, '..', 'src', 'apk.json'), JSON.stringify({ file: name, size: mib, sha256: digest, bytes: size, ...(meta.versionCode ? { version: meta.versionName, versionCode: meta.versionCode } : {}) }, null, 2));
+  }
   console.log('uploaded', name, mib);
 } finally {
   const cleanup = spawnSync('npx', ['--no-install', 'wrangler', 'delete', '--name', workerName, '--force'], { cwd: dir, stdio: 'inherit' });

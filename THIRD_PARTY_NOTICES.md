@@ -28,6 +28,9 @@ This includes transitive dependencies, rather than only the direct dependencies 
 | JSpecify and JetBrains annotations | Apache-2.0 | https://github.com/jspecify/jspecify, https://github.com/JetBrains/java-annotations |
 | thinking-orbs, native adaptation at upstream commit de85557 | MIT; Copyright 2026 Jakub Antalik | https://github.com/Jakubantalik/thinking-orbs; original notice in `app/src/main/assets/licenses/thinking-orbs.txt` |
 | Geist and Newsreader fonts (unmodified) | SIL Open Font License 1.1 | [font sources, checksums and full licenses](third_party/fonts/README.md) |
+| LiteRT 2.3.0 (`litert`, `litert-api`, `litert-gpu`, `litert-npu-runtime-qualcomm`, `-mediatek`, `-google-tensor`), including their bundled native libraries | Apache-2.0; each AAR's `THIRD_PARTY_NOTICE.txt` lists the native components | https://github.com/google-ai-edge/LiteRT |
+| Qualcomm AI Runtime (QAIRT) 2.50.0.260828: QNN HTP runtime libraries for arm64 Android and Hexagon v73–v81 (`libQnnHtp.so`, `libQnnHtpPrepare.so`, `libQnnSystem.so`, `libQnnHtpV7x/V81Stub.so`, `libQnnHtpV7x/V81Skel.so`), unmodified, in object code | Proprietary: Qualcomm Technologies "AI Stack License" (distribution only in object code and as part of an application, not on its own; no reverse engineering) | https://softwarecenter.qualcomm.com/ — staged at build time by `runtime-build/laya/fetch-qnn.sh`, never committed or hosted separately |
+| Laya typed-decisions checkpoint (`convaiinnovations/laya-typed-decisions` at `1a793eb5`), converted to LiteRT by `runtime-build/laya/convert.py` and hosted on the project's R2; its tokenizer ships in the APK | Apache-2.0; Copyright Convai Innovations | https://huggingface.co/convaiinnovations/laya-typed-decisions |
 
 Some Maven POMs omit their license or inherit it from a parent. `UNKNOWN` in the inventory means the
 collector found no direct declaration, not permission to redistribute. ZXing core 3.5.3 and Guava
@@ -59,9 +62,9 @@ available original notices, including bundled native-library notices. See the co
 [the release review](docs/RELEASE_LEGAL_REVIEW.md). Inventories and notices are not corresponding source.
 An upstream repository URL or an SPDX identifier alone does not satisfy binary-distribution obligations.
 
-Laya (`laya[serve]`) and its model `laya-typed-decisions` are downloaded when enabled, not bundled by
-this repository's rootfs build. Their package dependencies and model weights have their own terms;
-review the exact package version and model revision before mirroring or bundling them.
+Since 0.6.2 Laya runs inside the app: the converted typed-decisions weights (Apache-2.0, a modified form of the
+original: weights cast to fp16 and the graph rewritten for LiteRT, see `runtime-build/laya/convert.py`) are downloaded
+from the project's R2 when enabled. The Linux environment no longer installs `laya[serve]`.
 
 ## Website, recordings and development tools
 

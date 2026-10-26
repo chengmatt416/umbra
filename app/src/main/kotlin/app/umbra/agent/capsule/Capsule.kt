@@ -14,6 +14,9 @@ import android.view.HapticFeedbackConstants
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.draw.clip
 import app.umbra.agent.AppContainer
 import app.umbra.agent.MainActivity
 import app.umbra.core.model.Point
@@ -62,10 +65,12 @@ class Capsule(internal val context: Context, private val container: AppContainer
     internal val dismissedFailures = MutableStateFlow<Set<String>>(emptySet())
     /** Where the capsule sits relative to the camera; null when there is no camera to wrap. */
     internal val hole = MutableStateFlow<Hole?>(null)
-    /** The card is folding back into the pill: the window stays wide until the card says it is done (or a moment passes). */
+    /** The card is folding back into the pill: its window stays until the card says it is done (or a moment passes). */
     internal val collapsing = MutableStateFlow(false)
-    /** The card has been laid out: only then does the window widen, so the pill never sits stranded in a wide window. */
-    internal val cardShown = MutableStateFlow(false)
+    /** The pill's place on the screen (its layout bounds), where the card grows from and folds back into. */
+    internal val pillBounds = MutableStateFlow<AndroidRect?>(null)
+    /** The card's growing shape covers the pill: the pill draws nothing (and the card's window takes the touches). */
+    internal val pillHidden = MutableStateFlow(false)
     /** Another capsule app is expanded over the camera: Umbra's pill fades out of its way and takes no touches. */
     internal val yielding = MutableStateFlow(false)
     /** The other capsule app Umbra is making room for (Material Capsule, ...), or null. */
@@ -74,7 +79,8 @@ class Capsule(internal val context: Context, private val container: AppContainer
     @Volatile private var corner = false
     /** A plain pill centred in the status-bar row, independent of the camera (see [CapsuleNeighbours.centre]). */
     @Volatile private var centre = false
-    @Volatile private var laidOutWide = false
+    /** The CUSTOM anchor the capsule was last placed for. */
+    @Volatile private var placedAnchor: app.umbra.agent.data.CapsuleAnchor? = null
 
     /** What the companions and the activity feed show (docs/design/capsule-companion.md). */
     internal val watch = CapsuleWatch(container, scope, ::feel)
@@ -166,21 +172,24 @@ class Capsule(internal val context: Context, private val container: AppContainer
                     }
                 }
             }
-            // Folding: the card shrinks toward the camera in the still-wide window, then the window becomes the pill.
+            // The card has a window of its own, laid out once at its full size, above the pill's: it grows out of the
+            // pill and folds back into it while the pill stays drawn underneath until covered, so no frame is ever empty
+            // and no window is resized or moved while anything animates (that is what made the expansion flicker).
             launch {
                 expanded.collectLatest { open ->
-                    collapsing.value = false
-                    if (open) kotlinx.coroutines.withTimeoutOrNull(OPEN_WAIT_MS) { cardShown.first { it } }
-                    if (!open) {
+                    if (open) { collapsing.value = false; openCard() }
+                    else {
                         focusCard(false)
-                        if (laidOutWide) {
+                        if (cardWindow != null) {
                             collapsing.value = true
                             kotlinx.coroutines.withTimeoutOrNull(COLLAPSE_MS) { collapsing.first { !it } }
                             collapsing.value = false
+                            pillHidden.value = false
+                            // The pill draws again under the folded card before the card's window goes.
+                            delay(HANDOFF_MS)
                         }
-                        cardShown.value = false
+                        closeCard()
                     }
-                    place()
                 }
             }
             launch { neighbours() }
@@ -267,9 +276,10 @@ class Capsule(internal val context: Context, private val container: AppContainer
             trySend(Unit)
             awaitClose { context.contentResolver.unregisterContentObserver(observer) }
         }
-        val placement = container.settings.flow.map { it.capsulePlacement }.distinctUntilChanged()
+        val placement = container.settings.flow.map { it.capsulePlacement to it.capsuleAnchor }.distinctUntilChanged()
         kotlinx.coroutines.flow.combine(servicesChanged, UmbraAccessibilityService.topOverlays, placement, expanded) { _, overlays, chosen, open -> Triple(overlays, chosen, open) }
-            .collect { (overlays, chosen, open) ->
+            .collect { (overlays, chosenAndAnchor, open) ->
+                val chosen = chosenAndAnchor.first
                 val pm = context.packageManager
                 val services = runCatching {
                     CapsuleNeighbours.services(Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES), context.packageName) { pkg ->
@@ -291,7 +301,8 @@ class Capsule(internal val context: Context, private val container: AppContainer
                     }
                 }
                 val nextCentre = CapsuleNeighbours.centre(chosen, neighbourName.value != null)
-                if (nextCorner != corner || nextCentre != centre) { corner = nextCorner; centre = nextCentre; place() }
+                val nextAnchor = chosenAndAnchor.second.takeIf { chosen == app.umbra.agent.data.CapsulePlacement.CUSTOM }
+                if (nextCorner != corner || nextCentre != centre || nextAnchor != placedAnchor) { corner = nextCorner; centre = nextCentre; placedAnchor = nextAnchor; place() }
             }
     }
 
@@ -308,6 +319,7 @@ class Capsule(internal val context: Context, private val container: AppContainer
         closeCapsule()
         closeComposer()
         selectionWindow?.close(); selectionWindow = null
+        previewWindow?.close(); previewWindow = null
         selecting = false
     }
 
@@ -344,21 +356,80 @@ class Capsule(internal val context: Context, private val container: AppContainer
         capsuleWindow = runCatching {
             OverlayWindow(
                 wm, params, host,
-                onOutside = { if (expanded.value && !cardFocused.value) expanded.value = false },
+                // A touch on the card's window is outside this one too: only the card's window decides about those.
+                onOutside = { if (expanded.value && !cardFocused.value && cardWindow == null) expanded.value = false },
                 onBack = { if (cardFocused.value) focusCard(false) else expanded.value = false; true },
             ) { CapsuleView(this, container) }
         }.onFailure { notice.value = context.getString(R.string.cap_notice_capsule, it.message.orEmpty()) }.getOrNull()
         place()
     }
 
-    /** The camera hole, as the screen reports it (the exact path within the top cutout's rectangle), or null. */
+    /**
+     * The camera hole: where the user placed it (Size and position, on this screen size), else as the screen reports it
+     * (the exact path within the top cutout's rectangle), or null.
+     */
     private fun camera(metrics: android.view.WindowMetrics): AndroidRect? {
+        custom(metrics)?.let { return it }
         val cutout = metrics.windowInsets.displayCutout
         val top = cutout?.boundingRectTop?.takeIf { !it.isEmpty } ?: return null
         return cutout.cutoutPath?.let { path ->
             val f = RectF().also { path.computeBounds(it, true) }
             AndroidRect(floor(f.left).toInt(), floor(f.top).toInt(), ceil(f.right).toInt(), ceil(f.bottom).toInt()).takeIf { it.intersect(top) }
         } ?: top
+    }
+
+    /** The user's own camera rectangle (CUSTOM placement, or the one being edited), when it was set on this screen size. */
+    private fun custom(metrics: android.view.WindowMetrics): AndroidRect? {
+        draftAnchor?.let { return it.on(metrics.bounds.width(), metrics.bounds.height()) }
+        val prefs = container.settings.value
+        if (prefs.capsulePlacement != app.umbra.agent.data.CapsulePlacement.CUSTOM) return null
+        return prefs.capsuleAnchor?.on(metrics.bounds.width(), metrics.bounds.height())
+    }
+
+    /** Size and position is open: the anchor being edited, which the capsule follows live. */
+    @Volatile private var draftAnchor: app.umbra.agent.data.CapsuleAnchor? = null
+    private var previewWindow: OverlayWindow? = null
+
+    /**
+     * Size and position: the capsule wraps [anchor] as the user moves it, and a red circle marks it exactly; when the
+     * circle disappears behind the camera, the capsule fits. Null ends the preview (main thread).
+     */
+    fun previewAnchor(anchor: app.umbra.agent.data.CapsuleAnchor?) {
+        draftAnchor = anchor
+        place()
+        if (anchor == null) { previewWindow?.close(); previewWindow = null; return }
+        val service = UmbraAccessibilityService.instance
+        val type = if (service != null) WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY else WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        previewWindow?.let { window ->
+            if (window.params.type == type) {
+                window.update { p -> p.x = anchor.x; p.y = anchor.y; p.width = anchor.width; p.height = anchor.height }
+                return
+            }
+            window.close()
+            previewWindow = null
+        }
+        if (service == null && !Settings.canDrawOverlays(context)) return
+        val host: Context = service ?: context
+        val params = WindowManager.LayoutParams(
+            anchor.width, anchor.height, type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = anchor.x
+            y = anchor.y
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            fitInsetsTypes = 0
+            title = UmbraOverlay.WINDOW_TITLE
+        }
+        previewWindow = runCatching {
+            OverlayWindow(host.getSystemService(WindowManager::class.java), params, host) {
+                androidx.compose.foundation.layout.Box(
+                    androidx.compose.ui.Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape).background(androidx.compose.ui.graphics.Color(0xFFFF5F57)),
+                )
+            }
+        }.getOrNull()
     }
 
     /**
@@ -372,8 +443,10 @@ class Capsule(internal val context: Context, private val container: AppContainer
         val width = metrics.bounds.width()
         val statusTop = metrics.windowInsets.getInsets(WindowInsets.Type.statusBars()).top
         val camera = camera(metrics)
+        // Over the status bar only with the accessibility window: an ordinary overlay is drawn under the status bar's own
+        // window, which takes every touch in that band, so there it would show but never answer a tap. Without the
+        // service a placement set by hand keeps its column (centred on the camera), just below the status bar.
         val overStatusBar = capsuleType == WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
-        laidOutWide = expanded.value
         if (centre) {
             // The user's choice: a plain pill in the middle of the status-bar row, between the clock and the icons; the
             // card unfolds from it. Over the status bar only with the accessibility window, else just below it.
@@ -384,8 +457,9 @@ class Capsule(internal val context: Context, private val container: AppContainer
                 p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                 p.x = 0
                 p.y = rowY
-                p.width = if (expanded.value) width - dp(8) else WindowManager.LayoutParams.WRAP_CONTENT
+                p.width = WindowManager.LayoutParams.WRAP_CONTENT
             }
+            cardY = rowY
             return
         }
         if (corner) {
@@ -393,9 +467,9 @@ class Capsule(internal val context: Context, private val container: AppContainer
             hole.value = null
             window.update { p ->
                 p.y = statusTop + dp(6)
-                if (expanded.value) { p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; p.width = width - dp(8); p.x = 0 }
-                else { p.gravity = Gravity.TOP or (if (container.settings.value.leftHanded) Gravity.START else Gravity.END); p.width = WindowManager.LayoutParams.WRAP_CONTENT; p.x = dp(10) }
+                p.gravity = Gravity.TOP or (if (container.settings.value.leftHanded) Gravity.START else Gravity.END); p.width = WindowManager.LayoutParams.WRAP_CONTENT; p.x = dp(10)
             }
+            cardY = statusTop + dp(6)
             return
         }
         val margin = dp(8)
@@ -420,15 +494,10 @@ class Capsule(internal val context: Context, private val container: AppContainer
             }
         } else null
         hole.value = wrap
+        // The card's first row is the camera's row: the camera sits in the card's top edge, between its controls.
+        cardY = if (overStatusBar && camera != null) (camera.centerY() - dp(CARD_ROW_DP) / 2 - dp(10)).coerceAtLeast(0) else y
         window.update { p ->
             when {
-                expanded.value -> {
-                    // The card's first row is the camera's row: the camera sits in the card's top edge, between its controls.
-                    p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                    p.width = width - dp(8)
-                    p.x = 0
-                    p.y = if (overStatusBar && camera != null) (camera.centerY() - dp(CARD_ROW_DP) / 2 - dp(10)).coerceAtLeast(0) else y
-                }
                 wrap != null && camera != null && wrap.centered -> {
                     p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                     p.width = WindowManager.LayoutParams.WRAP_CONTENT
@@ -453,7 +522,7 @@ class Capsule(internal val context: Context, private val container: AppContainer
 
     /** The card's field takes the keyboard only while the user types in it; otherwise the app keeps focus (§3.1). */
     fun focusCard(on: Boolean) {
-        val window = capsuleWindow ?: return
+        val window = cardWindow ?: capsuleWindow ?: return
         if (cardFocused.value == on) return
         cardFocused.value = on
         window.update { p ->
@@ -486,9 +555,61 @@ class Capsule(internal val context: Context, private val container: AppContainer
         )
     }
 
-    internal fun haptic(feedback: Int) = capsuleWindow?.haptic(feedback)
+    internal fun haptic(feedback: Int) = (cardWindow ?: capsuleWindow)?.haptic(feedback)
+
+    /** Where the card's window starts (the camera's row, or the pill's row in the corner and centre placements). */
+    @Volatile private var cardY = 0
+    private var cardWindow: OverlayWindow? = null
+
+    /**
+     * Opens the card's window above the pill's, at its full size from the first frame: as wide as the screen less
+     * 4 dp each side, from the camera's row to the bottom. Its empty part is the outside: a tap there folds the card.
+     */
+    private fun openCard() {
+        val pill = capsuleWindow ?: return
+        if (cardWindow != null) return
+        place()
+        val host: Context = UmbraAccessibilityService.instance?.takeIf { capsuleType == WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY } ?: context
+        val wm = host.getSystemService(WindowManager::class.java)
+        val bounds = wm.currentWindowMetrics.bounds
+        val params = WindowManager.LayoutParams(
+            bounds.width() - dp(8), (bounds.height() - cardY).coerceAtLeast(dp(200)), capsuleType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            x = 0
+            y = cardY
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            fitInsetsTypes = 0
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING or WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED
+            title = UmbraOverlay.WINDOW_TITLE
+        }
+        cardWindow = runCatching {
+            OverlayWindow(
+                wm, params, host,
+                onOutside = { if (expanded.value && !cardFocused.value) expanded.value = false },
+                onBack = { if (cardFocused.value) focusCard(false) else expanded.value = false; true },
+            ) { CapsuleView(this, container, card = true) }
+        }.onFailure { notice.value = context.getString(R.string.cap_notice_capsule, it.message.orEmpty()) }.getOrNull()
+        if (cardWindow == null) { expanded.value = false; return }
+        // The card's window is on top now; the pill under it takes no touches until it is back.
+        pill.update { p -> p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE }
+    }
+
+    private fun closeCard() {
+        val window = cardWindow ?: return
+        cardWindow = null
+        cardFocused.value = false
+        window.windowToken?.let { context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(it, 0) }
+        window.close()
+        pillHidden.value = false
+        capsuleWindow?.update { p -> if (!yielding.value) p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv() }
+    }
 
     private fun closeCapsule() {
+        closeCard()
         capsuleWindow?.close()
         capsuleWindow = null
         projectedSuggestions = -1
@@ -716,10 +837,10 @@ class Capsule(internal val context: Context, private val container: AppContainer
         const val PILL_DP = 34
         /** How long news about a finished task stays open in the card when nobody touches it. */
         const val PEEK_MS = 6_000L
-        /** The longest the window waits for the card's fold-away animation before it becomes the pill anyway. */
+        /** The longest the card's window waits for its fold-away animation before it goes anyway. */
         const val COLLAPSE_MS = 420L
-        /** The longest the window waits for the card's first layout before it widens anyway. */
-        const val OPEN_WAIT_MS = 600L
+        /** About three frames: the pill is drawn again before the card's window that covered it goes. */
+        const val HANDOFF_MS = 50L
         /** At most this wide on each side of the camera. */
         const val ZONE_DP = 104
         /** The card's first row, the one the camera sits in. */

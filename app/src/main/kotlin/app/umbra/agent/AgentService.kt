@@ -28,6 +28,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
@@ -92,28 +93,34 @@ class AgentService : Service() {
                     val active = sessions.filter { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL }
                     val paused = sessions.filter { it.state == SessionState.PAUSED }
                     manager.notify(ONGOING_ID, ongoing(active, paused, approvals.size + questionCount))
-                    holdAwake(active.isNotEmpty())
+                    // Only work keeps the CPU awake: a task waiting for the user's decision needs nothing until they answer
+                    // (an approval arrives through a notification or the app, which wake the phone anyway).
+                    holdAwake(sessions.any { it.state == SessionState.RUNNING })
                     syncApprovals(approvals)
                     announceResults(sessions)
                 }
         }
-        // An unanswered approval is denied when its time runs out: warn once more in its last minute (S-04).
+        // An unanswered approval is denied when its time runs out: warn once more in its last minute (S-04). It sleeps until
+        // the next warning is due instead of looking every 5 s.
         scope.launch {
-            while (true) {
-                delay(5_000)
-                val now = System.currentTimeMillis()
-                for (request in container.approvals.pending.value) {
-                    val left = request.createdAtMs + request.timeoutMs - now
-                    if (left in 1..60_000 && lastMinuteWarned.add(request.id)) notifyApproval(request, lastMinute = true)
+            container.approvals.pending.collectLatest { pending ->
+                lastMinuteWarned.retainAll(pending.map { it.id }.toSet())
+                while (true) {
+                    val now = System.currentTimeMillis()
+                    for (request in pending) {
+                        val left = request.createdAtMs + request.timeoutMs - now
+                        if (left in 1..60_000 && lastMinuteWarned.add(request.id)) notifyApproval(request, lastMinute = true)
+                    }
+                    val next = pending.filter { it.id !in lastMinuteWarned }.map { it.createdAtMs + it.timeoutMs - 60_000 }.filter { it > now }.minOrNull() ?: break
+                    delay(next - now)
                 }
-                lastMinuteWarned.retainAll(container.approvals.pending.value.map { it.id }.toSet())
             }
         }
         // Stop being a foreground service after a quiet while; opening the app starts it again.
         scope.launch {
             var idleSince = System.currentTimeMillis()
             while (true) {
-                delay(15_000)
+                delay(30_000)
                 val busy = container.sessionStore.list().any { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL || it.state == SessionState.PAUSED } ||
                     container.approvals.pending.value.isNotEmpty() || container.questions.pending.value.isNotEmpty() ||
                     // An agent runs all the time: its wake loop lives in this process.
@@ -284,8 +291,17 @@ class AgentService : Service() {
         private const val RESULT_BASE = 100_000
         private const val IDLE_STOP_MS = 90_000L
 
+        /**
+         * Android refuses a foreground-service start from the background unless an exemption applies (an exact alarm,
+         * the battery-optimization exemption the app asks for, a visible window). Refused, the work goes on in this
+         * process while it lives and the next wake tries again; it must not crash whoever asked.
+         */
         fun start(context: Context) {
-            context.startForegroundService(Intent(context, AgentService::class.java))
+            try {
+                context.startForegroundService(Intent(context, AgentService::class.java))
+            } catch (e: android.app.ForegroundServiceStartNotAllowedException) {
+                android.util.Log.w("AgentService", "foreground start refused in the background", e)
+            }
         }
     }
 }

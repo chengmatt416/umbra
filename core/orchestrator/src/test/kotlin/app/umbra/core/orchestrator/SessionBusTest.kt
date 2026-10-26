@@ -31,10 +31,10 @@ class SessionBusTest {
         "${System.getProperty("user.home")}/.bun/bin/omp",
     ).filterNotNull().map(::File).firstOrNull { it.canExecute() }
 
-    private fun withRig(model: ScriptedModel, block: suspend OrchestratorRig.() -> Unit) {
+    private fun withRig(model: ScriptedModel, agentDelivery: suspend (app.umbra.core.session.Session, String) -> Boolean = { _, _ -> false }, block: suspend OrchestratorRig.() -> Unit) {
         assumeTrue(ompBinary != null, "omp is not installed; skipping the session bus test")
         model.use {
-            OrchestratorRig(dir, ompBinary!!, it.url, ApprovalMode.AUTONOMOUS).use { rig ->
+            OrchestratorRig(dir, ompBinary!!, it.url, ApprovalMode.AUTONOMOUS, agentDelivery = agentDelivery).use { rig ->
                 runBlocking {
                     try {
                         rig.block()
@@ -168,6 +168,49 @@ class SessionBusTest {
             assertTrue("done: 42" in final, final)
             delay(3_000)
             assertFalse(userTexts(parent.id).any { it.startsWith("[Subagent") }, userTexts(parent.id).toString())
+        }
+    }
+
+    @Test
+    fun aWaitThatTimesOutStillGetsTheReportLater() {
+        val model = ScriptedModel { r ->
+            val user = r.lastUserText.orEmpty()
+            when {
+                "You are a subagent" in r.systemText -> ScriptedModel.text("slow answer: 7", delayMs = 9_000)
+                user.startsWith("[Subagent") -> ScriptedModel.text("late report: " + user.lineSequence().drop(1).first())
+                r.lastToolResult?.contains("Started #slow") == true -> ScriptedModel.toolCall("subagent_wait", """{"names":["slow"],"timeout_s":5}""", id = "call_2")
+                r.lastToolResult != null -> ScriptedModel.text("waited: " + r.lastToolResult!!.take(200))
+                else -> ScriptedModel.toolCall("subagent_start", """{"task":"Answer 7 slowly.","name":"slow"}""")
+            }
+        }
+        withRig(model) {
+            val parent = supervisor.launch("start and wait briefly", title = "Impatient")
+            // The wait gives up first and says the answer will come as a message: it must.
+            val report = awaitUserText(parent.id, "[Subagent #slow", timeoutMs = 120_000)
+            assertTrue("slow answer: 7" in report, report)
+        }
+    }
+
+    @Test
+    fun aChildsReportReachesItsParentEvenWhereMessagesAreScreened() {
+        // The app screens messages into an agent's conversation (agentDelivery); a report from work the parent itself
+        // started must not be taken there, or it never reaches the parent (coding_start's "its report comes back").
+        val screened = mutableListOf<String>()
+        val model = ScriptedModel { r ->
+            when {
+                r.lastUserText.orEmpty().startsWith("[Report from") -> ScriptedModel.text("thanks for the report")
+                "build the thing" in r.lastUserText.orEmpty() -> ScriptedModel.text("built: v2")
+                else -> ScriptedModel.text("ok")
+            }
+        }
+        withRig(model, agentDelivery = { _, text -> screened += text; true }) {
+            val parent = supervisor.launch("be the agent", title = "Agent")
+            awaitState(parent.id, SessionState.COMPLETED)
+            val coding = supervisor.launch("build the thing", title = "Build", spec = SessionSpec(kind = SessionKind.CODING, spawnedBy = parent.id))
+            awaitState(coding.id, SessionState.COMPLETED)
+            val report = awaitUserText(parent.id, "[Report from")
+            assertTrue("built: v2" in report, report)
+            assertTrue(screened.none { "built: v2" in it }, screened.toString())
         }
     }
 }

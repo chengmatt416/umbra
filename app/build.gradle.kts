@@ -21,8 +21,10 @@ android {
     defaultConfig {
         applicationId = "app.umbra.agent"
         // `-Pumbra.versionCode=… -Pumbra.versionName=…` override them, for testing the updater with a later build.
-        versionCode = providers.gradleProperty("umbra.versionCode").orNull?.toInt() ?: 15
-        versionName = providers.gradleProperty("umbra.versionName").orNull ?: "0.6.1"
+        versionCode = providers.gradleProperty("umbra.versionCode").orNull?.toInt() ?: 16
+        versionName = providers.gradleProperty("umbra.versionName").orNull ?: "0.6.2"
+        // Every native part of the app is arm64 (proot, the Linux image, LiteRT's NPU runtimes).
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     // Releases are signed with the key in UMBRA_KEYSTORE (see .github/workflows/release.yml); without it the
@@ -173,6 +175,15 @@ extensions.configure<ApplicationAndroidComponentsExtension> {
         }
         variant.sources.jniLibs?.addStaticSourceDirectory(proot.asFile.path)
 
+        // Qualcomm's QNN runtime for Laya on Snapdragon NPUs, from the QAIRT SDK (runtime-build/laya/fetch-qnn.sh). Its
+        // licence allows distributing it only inside an application, so it is never committed or hosted on its own.
+        // Release builds must carry it; other builds include it when it has been fetched.
+        val qnn = rootProject.layout.projectDirectory.dir("build/qnn/jniLibs")
+        if (requireReleaseSigning.get() && variant.buildType == "release") {
+            check(qnn.file("arm64-v8a/libQnnHtp.so").asFile.exists()) { "The QNN runtime is missing (${qnn.asFile}): run runtime-build/laya/fetch-qnn.sh" }
+        }
+        if (qnn.file("arm64-v8a/libQnnHtp.so").asFile.exists()) variant.sources.jniLibs?.addStaticSourceDirectory(qnn.asFile.path)
+
         if (bundleLinux.get()) {
             val out = rootProject.layout.projectDirectory.dir("build/rootfs")
             val version = linuxVersion.get()
@@ -218,11 +229,22 @@ dependencies {
     implementation(project(":runtime:omp"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
+    // Force LiteRT's transitive Fragment version up for registerForActivityResult.
+    implementation(libs.androidx.fragment)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.ui)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    // Laya inside the app (ADR 0005): LiteRT with its GPU accelerator and the NPU runtimes LiteRT ships for
+    // Qualcomm, MediaTek and Google Tensor. Qualcomm's own QNN libraries are staged from the QAIRT SDK (see below).
+    implementation(libs.litert)
+    implementation(libs.litert.gpu)
+    implementation(libs.litert.npu.qualcomm)
+    implementation(libs.litert.npu.mediatek)
+    implementation(libs.litert.npu.google.tensor)
     testImplementation(libs.okhttp.mockwebserver)
     implementation(libs.zxing.core)
     implementation("com.caverock:androidsvg-aar:1.4")

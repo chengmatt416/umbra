@@ -33,6 +33,8 @@ class ProactiveRuntime(private val container: AppContainer, private val agents: 
     private val tickLock = Mutex()
     private val adoptionLock = Mutex()
     private val briefs = DailyBriefEngine(store)
+    /** Overlapping calendar entries: one event on two accounts, or a real conflict? Laya decides, else the agent's model. */
+    private val conflicts = ConflictJudge({ request -> runCatching { container.decisions.ask(request) }.getOrNull() }, File(container.context.filesDir, "agents/conflict-verdicts.json"))
     private val immersiveApps = ImmersiveApps { packageName -> container.context.packageManager.getApplicationInfo(packageName, 0).category }
     private val watcherEngine = WatcherEngine(store, ::probe, { question, evidence ->
         val answer = container.decisions.judge(question, "Untrusted probe evidence:\n$evidence")
@@ -149,6 +151,7 @@ class ProactiveRuntime(private val container: AppContainer, private val agents: 
     }
 
     private suspend fun reconcile(p: AgentProfile) {
+        runCatching { store.collapseDuplicates(p.id) }.onSuccess { if (it > 0) android.util.Log.i("ProactiveRuntime", "${p.name}: folded $it duplicate suggestions") }
         val sessions = container.sessionStore.list(app.umbra.core.session.SessionFilter(limit = Int.MAX_VALUE))
         for (routine in store.routines(p.id)) for (run in routine.recentRuns.filter { it.finishedAtMs == null }) {
             val session = run.sessionId?.let { id -> sessions.find { it.id == id } } ?: sessions.find { it.routineRunId == run.runId }
@@ -177,8 +180,28 @@ class ProactiveRuntime(private val container: AppContainer, private val agents: 
 
     suspend fun discovery(p: AgentProfile, instruction: String, watcher: AgentWatcher? = null): Session {
         check(agents.store.get(p.id)?.let { it.running && it.proactivityLevel >= 1 } == true)
-        return submitBackground(p, instruction, "${p.name} · research", SessionSpec(kind = SessionKind.AGENT, agentId = p.id, spawnedBy = p.sessionId,
+        return submitBackground(p, instruction + openSuggestions(p.id), "${p.name} · research", SessionSpec(kind = SessionKind.AGENT, agentId = p.id, spawnedBy = p.sessionId,
             turnMode = ProactiveTurnMode.READ_ONLY_DISCOVERY), watcher)
+    }
+
+    /**
+     * The agent's open suggestions, for the start of a wake: each run is a fresh session that would otherwise not know
+     * them, and propose the same event again. It updates or withdraws them instead.
+     */
+    fun openSuggestions(agentId: String, now: Long = System.currentTimeMillis()): String {
+        val open = runCatching { store.opportunities(agentId) }.getOrDefault(emptyList())
+            .filter { it.state == OpportunityCard.State.PENDING && (it.expiresAtMs == null || it.expiresAtMs > now) }
+            .sortedByDescending { it.updatedAtMs ?: it.createdAtMs }.take(20)
+        if (open.isEmpty()) return ""
+        return buildString {
+            appendLine(); appendLine()
+            appendLine("Your open suggestions (the user has not acted on them yet):")
+            open.forEach { c ->
+                appendLine("- ${c.id} [${c.kind}] ${c.title.take(160)} · evidence: ${c.evidenceRefs.take(5).joinToString().ifEmpty { "none" }} · since ${Instant.ofEpochMilli(c.createdAtMs)}")
+            }
+            append("Do not propose any of these again. If there is news about one, change it with opportunity_update; if one no longer applies " +
+                "(the event passed or was cancelled, the user already did it, or two are the same), delete it with opportunity_withdraw.")
+        }
     }
 
     private suspend fun submitBackground(p: AgentProfile, instruction: String, title: String, spec: SessionSpec, watcher: AgentWatcher?): Session {
@@ -223,10 +246,11 @@ class ProactiveRuntime(private val container: AppContainer, private val agents: 
                 if (at.hour * 60 + at.minute < minute) continue
                 val id = "brief_${at.toLocalDate()}_${kind.name.lowercase()}"
                 if (store.briefs(p.id).any { it.id == id }) continue
-                val complete = container.sessionStore.list().filter { it.agentId == p.id && it.state == SessionState.COMPLETED && now - it.updatedAtMs < 86_400_000 }
-                    .map { BriefItem(it.title, it.resultSummary.orEmpty(), linkedSessionId = it.id) }
-                val brief = briefs.generate(p.id, kind, now, events, complete)
-                if (brief.attentionNeeded.isNotEmpty() || brief.scheduleHighlights.isNotEmpty() || brief.overnightCompleted.isNotEmpty() || brief.lowPriorityDigest.isNotBlank())
+                val prior = store.briefs(p.id).maxOfOrNull { it.generatedAtMs }
+                val tasks = BriefTasks.of(container.sessionStore.list(app.umbra.core.session.SessionFilter(limit = Int.MAX_VALUE)), p.id, now, prior, conversationId = p.sessionId)
+                val judged = conflicts.judge(ConflictDetector.candidates(events, now)) { prompt -> askModel(p, prompt) }
+                val brief = briefs.generate(p.id, kind, now, events, tasks, judged)
+                if (brief.attentionNeeded.isNotEmpty() || brief.scheduleHighlights.isNotEmpty() || brief.tasks.isNotEmpty() || brief.lowPriorityDigest.isNotBlank())
                     deliver(p, AttentionItem(id, if (kind == DailyBrief.Kind.MORNING) "Morning brief" else "Evening wrap-up", brief.headline, .6, .9, .95, "brief", now),
                         deliveryDetail = BriefText.format(brief))
             }
@@ -245,6 +269,34 @@ class ProactiveRuntime(private val container: AppContainer, private val agents: 
                 discovery(p, "Prepare a concise pre-meeting dossier for ${event.title}, starting ${Instant.ofEpochMilli(event.startMs)}. Attendees: ${event.attendees.joinToString()}. Search authorized memory, messages, email and workspace context. Write a private note with prior decisions, open questions and next steps; propose any useful action for user review.")
             }
         }
+    }
+
+    /**
+     * One tool-free request to the agent's own model (the conflict judge's), through omp in the Linux environment with
+     * the agent's model and keys, recorded in the vault like every use of a key. Null when it cannot be asked: no Linux
+     * environment, no model, the agent over its usage limit, or a lockdown.
+     */
+    private suspend fun askModel(p: AgentProfile, prompt: String): String? {
+        if (container.emergency.lockdownReason() != null) return null
+        p.sessionId?.let { container.sessionStore.get(it) }?.let { session -> if (container.usageBudgets.reason(session) != null) return null }
+        if (!container.guest.ensureReady()) return null
+        val selection = runCatching {
+            app.umbra.agent.data.AppProviderResolver(container.settings, container.secrets, { name, provider -> container.vault.admits(name, provider) }, { container.modelDirectory.auto(it) })
+                .resolve(p.model)
+        }.getOrNull() ?: return null
+        val model = selection.model ?: return null
+        val files = container.guestAgentFiles(selection.profile)
+        if (selection.providers.isNotEmpty()) files.write("models.yml", app.umbra.runtime.omp.OmpModelsFile.toYaml(selection.providers))
+        if (selection.secrets.isNotEmpty()) container.vault.recordExposure(selection.secrets.keys, "the app's omp (calendar conflicts)", "one tool-free request to judge overlapping calendar entries")
+        val text = app.umbra.core.safety.OutboundDlpGuard(4) { container.protectedValues() }.redact(prompt)
+        val out = container.guest.runtime.execWithSecrets(
+            argv = listOf("omp", "--print", text, "--model", "${model.provider}/${model.modelId}", "--no-session", "--no-tools", "--no-extensions", "--no-skills", "--no-rules", "--no-lsp", "--no-title"),
+            secrets = selection.secrets,
+            env = mapOf("PI_CODING_AGENT_DIR" to files.ompPath, "NO_COLOR" to "1", "OTEL_SDK_DISABLED" to "true"),
+            cwd = "/home/agent",
+            timeoutMs = 120_000,
+        )
+        return out.stdout.trim().takeIf { out.ok && it.isNotBlank() }
     }
 
     suspend fun onIncoming(p: AgentProfile, item: Incoming): Boolean {
@@ -405,7 +457,6 @@ class ProactiveRuntime(private val container: AppContainer, private val agents: 
         val previous = requireNotNull(store.opportunities(agentId).find { it.id == opportunityId })
         previous.executionSessionId?.let { return@withLock requireNotNull(container.sessionStore.get(it)) }
         val payload = app.umbra.core.model.UmbraJson.parseToJsonElement(editedPayload ?: previous.preparedAction.payloadJson) as? JsonObject ?: error("Action payload must be an object")
-        val direct = (payload["instruction"] ?: payload["task"] ?: payload["text"])?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
         val instruction = when (previous.preparedAction.actionType) {
             "create_goal" -> "Create the user-reviewed goal from this data using goal_create. Do not authorize autonomous execution.\n$payload"
             "run_skill" -> {
@@ -423,7 +474,7 @@ class ProactiveRuntime(private val container: AppContainer, private val agents: 
                 } else container.skills.instructionsForRun(id, (payload["args"] as? JsonObject)?.mapValues { it.value.jsonPrimitive.content }.orEmpty())
             }
             "send_message_draft" -> "Prepare this reviewed message draft. Do not send until the ordinary recipient-specific approval is satisfied. Data:\n$payload"
-            else -> direct ?: error("The prepared step needs an instruction to review")
+            else -> AdoptionInstruction.of(previous, payload)
         }
         check(p.running) { "Start the owning agent before adopting this suggestion" }
         val card = store.claimOpportunity(agentId, opportunityId, System.currentTimeMillis())
@@ -456,7 +507,12 @@ class ProactiveRuntime(private val container: AppContainer, private val agents: 
             } }
         }
         if (session.turnMode != ProactiveTurnMode.READ_ONLY_DISCOVERY && session.routineRunId == null) return false
-        if (text.isNotBlank() && !text.startsWith(AgentRuntime.QUIET)) deliver(p, AttentionItem("session:${session.id}", session.title, text.take(2000), .5, .7, .8, "research", System.currentTimeMillis(), linkedSessionId = session.id))
+        if (text.isNotBlank() && !text.startsWith(AgentRuntime.QUIET)) {
+            val item = AttentionItem("session:${session.id}", session.title, text.take(2000), .5, .7, .8, "research", System.currentTimeMillis(), linkedSessionId = session.id)
+            // A run that proposed or updated a suggestion has said it there: its closing words are kept, not delivered again.
+            if (store.opportunities(p.id).any { it.sourceSessionId == session.id }) store.stage(p.id, item.copy(tier = DeliveryTier.SILENT_LOG))
+            else deliver(p, item)
+        }
         return true
     }
 

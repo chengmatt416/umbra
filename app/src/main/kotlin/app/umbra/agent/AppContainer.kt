@@ -74,6 +74,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
@@ -377,7 +378,13 @@ class AppContainer(val context: Context) {
         UmbraToolHost(
             pipeline, sessionId, decisions, exclude = { it.startsWith("gui_") && !desktop },
             // Every session can talk to the others; an agent's conversation also gets its memory, timers and the rest.
-            extra = sessionTools.forSession(sessionId, allowSubagents = !assistant) + app.umbra.core.orchestrator.DeliverableTools(sessionStore, workspaces, environment).forSession(sessionId) + synthesizedTools.forSession(sessionId, profile?.id) + skillWorkflows.forSession(sessionId, profile?.id) + demonstrations.forSession(profile?.id) + credentialHandoff.tools(sessionId) + connectors.messages.tools(sessionId, profile?.id) + remoteNodeTools.forSession(sessionId) +
+            extra = sessionTools.forSession(sessionId, allowSubagents = !assistant) + app.umbra.core.orchestrator.WaitTools(sessionStore, supervisor, sessionBus) { command, timeoutMs ->
+                if (guest.state.value != GuestManager.State.Ready) null else {
+                    val workspace = sessionStore.get(sessionId)?.workspaceId?.let { workspaces.get(it) }
+                    val cwd = workspace?.let { workspaces.guestPath(it.id) } ?: "/home/agent"
+                    guest.runtime.exec(listOf("bash", "-c", command), cwd = cwd, timeoutMs = timeoutMs).exitCode
+                }
+            }.forSession(sessionId) + app.umbra.core.orchestrator.DeliverableTools(sessionStore, workspaces, environment).forSession(sessionId) + synthesizedTools.forSession(sessionId, profile?.id) + skillWorkflows.forSession(sessionId, profile?.id) + demonstrations.forSession(profile?.id) + credentialHandoff.tools(sessionId) + connectors.messages.tools(sessionId, profile?.id) + remoteNodeTools.forSession(sessionId) +
                 (profile?.takeIf { assistant }?.let { agentTools.forAgent(it.id, sessionId) + proactiveTools.forAgent(it.id, sessionId) + teams.forSession(it.id, sessionId) } ?: emptyList()),
         )
     }
@@ -653,16 +660,22 @@ class AppContainer(val context: Context) {
      * in Settings stays the way.)
      */
     private suspend fun keepHelperUp() {
+        var wait = 60_000L
         while (true) {
             val up = runCatching { helper.client.isUp() }.getOrDefault(false)
+            var started = up
             if (!up) {
                 val viaShizuku = runCatching {
                     shizuku.state() == ShizukuLauncher.State.READY &&
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { shizuku.startHelper() }
                 }.getOrDefault(false)
-                if (!viaShizuku && runCatching { rootShell.isAvailable() }.getOrDefault(false)) runCatching { helper.startWithRoot(rootShell) }
+                started = viaShizuku
+                if (!viaShizuku && runCatching { rootShell.isAvailable() }.getOrDefault(false)) started = runCatching { helper.startWithRoot(rootShell) }.getOrDefault(false)
             }
-            kotlinx.coroutines.delay(60_000)
+            // On a phone with neither Shizuku nor root nothing can start it: asking `su` every minute forever only costs
+            // battery, so the wait doubles up to 30 minutes and is back to a minute once the helper runs.
+            wait = if (started) 60_000L else (wait * 2).coerceAtMost(30 * 60_000L)
+            kotlinx.coroutines.delay(wait)
         }
     }
 
@@ -688,13 +701,8 @@ class AppContainer(val context: Context) {
             launch { resumeUnderContracts(interrupted) }
             guest.refresh()
             laya.refresh()
-            launch {
-                // Keep the opted-in model warm between tasks; probe cheaply and recover with backoff.
-                while (true) {
-                    laya.maintain()
-                    kotlinx.coroutines.delay(30_000)
-                }
-            }
+            // Keep the opted-in model warm between tasks (see LayaSidecar.keepUp for how often it looks).
+            launch { laya.keepUp() }
             launch { keepHelperUp() }
             launch { startLogMonitor() }
             health.start(scope)
@@ -713,7 +721,14 @@ class AppContainer(val context: Context) {
                     vault.reconcile(secrets.names().associateWith { labels[it] ?: (it to null) })
                 }
             }
-            launch { while (true) { runCatching { capabilities.refresh() }; kotlinx.coroutines.delay(60_000) } }
+            // What the phone can do (root, helper, Linux, ...): only the app's own screens read it, and each probe can start
+            // a shell, so it is looked at every minute only while the app is open (it was every minute forever).
+            launch {
+                ui.appVisible.collectLatest { visible ->
+                    if (!visible) return@collectLatest
+                    while (true) { runCatching { capabilities.refresh() }; kotlinx.coroutines.delay(60_000) }
+                }
+            }
             // The capsule lives in the foreground service: it is there whenever the user has it on.
             launch {
                 settings.flow.map { it.overlayEnabled }.distinctUntilChanged().filter { it }.collect { runCatching { AgentService.start(context) } }

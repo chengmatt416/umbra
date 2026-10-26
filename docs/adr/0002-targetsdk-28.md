@@ -45,3 +45,21 @@ SELinux forbids that (W^X); upstream Termux therefore targets API 28, which keep
   rooted device. If it fails, fall back to `minSdk 28` plus the runtime gate.
 * `compileSdk` is 37, not 36: current stable AndroidX (core 1.19, Compose 1.12) requires it. Runtime
   support stays Android 16 only; lint's `NewApi` check (against minSdk 36) rejects API-37-only calls.
+
+## Amendment (2026-10-25): targetSdk 36
+
+Owner request: target Android 16. `targetSdk` is now 36 (minSdk stays 36). What the original decision protected still
+works without `exec()` from app data:
+
+* **proot mode:** proot and its loader ship as `jniLibs` (exec from `nativeLibraryDir` is allowed at any target). proot
+  intercepts every program start and runs `libproot-loader.so`, which maps the guest program with the system linker's
+  method (mmap), not `execve` of an app-data file. The `exec_from_app_data` probe now checks exactly that path
+  (`/system/bin/linker64 <file in app data>`), and reports direct exec as refused, as Android 16 requires.
+* **root mode:** commands run through `su` in root's domain; the app's target does not apply.
+
+Behaviour newly in force and how the app meets it: foreground-service types (already declared), background
+foreground-service starts (exempt through the battery-optimization exemption the app requests and exact alarms;
+`AgentService.start` no longer throws when refused), exact alarms (`USE_EXACT_ALARM`; inexact fallback kept), the
+notification permission (requested in setup), all-files access for `/sdcard` (requested where files are attached),
+explicit self-broadcasts (already package-scoped), predictive back (Compose `BackHandler`, no `onBackPressed`).
+To verify on each release: the Linux environment starts and runs commands under proot on the emulator and a phone.

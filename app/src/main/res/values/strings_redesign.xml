@@ -138,6 +138,7 @@
     <string name="r_set_laya">Laya</string>
     <string name="r_set_laya_on">Downloaded · starts with every task</string>
     <string name="r_set_laya_off">Not downloaded</string>
+    <string name="r_set_laya_running">Running on the %1$s</string>
     <string name="r_set_update">Updates</string>
     <string name="r_set_update_body">%1$s · checked when the app opens</string>
     <string name="r_set_update_check">Check now</string>

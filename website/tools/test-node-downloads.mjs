@@ -35,5 +35,17 @@ assert.equal(ranged.headers.get('content-type'), 'application/octet-stream');
 assert.equal((await ranged.arrayBuffer()).byteLength, 2);
 assert.equal((await call('umbra-node-0.4.4-macos-universal.dmg')).headers.get('content-type'), 'application/x-apple-diskimage');
 assert.equal((await call('umbra-node-0.4.4-SHA256SUMS')).headers.get('content-type'), 'text/plain; charset=utf-8');
-assert.equal((await call('latest')).headers.get('location'), 'https://example.invalid/download/umbra-0.4.4.apk');
+const beforeRedirects = reads;
+for (const alias of ['', 'latest']) {
+  for (const method of ['GET', 'HEAD']) {
+    const response = await call(alias, method);
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), 'https://example.invalid/download/umbra-0.4.4.apk');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal((await response.arrayBuffer()).byteLength, 0);
+  }
+}
+env.LATEST_APK = 'umbra-0.6.2.apk';
+assert.equal((await call('latest')).headers.get('location'), 'https://example.invalid/download/umbra-0.6.2.apk');
+assert.equal(reads, beforeRedirects, 'Latest redirects must not read the APK from R2');
 console.log('Node and APK download allowlists, types, HEAD, Range and traversal checks passed.');

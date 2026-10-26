@@ -2,6 +2,7 @@
 import { mkdirSync, writeFileSync, cpSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { L, APK, GITHUB } from './src/content.mjs';
 import { nodePage } from './src/nodes.mjs';
+import { legalBody } from './src/legal.mjs';
 
 const V = Date.now().toString(36);
 const SITE = process.env.SITE_URL || 'https://umbra-agent.pages.dev';
@@ -20,7 +21,7 @@ const tileIcons = {
   check: '<path d="m4.5 12.5 4.5 4.5L19.5 6.5"/>',
 };
 const tileIcon = (k) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${tileIcons[k] || ''}</svg>`;
-const legalLinks = (zh) => `<a href="/privacy/">${zh ? '隱私政策' : 'Privacy'}</a> · <a href="/policy/">${zh ? '使用政策' : 'Use policy'}</a> · <a href="/licenses/">${zh ? '授權與致謝' : 'Licenses & notices'}</a>`;
+const legalLinks = (zh) => `<a href="/privacy/">${zh ? '隱私政策' : 'Privacy'}</a> · <a href="/terms/">${zh ? '服務條款' : 'Terms of service'}</a> · <a href="/policy/">${zh ? '使用政策' : 'Use policy'}</a> · <a href="/licenses/">${zh ? '授權與致謝' : 'Licenses & notices'}</a>`;
 
 function page(t, other) {
   const url = SITE + t.path;
@@ -98,7 +99,8 @@ function page(t, other) {
 
 <section class="block dl" id="download"><div class="wrap two">
   <div><p class="eyebrow">${esc(t.download.eyebrow)}</p><h2>${esc(t.download.title)}</h2><p style="margin:18px 0 28px">${esc(lead)}</p>
-  <a class="btn primary" href="/download/${APK.file}" download>${dlIcon}${esc(t.download.btn)} · ${APK.size}</a>
+  <a class="btn primary" href="/download/latest" download>${dlIcon}${esc(t.download.btn)} · ${APK.size}</a>
+  <p class="download-stats" data-stats data-downloads="${esc(t.download.statsDownloads)}" data-monthly-active="${esc(t.download.statsActive)}" hidden></p>
   <p class="warn" style="margin-top:20px">${esc(t.download.warn)}</p><p><a href="${t.path}nodes/">${t.lang === 'en' ? 'Set up a Mac or Linux remote node →' : '設定 Mac 或 Linux 遠端節點 →'}</a></p></div>
   <div><p style="margin:0 0 4px;font-weight:600">${esc(t.download.sha)}</p>
   <div class="codeline"><code>${sha}</code><button type="button" data-copy="${sha}" data-done="${esc(t.download.copied)}">${esc(t.download.copy)}</button></div>
@@ -110,6 +112,7 @@ function page(t, other) {
 </main>
 <footer><div class="wrap"><span>© 2026 Umbra · ${esc(t.foot.tag)}</span><span>${legalLinks(t.lang !== 'en')} · <a href="${GITHUB}">${esc(t.foot.gh)}</a> · <a href="${GITHUB}/tree/main/docs">${esc(t.foot.docs)}</a> · <a href="#top" onclick="scrollTo(0,0);return false">${esc(t.foot.top)}</a></span></div></footer>
 <script src="/story.js?v=${V}" defer></script>
+<script src="/stats.js?v=${V}" defer></script>
 </body></html>`;
 }
 
@@ -139,17 +142,19 @@ writeFileSync('dist/story.js', readFileSync('src/story.js', 'utf8') + `\ndocumen
 if (existsSync('public')) cpSync('public', 'dist', { recursive: true });
 mkdirSync('dist/legal', { recursive: true });
 cpSync('../third_party', 'dist/legal/third_party', { recursive: true });
-for (const file of ['LICENSE', 'PRIVACY.md', 'USAGE_POLICY.md', 'THIRD_PARTY_NOTICES.md']) {
+for (const file of ['LICENSE', 'PRIVACY.md', 'TERMS.md', 'USAGE_POLICY.md', 'THIRD_PARTY_NOTICES.md']) {
   cpSync(`../${file}`, `dist/legal/${file}`);
 }
 cpSync('../app/src/main/assets/licenses', 'dist/legal/component-licenses', { recursive: true });
 for (const [route, title, file] of [
   ['privacy', 'Privacy policy', 'PRIVACY.md'],
+  ['terms', 'Terms of service', 'TERMS.md'],
   ['policy', 'Preview use policy', 'USAGE_POLICY.md'],
   ['licenses', 'Licenses and third-party notices', 'THIRD_PARTY_NOTICES.md'],
 ]) {
   mkdirSync(`dist/${route}`, { recursive: true });
   const text = readFileSync(`../${file}`, 'utf8');
+  const formatted = route === 'privacy' || route === 'terms';
   // Escape first, then render only the documents' simple Markdown links.
   const body = esc(text).replace(/\[([^\]\n]+)\]\(([^\s)]+)\)/g, (_, label, target) => {
     const href = /^https:\/\//.test(target) ? target : `${GITHUB}/blob/main/${target}`;
@@ -157,12 +162,13 @@ for (const [route, title, file] of [
   });
   writeFileSync(`dist/${route}/index.html`, `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title} · Umbra</title><link rel="stylesheet" href="/site.css"><link rel="icon" href="/favicon.svg">
-</head><body><main class="block"><article class="wrap" style="max-width:960px">
-<p><a href="/en/">Umbra · English</a> · <a href="/zh-tw/">繁體中文</a></p>
+<title>${title} · Umbra</title><link rel="canonical" href="${SITE}/${route}/"><link rel="stylesheet" href="/site.css"><link rel="icon" href="/favicon.svg">
+</head><body><a class="skip" href="#document">Skip to content</a><main class="block"><article class="wrap legal-page" style="max-width:960px">
+<nav aria-label="Website languages"><a href="/en/">Umbra · English</a> · <a href="/zh-tw/" lang="zh-Hant-TW">繁體中文</a></nav>
 <h1 style="font-size:36px;margin:24px 0">${title}</h1>
-<p>${legalLinks(false)} · <a href="/legal/${file}">Download document</a> · <a href="/legal/LICENSE">MIT license</a></p>
-<pre style="white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin-top:32px">${body}</pre>
+<nav class="legal-nav" aria-label="Legal documents">${legalLinks(false)}</nav>
+<div id="document" class="legal-body" tabindex="-1">${formatted ? legalBody(text, GITHUB) : `<pre style="white-space:pre-wrap;overflow-wrap:anywhere;font:inherit">${body}</pre>`}</div>
+<p><a href="/legal/${file}">Download document</a> · <a href="/legal/LICENSE">MIT license</a></p>
 <p><a href="${GITHUB}/blob/main/docs/RELEASE_LEGAL_REVIEW.md">Public release review and outstanding requirements</a></p>
 </article></main></body></html>`);
 }
@@ -172,6 +178,6 @@ if (APK.bytes > 0 && /^[0-9a-f]{64}$/.test(APK.sha256) && APK.versionCode > 0 &&
   writeFileSync('dist/update.json', JSON.stringify({ version: APK.version, versionCode: APK.versionCode, file: APK.file, bytes: APK.bytes, sha256: APK.sha256, url: `/download/${APK.file}` }, null, 2) + '\n');
 } else console.warn(`src/apk.json does not describe umbra-${APK.version}.apk: dist/update.json not written`);
 writeFileSync('dist/robots.txt', `User-agent: *\nAllow: /\nDisallow: /download/\nSitemap: ${SITE}/sitemap.xml\n`);
-writeFileSync('dist/sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">${['en', 'zh-tw'].map((k) => `<url><loc>${SITE}${L[k].path}</loc><xhtml:link rel="alternate" hreflang="en" href="${SITE}/en/"/><xhtml:link rel="alternate" hreflang="zh-Hant-TW" href="${SITE}/zh-tw/"/></url>`).join('')}</urlset>`);
+writeFileSync('dist/sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">${['en', 'zh-tw'].map((k) => `<url><loc>${SITE}${L[k].path}</loc><xhtml:link rel="alternate" hreflang="en" href="${SITE}/en/"/><xhtml:link rel="alternate" hreflang="zh-Hant-TW" href="${SITE}/zh-tw/"/></url>`).join('')}${['privacy', 'terms'].map(route => `<url><loc>${SITE}/${route}/</loc></url>`).join('')}</urlset>`);
 writeFileSync('dist/_headers', `/.well-known/assetlinks.json\n  Content-Type: application/json; charset=utf-8\n  Cache-Control: public, max-age=3600\n/credential-handoff*\n  Cache-Control: no-store\n  X-Frame-Options: DENY\n  X-Robots-Tag: noindex, nofollow, noarchive\n  Permissions-Policy: camera=(), microphone=(), geolocation=()\n  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\n/node/install.sh\n  Content-Type: text/plain; charset=utf-8\n  Cache-Control: no-cache\n/node/minisign.pub\n  Content-Type: text/plain; charset=utf-8\n/update.json\n  Cache-Control: no-cache\n  Access-Control-Allow-Origin: *\n/models.json\n  Cache-Control: no-cache\n  Access-Control-Allow-Origin: *\n/clips/*\n  Cache-Control: public, max-age=604800\n/site.css\n  Cache-Control: public, max-age=3600\n/story.js\n  Cache-Control: public, max-age=3600\n/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n`);
 console.log('built dist/');

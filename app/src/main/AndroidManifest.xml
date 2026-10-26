@@ -24,6 +24,9 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Agents' timers and wakes are reminders the user set: exact alarms (targeting Android 13+, the schedule
+         permission is no longer granted by default; this one is, and the app is not distributed through Play). -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
     <!-- Not grantable to a normal app, but root or Shizuku can grant them with `pm grant` (see SystemGrants). -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
@@ -60,10 +63,12 @@
                 <data android:scheme="https" android:host="umbra-agent.pages.dev" android:path="/credential-handoff/" />
             </intent-filter>
         </activity>
+        <!-- adjustResize: the window must not pan when the keyboard opens; Compose pads for it (imePadding). -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop">
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -141,5 +146,8 @@
                 android:value="on-device autonomous agent that keeps running tasks while the screen is in use by other apps" />
         </service>
         <service android:name=".agents.proactive.TransformSandboxService" android:exported="false" android:process=":transforms" />
+        <!-- Laya's model (LiteRT on the NPU, GPU or CPU) in a process of its own: a driver crash or the low-memory killer
+             ends only that process, never the app. -->
+        <service android:name=".data.laya.LayaService" android:exported="false" android:process=":laya" />
     </application>
 </manifest>

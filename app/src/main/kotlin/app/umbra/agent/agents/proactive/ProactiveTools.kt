@@ -17,13 +17,15 @@ class ProactiveTools(private val container: AppContainer) {
         tool("goal_list", "List persistent goals and their milestones, acceptance criteria and evidence.", { enum("state_filter", GoalState.entries.map { it.name }) }) { a ->
             json(AgentGoal.serializer(), store.goals(agentId).filter { a.str("state_filter") == null || it.state.name == a.str("state_filter") })
         },
-        tool("goal_create", "Create a durable goal with ordered milestones and acceptance criteria. This does not grant permission for external actions.", {
+        tool("goal_create", "Create a durable goal: an outcome that takes several steps over days or weeks (a project, a habit, a plan), with at least two ordered milestones and acceptance criteria. Never make a goal of a single calendar event, appointment, reminder or errand; use tasks_write, a timer, the calendar or opportunity_propose for those. This does not grant permission for external actions.", {
             string("title", required = true); string("description", required = true); stringArray("acceptance_criteria", required = true)
             integer("priority"); integer("deadline_ms"); string("check_cron")
             objectArray("milestones", required = true) { string("id", required = true); string("title", required = true); stringArray("depends_on"); string("verification_rule") }
         }) { a ->
             val now = System.currentTimeMillis()
             a.str("check_cron")?.let { app.umbra.agent.agents.Cron(it) }
+            if (!GoalScope.requested(container.sessionStore.get(sessionId)?.latestUserIntent))
+                GoalScope.refusal(a.required("title"), a.required("description"), a.milestones(now).size, a.long("deadline_ms"), now, eventTitles(agentId, now))?.let { return@tool HostToolPayload.error(it) }
             val goal = AgentGoal(store.id("goal"), agentId, a.required("title"), a.required("description"), priority = a.int("priority") ?: 2,
                 acceptanceCriteria = a.strings("acceptance_criteria"), milestones = a.milestones(now), linkedSessionIds = listOf(sessionId),
                 checkCadenceCron = a.str("check_cron"), deadlineMs = a.long("deadline_ms"), createdAtMs = now)
@@ -77,7 +79,44 @@ class ProactiveTools(private val container: AppContainer) {
         },
         tool("note_read", "Read a private research note by topic.", { string("topic", required = true) }) { a -> HostToolPayload.text(store.note(agentId, a.required("topic")).ifBlank { "No note with that topic." }) },
         tool("note_list", "List private research note topics.", {}) { HostToolPayload.text(store.notes(agentId).joinToString("\n").ifBlank { "No private notes." }) },
-        tool("opportunity_propose", "Prepare a suggestion with evidence and a reviewable next step. The user must explicitly adopt it before any execution.", {
+        tool("opportunity_list", "List your suggestions: the open ones the user has not acted on yet, and the ones they dismissed or adopted in the last two weeks. Check it before proposing, so one event or message never becomes two suggestions.", {
+            boolean("include_settled")
+        }) { a ->
+            val now = System.currentTimeMillis()
+            val cards = store.opportunities(agentId).filter {
+                it.state == OpportunityCard.State.PENDING && (it.expiresAtMs == null || it.expiresAtMs > now) ||
+                    a.bool("include_settled") != false && it.state != OpportunityCard.State.EXPIRED && now - it.createdAtMs < OpportunityDedup.SETTLED_WINDOW_MS
+            }
+            HostToolPayload.text(if (cards.isEmpty()) "No open suggestions." else buildJsonArray { cards.forEach { add(summary(it)) } }.toString())
+        },
+        tool("opportunity_update", "Change one of your open suggestions (id from opportunity_list) when there is news about the same thing: a new time, more evidence, a better next step. Omitted fields keep their value. The user sees the updated card, not a new one.", {
+            string("id", required = true); string("title"); string("summary"); stringArray("evidence_refs"); number("urgency"); number("confidence")
+            string("action_label"); enum("action_type", listOf("start_coding", "send_message_draft", "create_goal", "run_skill", "agent_turn"))
+            raw("action_payload", buildJsonObject { put("type", "object"); put("additionalProperties", true) }); integer("expires_at_ms"); string("reason")
+        }) { a ->
+            val now = System.currentTimeMillis()
+            val payload = a["action_payload"]?.let { it as? JsonObject ?: error("action_payload must be an object") }
+            val card = store.updateOpportunity(agentId, a.required("id"), now) { old ->
+                val step = PreparedNextStep(a.str("action_label") ?: old.preparedAction.label, a.str("action_type") ?: old.preparedAction.actionType,
+                    payload?.toString() ?: old.preparedAction.payloadJson, old.preparedAction.secondaryOptions)
+                old.copy(title = a.str("title") ?: old.title, summary = a.str("summary") ?: old.summary,
+                    evidenceRefs = if (a["evidence_refs"] != null) a.strings("evidence_refs") else old.evidenceRefs,
+                    urgency = a.double("urgency") ?: old.urgency, confidence = a.double("confidence") ?: old.confidence,
+                    preparedAction = step, expiresAtMs = a.long("expires_at_ms") ?: old.expiresAtMs, sourceSessionId = sessionId, error = null)
+            }
+            goalSuggestionRefusal(card, now)?.let { return@tool HostToolPayload.error(it) }
+            refreshDelivery(card)
+            a.str("reason")?.let { store.writeNote(agentId, card.id, "Updated: $it", true) }
+            HostToolPayload.text("Updated ${card.id}; the user sees the new version in place of the old one.")
+        },
+        tool("opportunity_withdraw", "Delete one of your open suggestions (id from opportunity_list) that no longer applies: the event passed or was cancelled, the user already did it, or it was a duplicate. It disappears from the Capsule, Today and the next brief.", {
+            string("id", required = true); string("reason", required = true)
+        }) { a ->
+            val card = store.removeOpportunity(agentId, a.required("id"))
+            store.writeNote(agentId, card.id, "Withdrawn \"${card.title}\": ${a.required("reason")}", true)
+            HostToolPayload.text("Withdrew ${card.id}.")
+        },
+        tool("opportunity_propose", "Prepare a suggestion with evidence and a reviewable next step. The user must explicitly adopt it before any execution. One event, message or item is one suggestion: when you already have an open one about it (opportunity_list), use opportunity_update instead; a repeat is merged into it, and one the user dismissed or adopted lately is refused. Give evidence_refs that name the item (\"calendar:<event id>\", \"email:<id>\").", {
             enum("kind", OpportunityCard.Kind.entries.map { it.name }, required = true); string("title", required = true); string("summary", required = true)
             stringArray("evidence_refs", required = true); number("urgency", required = true); number("confidence", required = true)
             string("action_label", required = true); enum("action_type", listOf("start_coding", "send_message_draft", "create_goal", "run_skill", "agent_turn"), required = true)
@@ -86,10 +125,31 @@ class ProactiveTools(private val container: AppContainer) {
             val payload = a["action_payload"] as? JsonObject ?: error("action_payload must be an object")
             val card = OpportunityCard(store.id("opp"), agentId, OpportunityCard.Kind.valueOf(a.required("kind")), a.required("title"), a.required("summary"), a.strings("evidence_refs"),
                 a.double("urgency") ?: error("urgency is required"), a.double("confidence") ?: error("confidence is required"),
-                PreparedNextStep(a.required("action_label"), a.required("action_type"), payload.toString()), createdAtMs = System.currentTimeMillis(), expiresAtMs = a.long("expires_at_ms"))
-            store.saveOpportunity(card)
-            runtime.deliver(requireNotNull(container.agents.store.get(agentId)), AttentionItem(card.id, card.title, card.summary, card.urgency, .7, card.confidence, card.kind.name, card.createdAtMs, preparedStep = card.preparedAction))
-            HostToolPayload.text("Proposed ${card.id}. It remains pending user adoption.")
+                PreparedNextStep(a.required("action_label"), a.required("action_type"), payload.toString()), createdAtMs = System.currentTimeMillis(), expiresAtMs = a.long("expires_at_ms"),
+                sourceSessionId = sessionId)
+            goalSuggestionRefusal(card, card.createdAtMs)?.let { return@tool HostToolPayload.error(it) }
+            val running = container.agents.store.profiles.value.filter { it.running }.map { it.id }
+            when (val outcome = store.proposeOpportunity(card, running, card.createdAtMs)) {
+                is ProactiveStore.Proposal.Created -> {
+                    runtime.deliver(requireNotNull(container.agents.store.get(agentId)), attention(card))
+                    HostToolPayload.text("Proposed ${card.id}. It remains pending user adoption.")
+                }
+                is ProactiveStore.Proposal.Updated -> {
+                    refreshDelivery(outcome.card)
+                    HostToolPayload.text("You already had ${outcome.card.id} about this; it now carries these words instead of a second suggestion. Use opportunity_update for it from now on.")
+                }
+                is ProactiveStore.Proposal.Duplicate -> {
+                    val c = outcome.card
+                    val why = when {
+                        c.agentId != agentId -> "Another agent's suggestion ${c.id} covers it (${c.state.name.lowercase()})"
+                        !store.proposed(c) -> "Umbra already shows this (${c.id})"
+                        c.state == OpportunityCard.State.DISMISSED -> "The user dismissed the same suggestion (${c.id}) recently; do not propose it again unless something important changed, and then say what"
+                        c.state == OpportunityCard.State.ACCEPTED -> "The user already adopted the same suggestion (${c.id}); its task is ${c.executionSessionId ?: "starting"}"
+                        else -> "The user is adopting the same suggestion (${c.id}) right now"
+                    }
+                    HostToolPayload.error("Not proposed: $why.")
+                }
+            }
         },
         tool("watcher_add", "Draft a cheap conditional watcher. It remains disabled until the user reviews its source and enables it. No cloud model is called for an unmatched probe.", {
             string("title", required = true); enum("probe_type", listOf("http", "guest", "notification"), required = true); string("target", required = true)
@@ -194,6 +254,36 @@ class ProactiveTools(private val container: AppContainer) {
             HostToolPayload.text("Untrusted web evidence:\n" + runtime.http.fetch(url, a.str("selector").orEmpty()))
         },
     )
+    private fun attention(card: OpportunityCard) =
+        AttentionItem(card.id, card.title, card.summary, card.urgency, .7, card.confidence, card.kind.name, card.createdAtMs, preparedStep = card.preparedAction)
+
+    /** An updated card keeps its place and delivery (no second notification); one never delivered is delivered now. */
+    private suspend fun refreshDelivery(card: OpportunityCard) {
+        val staged = store.attention(card.agentId).find { it.id == card.id }
+        if (staged == null) runtime.deliver(requireNotNull(container.agents.store.get(card.agentId)), attention(card))
+        else store.stage(card.agentId, staged.copy(title = card.title, detail = card.summary, urgency = card.urgency, confidence = card.confidence, preparedStep = card.preparedAction))
+    }
+
+    /** A suggestion to create a goal must describe a goal ([GoalScope]): its payload's title and at least two milestones. */
+    private suspend fun goalSuggestionRefusal(card: OpportunityCard, now: Long): String? {
+        if (card.preparedAction.actionType != "create_goal") return null
+        val payload = runCatching { UmbraJson.parseToJsonElement(card.preparedAction.payloadJson) as? JsonObject }.getOrNull() ?: JsonObject(emptyMap())
+        return GoalScope.refusal(payload.str("title") ?: card.title, payload.str("description").orEmpty(), (payload["milestones"] as? JsonArray)?.size ?: 0,
+            payload.long("deadline_ms"), now, eventTitles(card.agentId, now))?.let { "Not a goal suggestion: $it" }
+    }
+
+    /** Calendar titles from yesterday to two weeks ahead, when the agent can read the calendar. */
+    private suspend fun eventTitles(agentId: String, now: Long): List<String> =
+        runCatching { container.personalContext.calendar(agentId, now - 86_400_000L, now + 14 * 86_400_000L).map { it.title } }.getOrDefault(emptyList())
+
+    private fun summary(c: OpportunityCard) = buildJsonObject {
+        put("id", c.id); put("kind", c.kind.name); put("state", c.state.name); put("title", c.title); put("summary", c.summary.take(300))
+        put("evidence_refs", JsonArray(c.evidenceRefs.map(::JsonPrimitive))); put("action", c.preparedAction.actionType)
+        put("created_at", java.time.Instant.ofEpochMilli(c.createdAtMs).toString())
+        c.updatedAtMs?.let { put("updated_at", java.time.Instant.ofEpochMilli(it).toString()) }
+        c.expiresAtMs?.let { put("expires_at", java.time.Instant.ofEpochMilli(it).toString()) }
+    }
+
     private fun tool(name: String, description: String, schema: SchemaBuilder.() -> Unit, run: suspend (JsonObject) -> HostToolPayload) =
         HostSideTool(HostToolDefinition(name, description, objectSchema(schema))) { call, _ -> run(call.arguments) }
     private fun <T> json(serializer: KSerializer<T>, list: List<T>) = HostToolPayload.text(UmbraJson.encodeToString(ListSerializer(serializer), list))

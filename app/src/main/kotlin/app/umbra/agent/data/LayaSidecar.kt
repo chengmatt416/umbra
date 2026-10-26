@@ -1,246 +1,249 @@
 package app.umbra.agent.data
 
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import app.umbra.agent.AppContainer
+import app.umbra.agent.data.laya.LayaExit
+import app.umbra.agent.data.laya.LayaNative
 import app.umbra.core.decision.DecisionEngine
-import app.umbra.core.decision.LayaHttpEngine
 import app.umbra.core.decision.SwitchableEngine
-import app.umbra.platform.api.ShellResult
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
 /**
- * The Laya decision model as a sidecar in the Linux environment (spec §4, ADR 0005). It is installed on
- * request: `pip install "laya[serve]"` into the agent's home, with its weights downloaded from
- * Hugging Face on first start, then served on loopback by `laya-serve`. While it runs, small decisions
- * ("which of these two buttons?", "did that work?") are answered in one fast pass by Laya; while it does
- * not, the built-in rules answer them and anything unclear goes to the agent.
+ * The Laya decision model (spec §4, ADR 0005). Downloaded on request and then run inside the app ([LayaNative]): on
+ * the NPU when a file is compiled for this phone's SoC, else on the GPU, else on the CPU, in a process of its own. While
+ * it runs, small decisions ("which of these two buttons?", "did that work?") are answered in one pass by Laya; while it
+ * does not (also the moment its process dies), the built-in rules answer them and anything unclear goes to the agent.
+ *
+ * (The name is historical: until 0.6.1 Laya ran as a `laya-serve` sidecar in the Linux environment.)
  */
 class LayaSidecar internal constructor(
     private val host: Host,
     private val scope: CoroutineScope,
-    private val endpoint: DecisionEngine = LayaHttpEngine("http://127.0.0.1:8765",
-        OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build(), model = MODEL, apiKey = { host.apiKey }),
-    private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
+    /** Where explicit requests (download, start, stop) run; tests pass their scheduler's dispatcher. */
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
     internal interface Host {
+        /** The person asked for Laya (and has not turned it off). */
         var wanted: Boolean
-        val ready: Boolean
-        suspend fun ensureReady(): Boolean
-        /** The sidecar's private bearer key; it reaches the server only through [exec]'s secrets. */
-        val apiKey: String?
-        suspend fun exec(argv: List<String>, timeoutMs: Long = 30_000, maxOutputBytes: Int = 64 * 1024, secrets: Map<String, String> = emptyMap()): ShellResult
-        /** When the last install failed (wall clock), kept across app restarts; null after a success or a manual retry. */
-        var installFailedAt: Long?
+        /** When the last download or load failed (wall clock), kept across restarts; null after a success or a manual retry. */
+        var failedAt: Long?
+        /** Failures since the last success or manual start: each one doubles the wait before Laya tries again by itself. */
+        var failures: Int
         fun wallNowMs(): Long = System.currentTimeMillis()
+        /** Downloads nobody just asked for wait for an unmetered network. */
+        fun unmetered(): Boolean
+        fun downloaded(): Boolean
+        /** Bytes still to download before Laya can run here. */
+        fun bytesToDownload(): Long
+        val progress: StateFlow<LayaNative.Progress?>
+        suspend fun load(download: Boolean): Opened
+        fun clear()
+        /** The loaded engine's process died (see [Opened.died]): remember what that says about its processor. */
+        fun died(opened: Opened, exit: LayaExit) = Unit
+        fun processors(inUse: String?): List<LayaNative.Processor> = emptyList()
+        fun chip(): String? = null
+        fun resetProcessors() = Unit
+        fun crashForTest(opened: Opened) = Unit
     }
 
+    /** A loaded engine, where it runs, and how to release it; [died] completes if its process dies on its own. */
+    internal class Opened(val engine: DecisionEngine, val backend: String, val checkMs: Long, val skipped: List<String>,
+        val died: Deferred<LayaExit>? = null, val loaded: LayaNative.Loaded? = null, val close: suspend () -> Unit)
+
     constructor(container: AppContainer, scope: CoroutineScope) : this(object : Host {
+        private val native = LayaNative(container.context, OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build())
         override var wanted: Boolean
             get() = container.settings.value.layaWanted
             set(value) { container.settings.update { it.copy(layaWanted = value, layaOffered = true) } }
-        override val ready: Boolean
-            get() = container.guest.state.value in setOf(GuestManager.State.Ready, GuestManager.State.Installed)
-        override suspend fun ensureReady() = container.guest.ensureReady()
-        override val apiKey: String by lazy {
-            container.secrets.get(KEY_SECRET) ?: java.security.SecureRandom().let { random ->
-                ByteArray(32).also(random::nextBytes).joinToString("") { "%02x".format(it) }
-            }.also { container.secrets.put(KEY_SECRET, it) }
-        }
         private val store = container.context.getSharedPreferences("laya", android.content.Context.MODE_PRIVATE)
-        override var installFailedAt: Long?
-            get() = store.getLong("install_failed_at", 0L).takeIf { it > 0 }
-            set(value) { store.edit().apply { if (value == null) remove("install_failed_at") else putLong("install_failed_at", value) }.apply() }
-        override suspend fun exec(argv: List<String>, timeoutMs: Long, maxOutputBytes: Int, secrets: Map<String, String>) =
-            if (secrets.isEmpty()) container.guest.runtime.exec(argv, cwd = "/home/agent", timeoutMs = timeoutMs, maxOutputBytes = maxOutputBytes)
-            else container.guest.runtime.execWithSecrets(argv, secrets, cwd = "/home/agent", timeoutMs = timeoutMs, maxOutputBytes = maxOutputBytes)
+        override var failedAt: Long?
+            get() = store.getLong("failed_at", 0L).takeIf { it > 0 }
+            set(value) { store.edit().apply { if (value == null) remove("failed_at") else putLong("failed_at", value) }.apply() }
+        override var failures: Int
+            get() = store.getInt("failures", 0)
+            set(value) { store.edit().putInt("failures", value).apply() }
+        override fun unmetered(): Boolean {
+            val connectivity = container.context.getSystemService(ConnectivityManager::class.java)
+            val caps = connectivity.getNetworkCapabilities(connectivity.activeNetwork) ?: return false
+            return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        }
+        override fun downloaded() = native.downloaded()
+        override fun bytesToDownload() = native.bytesToDownload()
+        override val progress get() = native.progress
+        override suspend fun load(download: Boolean): Opened {
+            val loaded = native.load(download)
+            return Opened(loaded.engine, loaded.backend.key, loaded.checkMs, loaded.skipped, loaded.died, loaded) { loaded.engine.close() }
+        }
+        override fun clear() = native.clear()
+        override fun died(opened: Opened, exit: LayaExit) { opened.loaded?.let { native.died(it, exit) } }
+        override fun processors(inUse: String?) = native.processors(inUse)
+        override fun chip() = native.chip()
+        override fun resetProcessors() = native.resetProcessors()
+        override fun crashForTest(opened: Opened) { opened.loaded?.let(native::crashForTest) }
     }, scope)
 
+    /** NEEDS_LINUX is no longer reported: Laya runs in the app. */
     enum class State { NEEDS_LINUX, NOT_INSTALLED, INSTALLING, STOPPED, STARTING, RUNNING, FAILED }
 
-    /** What the router talks to; attached while the sidecar answers. */
+    /** What the router talks to; attached while Laya answers. */
     val engine = SwitchableEngine()
 
-    private val mutable = MutableStateFlow(State.NEEDS_LINUX)
+    private val mutable = MutableStateFlow(State.NOT_INSTALLED)
     val state: StateFlow<State> = mutable.asStateFlow()
+
+    /** Where Laya runs while it runs: "npu", "gpu" or "cpu". */
+    private val mutableBackend = MutableStateFlow<String?>(null)
+    val backend: StateFlow<String?> = mutableBackend.asStateFlow()
+
+    val progress: StateFlow<LayaNative.Progress?> get() = host.progress
 
     @Volatile
     var message: String? = null
         private set
 
     private val busy = Mutex()
-    private val port = 8765
-    private val bin = "\$HOME/.local/bin/laya-serve"
-    private var retryAtMs = 0L
-    private var retryDelayMs = 30_000L
-    private var stopPending = false
-    @Volatile private var serverGeneration = 0L
+    @Volatile private var opened: Opened? = null
+    private var watch: Job? = null
+    /** Wakes [keepUp] early: Laya's process died and the next processor may start. */
+    private val mutableChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
-    /** Looks at the guest and the port: installed? running? */
+    /** NPU, GPU and CPU: which one answers, which failed and why (kept across starts), for Settings. */
+    fun processors(): List<LayaNative.Processor> = runCatching { host.processors(backend.value) }.getOrDefault(emptyList())
+
+    /** The phone's chip ("Qualcomm SM8750"), or null. */
+    fun chip(): String? = runCatching { host.chip() }.getOrNull()
+
+    /** Tries every processor again on the next start (after a driver update, say). */
+    fun retryProcessors() {
+        host.resetProcessors()
+        if (mutable.value != State.RUNNING) start()
+    }
+
+    /** Debug builds: crashes the loaded model's process, to show the app survives and falls back. */
+    fun crashForTest() { opened?.let { host.crashForTest(it) } }
+
+    /** Looks at what is downloaded and loaded. Callable from the main thread: the file check runs on [io]. */
     suspend fun refresh() {
         if (!busy.tryLock()) return
-        try { refreshNow() }
-        catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: Exception) { failed(e) }
+        try {
+            if (mutable.value == State.RUNNING && opened != null) return
+            // Checking a file can read all 810 MB of it (its SHA-256): never on the main thread, where Settings calls this.
+            val downloaded = kotlinx.coroutines.withContext(io) { host.downloaded() }
+            if (mutable.value != State.FAILED) mutable.value = if (downloaded) State.STOPPED else State.NOT_INSTALLED
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Throwable) { failed(e) }
         finally { busy.unlock() }
     }
 
-    private suspend fun refreshNow() {
-        if (host.ready && mutable.value == State.RUNNING && endpoint.isAvailable()) return
-        if (!host.ready || !host.ensureReady()) {
-            engine.target = null
-            mutable.value = State.NEEDS_LINUX
-            return
-        }
-        val installed = try {
-            host.exec(listOf("bash", "-c", "test -x $bin")).ok
-        } catch (e: app.umbra.platform.api.BackendException) {
-            engine.target = null
-            mutable.value = State.NEEDS_LINUX // root went away while asking
-            return
-        }
-        if (!installed) {
-            engine.target = null
-            mutable.value = State.NOT_INSTALLED
-            return
-        }
-        val running = endpoint.isAvailable()
-        if (running) {
-            engine.target = endpoint
-            mutable.value = State.RUNNING
-        } else {
-            engine.target = null
-            if (mutable.value != State.FAILED) mutable.value = State.STOPPED
-        }
-    }
+    /** Bytes the next download fetches (the best file this phone can use). */
+    fun downloadSize(): Long = runCatching { host.bytesToDownload() }.getOrDefault(0L)
 
-    /** Installs the package into the agent's home (about 2 GB with its runtime; needs the network). */
+    /** Downloads (if needed) and starts Laya now, whatever the network. */
     fun install() = start()
 
-    private suspend fun installNow() {
-        mutable.value = State.INSTALLING
-        message = null
-        // pip unpacks each wheel into a temporary folder that an interrupted install leaves behind (hundreds of MB per
-        // attempt for torch and its CUDA wheels). It gets its own folder, removed whatever happens, and leftovers of
-        // earlier attempts in the shared /tmp go first.
-        val out = host.exec(
-            listOf("bash", "-o", "pipefail", "-c", INSTALL_SCRIPT),
-            timeoutMs = 60 * 60_000L,
-        )
-        if (out.ok && host.exec(listOf("bash", "-c", "test -x $bin")).ok) {
-            host.installFailedAt = null
-            mutable.value = State.STOPPED
-        } else {
-            // A failed install (about 1 GB of wheels) is not part of the start backoff: it is tried again by itself at
-            // most once a day, across restarts, or at once when the person asks ([install]/[download]).
-            host.installFailedAt = host.wallNowMs()
-            message = out.combined.lines().filter { it.isNotBlank() }.takeLast(3).joinToString(" ").take(300).ifBlank { "pip did not finish" }
-            mutable.value = State.FAILED
+    /** Downloads (if needed) and starts Laya now, whatever the network. */
+    fun download() = start()
+
+    fun start() {
+        host.wanted = true
+        launch { host.failedAt = null; host.failures = 0; ensureRunning(userAsked = true) }
+    }
+
+    /**
+     * For the app's life: keeps Laya running while it is wanted. Explicit starts and stops act at once, so this only
+     * looks again every [MAINTAIN_MS] (a download waiting for Wi-Fi, an hourly retry) or when Laya's process died; it
+     * used to look every 30 s, which kept waking the phone for nothing.
+     */
+    suspend fun keepUp(): Nothing {
+        while (true) {
+            maintain()
+            withTimeoutOrNull(MAINTAIN_MS) { mutableChanged.first() }
         }
     }
 
-    /** Install and preload once, then retain the server even between tasks. */
-    fun download() = start()
-
-    /** Called periodically by the app service. Failed starts back off to avoid a battery-draining restart loop. */
+    /** Starts Laya when wanted, retrying a failure at most hourly. */
     suspend fun maintain() {
         if (!busy.tryLock()) return
         try {
             if (!host.wanted) {
-                if (stopPending || server != null || mutable.value == State.RUNNING) stopNow()
-                retryAtMs = 0
-                retryDelayMs = 30_000
+                if (opened != null || mutable.value == State.RUNNING) stopNow()
                 return
             }
-            if (nowMs() < retryAtMs) return
-            try {
-                ensureRunning()
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) { failed(e) }
-            if (mutable.value == State.FAILED) {
-                retryAtMs = nowMs() + retryDelayMs
-                retryDelayMs = (retryDelayMs * 2).coerceAtMost(5 * 60_000)
-            } else {
-                retryAtMs = 0
-                retryDelayMs = 30_000
-            }
+            if (mutable.value == State.RUNNING && opened != null) return
+            val failedAt = host.failedAt
+            // 1 h after a failure, then 2, 4, 8, 16 and at most 24 h: a phone where Laya cannot run stops loading 810 MB
+            // every hour for nothing.
+            val wait = (RETRY_MS shl (host.failures - 1).coerceIn(0, 5)).coerceAtMost(24 * RETRY_MS)
+            if (failedAt != null && host.wallNowMs() - failedAt in 0 until wait) { mutable.value = State.FAILED; return }
+            ensureRunning(userAsked = false)
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: Exception) { failed(e) }
+        catch (e: Throwable) { failed(e) }
         finally { busy.unlock() }
     }
 
-    private suspend fun ensureRunning() {
-        refreshNow()
-        if (!host.wanted || mutable.value == State.NEEDS_LINUX || mutable.value == State.RUNNING) return
-        if (mutable.value == State.NOT_INSTALLED) {
-            val failedAt = host.installFailedAt
-            if (failedAt != null && host.wallNowMs() - failedAt in 0 until INSTALL_RETRY_MS) { mutable.value = State.FAILED; return }
-            installNow()
+    private suspend fun ensureRunning(userAsked: Boolean) {
+        if (mutable.value == State.RUNNING && opened != null) return
+        val downloaded = host.downloaded()
+        val mayDownload = userAsked || host.unmetered()
+        if (!downloaded && !mayDownload) {
+            mutable.value = State.NOT_INSTALLED
+            message = null
+            return
         }
-        else if (mutable.value == State.FAILED) mutable.value = State.STOPPED
-        if (host.wanted && mutable.value == State.STOPPED) startNow()
-    }
-
-    /** Starts `laya-serve` in the background and waits until it answers (the first start also downloads the weights). */
-    fun start() {
-        host.wanted = true
-        launch { retryAtMs = 0; host.installFailedAt = null; ensureRunning() }
-    }
-
-    private suspend fun startNow() {
-        mutable.value = State.STARTING
-        engine.target = null
+        mutable.value = if (downloaded) State.STARTING else State.INSTALLING
         message = null
-        val generation = ++serverGeneration
-        killServer()
-        // The server runs as this exec, in the foreground for as long as it serves: under proot a process left in the
-        // background ends with the exec that started it.
-        server?.cancelAndJoin()
-        server = scope.launch {
-            try {
-                host.exec(
-                    listOf(
-                        "bash", "-c",
-                        "mkdir -p \$HOME/.umbra; " +
-                            "LAYA_DEVICE=cpu LAYA_HOST=127.0.0.1 LAYA_PORT=$port LAYA_MODELS=$MODEL LAYA_DEFAULT_MODEL=$MODEL LAYA_PRELOAD=1 " +
-                            "exec $bin > \$HOME/.umbra/laya.log 2>&1 < /dev/null",
-                    ),
-                    timeoutMs = SERVE_MS,
-                    secrets = listOfNotNull(host.apiKey?.let { "LAYA_API_KEY" to it }).toMap(),
-                )
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { /* The health probe reports startup failures. */ }
-            finally {
-                if (generation == serverGeneration && mutable.value == State.RUNNING) {
-                    engine.target = null
-                    mutable.value = State.FAILED
-                    message = "Laya stopped; waiting to restart."
-                }
-            }
+        val next = try {
+            host.load(download = mayDownload)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        // Throwable: an Error from a native library (an UnsatisfiedLinkError, say) must end in "failed", not end the app.
+        catch (e: Throwable) {
+            host.failedAt = host.wallNowMs()
+            host.failures = host.failures + 1
+            failed(e)
+            return
         }
-        val deadline = nowMs() + 20 * 60_000L // the weights download on the first start
-        while (nowMs() < deadline) {
-            if (!host.wanted) { stopNow(); return }
-            if (server?.isCompleted == true) break
-            if (endpoint.isAvailable()) {
-                engine.target = endpoint
-                mutable.value = State.RUNNING
-                return
-            }
-            delay(2_000)
-        }
-        stopNow()
-        message = host.exec(listOf("bash", "-c", "tail -5 \$HOME/.umbra/laya.log")).stdout.lines().filter { it.isNotBlank() }.takeLast(3).joinToString(" ").take(300)
+        if (!host.wanted) { next.close(); mutable.value = State.STOPPED; return }
+        opened = next
+        engine.target = next.engine
+        mutableBackend.value = next.backend
+        message = next.skipped.takeIf { it.isNotEmpty() }?.joinToString("; ")?.take(300)
+        host.failedAt = null
+        host.failures = 0
+        mutable.value = State.RUNNING
+        next.died?.let { died -> watch?.cancel(); watch = scope.launch(io) { onDied(next, died.await()) } }
+    }
+
+    /**
+     * Laya's process died while loaded: decisions go back to the built-in rules at once. A crash refuses that processor
+     * and Laya starts again on the next one at the next [maintain]; Android ending it for memory waits for the hourly
+     * retry (loading again at once would only be ended again, and costs battery).
+     */
+    private suspend fun onDied(dead: Opened, exit: LayaExit) = busy.withLock {
+        if (opened !== dead) return@withLock
+        engine.target = null
+        opened = null
+        mutableBackend.value = null
+        runCatching { host.died(dead, exit) }
+        message = "Laya's process on the ${dead.backend.uppercase()} stopped: ${exit.text}".take(300)
+        if (!exit.crashed || dead.backend == "cpu") { host.failedAt = host.wallNowMs(); host.failures = host.failures + 1 }
         mutable.value = State.FAILED
+        mutableChanged.tryEmit(Unit)
     }
 
     fun stop() {
@@ -249,65 +252,47 @@ class LayaSidecar internal constructor(
         launch { stopNow() }
     }
 
-    private suspend fun stopNow() {
+    /** Stops Laya and deletes its downloaded files. */
+    fun remove() {
+        host.wanted = false
         engine.target = null
-        stopPending = true
-        ++serverGeneration
-        killServer()
-        server?.cancelAndJoin()
-        server = null
-        stopPending = false
-        mutable.value = State.STOPPED
+        launch { stopNow(); host.clear(); mutable.value = State.NOT_INSTALLED }
     }
 
-    /**
-     * Ends a running server. The pattern's first letter is bracketed so it does not match the command
-     * line of the very shell that carries it (`pkill -f` would end that shell first), and the script
-     * contains nothing else that looks like the server.
-     */
-    private suspend fun killServer() {
-        val result = host.exec(listOf("bash", "-c", "pkill -u \$(id -u) -f '[l]aya-serve'; status=\$?; test \"\$status\" -le 1"))
-        check(result.ok) { "Could not stop the Laya server; retry when Linux is available." }
+    private suspend fun stopNow() {
+        engine.target = null
+        mutableBackend.value = null
+        watch?.cancel()
+        watch = null
+        opened?.let { runCatching { it.close() } }
+        opened = null
+        mutable.value = if (host.downloaded()) State.STOPPED else State.NOT_INSTALLED
     }
 
     private fun launch(block: suspend () -> Unit) {
-        scope.launch(Dispatchers.IO) {
+        scope.launch(io) {
             busy.withLock {
                 try {
                     block()
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     failed(e)
                 }
             }
         }
     }
 
-    private fun failed(error: Exception) {
+    private fun failed(error: Throwable) {
         engine.target = null
-        message = error.message
+        mutableBackend.value = null
+        message = error.message?.take(300)
         mutable.value = State.FAILED
     }
 
-    @Volatile private var server: kotlinx.coroutines.Job? = null
-
     private companion object {
-        /** A failed install retries by itself at most this often (an explicit download retries at once). */
-        const val INSTALL_RETRY_MS = 24 * 60 * 60_000L
-        /**
-         * The phone has no CUDA: PyTorch comes from its CPU-only index first (PyPI's Linux build would pull several GB of
-         * GPU libraries), then Laya, which reuses it. If the CPU wheel is unavailable, pip falls back to its usual choice.
-         */
-        internal const val INSTALL_SCRIPT = "find /tmp -maxdepth 1 -name 'pip-unpack-*' -user \"\$(id -u)\" -mmin +5 -exec rm -rf {} + 2>/dev/null; " +
-            "t=\"\$HOME/.cache/umbra-pip-tmp\"; rm -rf \"\$t\"; mkdir -p \"\$t\"; " +
-            "TMPDIR=\"\$t\" python3 -m pip install --user --break-system-packages --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch 2>&1 | tail -2; " +
-            "TMPDIR=\"\$t\" python3 -m pip install --user --break-system-packages --no-cache-dir 'laya[serve]' 2>&1 | tail -5; rc=\${PIPESTATUS[0]}; " +
-            "rm -rf \"\$t\"; exit \$rc"
-        /** Renewed by maintenance when the guest's execution lease ends. */
-        const val SERVE_MS = 24 * 60 * 60_000L
-        /** The typed-decisions checkpoint of `convaiinnovations/laya` (README: "the typed-decisions workflows"). */
-        const val MODEL = "laya-typed-decisions"
-        const val KEY_SECRET = "LAYA_API_KEY"
+        /** A failure retries by itself at most this often; an explicit download or start retries at once. */
+        const val RETRY_MS = 60 * 60_000L
+        const val MAINTAIN_MS = 15 * 60_000L
     }
 }

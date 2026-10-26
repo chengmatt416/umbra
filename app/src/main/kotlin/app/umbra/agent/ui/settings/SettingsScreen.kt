@@ -78,10 +78,16 @@ fun SettingsScreen(onBack: () -> Unit, onGo: (Dest) -> Unit, onRoute: (String) -
                         app.umbra.agent.data.CapsulePlacement.CAMERA -> stringResource(R.string.cap_place_camera)
                         app.umbra.agent.data.CapsulePlacement.CORNER -> stringResource(R.string.cap_place_corner)
                         app.umbra.agent.data.CapsulePlacement.CENTRE -> stringResource(R.string.cap_place_centre)
+                        app.umbra.agent.data.CapsulePlacement.CUSTOM -> prefs.capsuleAnchor?.let { stringResource(R.string.cap_place_custom, it.x, it.y) } ?: stringResource(R.string.cap_place_camera)
                     }
                     NavRow(PIcons.pin, stringResource(R.string.cap_place_title), stringResource(R.string.cap_place_body), value = value) {
-                        container.settings.update { it.copy(capsulePlacement = app.umbra.agent.data.CapsulePlacement.entries[(it.capsulePlacement.ordinal + 1) % app.umbra.agent.data.CapsulePlacement.entries.size]) }
+                        // Custom is in the round only once it has been set in Size and position.
+                        container.settings.update { p ->
+                            val choices = app.umbra.agent.data.CapsulePlacement.entries.filter { it != app.umbra.agent.data.CapsulePlacement.CUSTOM || p.capsuleAnchor != null }
+                            p.copy(capsulePlacement = choices[(choices.indexOf(p.capsulePlacement) + 1) % choices.size])
+                        }
                     }
+                    NavRow(PIcons.target, stringResource(R.string.cap_pos_title), stringResource(R.string.cap_pos_sub)) { onRoute("capsule-position") }
                 }
             }
             RowGroup {
@@ -91,8 +97,12 @@ fun SettingsScreen(onBack: () -> Unit, onGo: (Dest) -> Unit, onRoute: (String) -
                 NavRow(PIcons.message, stringResource(R.string.ag_message_apps), stringResource(R.string.ag_message_apps_sub)) { onGo(Dest.Messages) }
                 NavRow(PIcons.bell, stringResource(R.string.ag_notification_reader), stringResource(R.string.ag_notification_reader_sub)) { onGo(Dest.Notifications) }
                 val layaOn = prefs.layaWanted && laya != LayaSidecar.State.NOT_INSTALLED && laya != LayaSidecar.State.NEEDS_LINUX
-                NavRow(PIcons.grid, stringResource(R.string.r_set_laya), stringResource(if (layaOn) R.string.r_set_laya_on else R.string.r_set_laya_off)) {
-                    if (!prefs.layaWanted) { container.settings.update { it.copy(layaWanted = true, layaOffered = true) }; container.laya.download() } else onGo(Dest.MoreSettings)
+                val layaBackend by container.laya.backend.collectAsStateWithLifecycle()
+                val layaSummary = layaBackend?.takeIf { laya == LayaSidecar.State.RUNNING }?.let { stringResource(R.string.r_set_laya_running, it.uppercase()) }
+                    ?: stringResource(if (layaOn) R.string.r_set_laya_on else R.string.r_set_laya_off)
+                NavRow(PIcons.grid, stringResource(R.string.r_set_laya), layaSummary) {
+                    if (!prefs.layaWanted) { container.settings.update { it.copy(layaWanted = true, layaOffered = true) }; container.laya.download() }
+                    onRoute("laya")
                 }
                 val update by container.updater.state.collectAsStateWithLifecycle()
                 // Until something happens, the version and when it is checked; after a check, what the check found.

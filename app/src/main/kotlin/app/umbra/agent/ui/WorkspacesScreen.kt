@@ -157,7 +157,7 @@ fun WorkspacesScreen(onBack: () -> Unit, onOpen: (String) -> Unit) {
 
 /** Browses one workspace's files and shows text and images. */
 @Composable
-fun WorkspaceBrowserScreen(workspaceId: String, onBack: () -> Unit) {
+fun WorkspaceBrowserScreen(workspaceId: String, onBack: () -> Unit, onOpenFile: (String, String?) -> Unit) {
     val context = LocalContext.current
     val resources = androidx.compose.ui.platform.LocalResources.current
     val container = context.container
@@ -196,7 +196,7 @@ fun WorkspaceBrowserScreen(workspaceId: String, onBack: () -> Unit) {
                     file.name,
                     if (file.isDirectory) null else Formatter.formatShortFileSize(context, file.length()),
                     if (file.isDirectory) PIcons.folder else PIcons.file,
-                    onClick = { if (file.isDirectory) dir = file else open = file },
+                    onClick = { if (file.isDirectory) dir = file else onOpenFile(file.path, null) },
                 )
             }
         }

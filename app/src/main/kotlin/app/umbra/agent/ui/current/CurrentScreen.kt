@@ -46,7 +46,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.umbra.agent.AppContainer
 import androidx.annotation.StringRes
@@ -57,6 +56,7 @@ import app.umbra.agent.ui.AgentBubble
 import app.umbra.agent.ui.ApprovalLogRow
 import app.umbra.agent.ui.NoticeRow
 import app.umbra.agent.ui.PlanCard
+import app.umbra.agent.ui.PollWhileStarted
 import app.umbra.agent.ui.StateDivider
 import app.umbra.agent.ui.TimelineBuilder
 import app.umbra.agent.ui.TimelineItem
@@ -112,6 +112,7 @@ class SessionOps(
     private val context: Context,
     private val onError: (String) -> Unit,
     private val onInfo: (String) -> Unit,
+    val onOpenFile: (String, String?) -> Unit,
 ) {
     /** A string of the user's language, for work that runs outside composition. */
     fun string(@StringRes id: Int, vararg args: Any): String = context.getString(id, *args)
@@ -163,12 +164,7 @@ class SessionOps(
     }) { it.lastAssistantText().orEmpty() }
 
     fun open(file: File, mime: String) {
-        try {
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-            context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
-        } catch (e: Exception) {
-            onError(context.getString(R.string.ops_no_opener, file.name, e.message.orEmpty()))
-        }
+        onOpenFile(file.path, sessionId)
     }
 }
 
@@ -179,7 +175,7 @@ private enum class View(@param:androidx.annotation.StringRes val label: Int) { C
  * omp's commands, model, branches, todos, subagents and goal — and the session's activity timeline.
  */
 @Composable
-fun CurrentScreen(onBack: () -> Unit, onOpenSession: (String) -> Unit, onAccounts: () -> Unit, onComputers: () -> Unit, onCommit: () -> Unit = {}) {
+fun CurrentScreen(onBack: () -> Unit, onOpenSession: (String) -> Unit, onAccounts: () -> Unit, onComputers: () -> Unit, onCommit: () -> Unit = {}, onOpenFile: (String, String?) -> Unit) {
     val container = LocalContext.current.container
     val context = LocalContext.current
     val resources = androidx.compose.ui.platform.LocalResources.current
@@ -196,18 +192,18 @@ fun CurrentScreen(onBack: () -> Unit, onOpenSession: (String) -> Unit, onAccount
             app.umbra.agent.ui.porcelain.PEmpty(stringResource(R.string.cur_none_title), stringResource(R.string.cur_none_body), icon = PIcons.activity)
             return
         }
-        SessionView(session, context, onOpenSession, onBack, onCommit, onComputers)
+        SessionView(session, context, onOpenSession, onBack, onCommit, onComputers, onOpenFile)
     }
 }
 
 @Composable
-private fun SessionView(session: app.umbra.core.session.Session, context: Context, onOpenSession: (String) -> Unit, onBack: () -> Unit, onCommit: () -> Unit, onComputers: () -> Unit) {
+private fun SessionView(session: app.umbra.core.session.Session, context: Context, onOpenSession: (String) -> Unit, onBack: () -> Unit, onCommit: () -> Unit, onComputers: () -> Unit, onOpenFile: (String, String?) -> Unit) {
     val container = LocalContext.current.container
     val scope = rememberCoroutineScope()
     val id = session.id
     var error by remember(id) { mutableStateOf<String?>(null) }
     var info by remember(id) { mutableStateOf<String?>(null) }
-    val ops = remember(id) { SessionOps(id, container, scope, context, onError = { error = it }, onInfo = { info = it }) }
+    val ops = remember(id, onOpenFile) { SessionOps(id, container, scope, context, onError = { error = it }, onInfo = { info = it }, onOpenFile = onOpenFile) }
     val conversationFlow by produceState<kotlinx.coroutines.flow.StateFlow<ConversationState>?>(null, id) { value = runCatching { container.supervisor.conversation(id) }.getOrNull() }
     val conversation = conversationFlow?.collectAsStateWithLifecycle()?.value ?: ConversationState()
     var composer by remember(id) { mutableStateOf("") }
@@ -349,7 +345,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
         info?.let { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { Callout(it, Tone.Good) } }
         if (session.state == SessionState.CREATED && session.queuedAtMs != null) {
             var why by remember(id) { mutableStateOf<String?>(null) }
-            LaunchedEffect(id) { while (true) { why = runCatching { container.supervisor.waitingReason(session.projectId) }.getOrNull(); kotlinx.coroutines.delay(2_000) } }
+            PollWhileStarted(id, periodMs = 2_000) { why = runCatching { container.supervisor.waitingReason(session.projectId) }.getOrNull() }
             Column(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) {
                 Callout(stringResource(R.string.cur_queued) + (why?.let { " " + stringResource(R.string.cur_queued_why, it) } ?: ""), Tone.Warn)
                 PButton(stringResource(R.string.cur_dequeue), { scope.launch { container.supervisor.dequeue(id) } }, Modifier.padding(top = 6.dp), style = ButtonStyle.Ghost, tiny = true)
@@ -468,10 +464,10 @@ private fun ChatList(
     // Simple leaves out what is for developers: system notices and command output.
     val items = conversation.items.filter { it !is ChatItem.ToolResult && !(simple && (it is ChatItem.Custom || it is ChatItem.CommandOutput)) }
     val resultImages = remember(conversation.items) { conversation.items.filterIsInstance<ChatItem.ToolResult>().filter { it.images.isNotEmpty() }.associate { it.toolCallId to it.images } }
-    val atBottom by remember { derivedStateOf { list.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= list.layoutInfo.totalItemsCount - 2 } ?: true } }
+    val stick by rememberStickToBottom(list)
     val streamedLength = (conversation.items.lastOrNull() as? ChatItem.Assistant)?.let { a -> a.blocks.sumOf { b -> (b as? app.umbra.core.orchestrator.Block.Text)?.text?.length ?: 0 } } ?: 0
     LaunchedEffect(items.size, approvals.size, questions.size, streamedLength / 80, conversation.tools.size, secureInput?.id) {
-        if (atBottom && list.layoutInfo.totalItemsCount > 0) list.animateScrollToItem(list.layoutInfo.totalItemsCount - 1)
+        if (stick) list.scrollToEnd(animate = true)
     }
     val actions = remember(session.id) {
         MessageActions(
@@ -509,7 +505,7 @@ private fun ChatList(
                     app.umbra.agent.ui.MarkdownText(summary, color = P.ink, modifier = Modifier.padding(top = 6.dp))
                 }
             } }
-            if (session.attachments.containsKey(app.umbra.core.orchestrator.CompletionEvidence.KEY)) item(key = "deliverable-receipt") { DeliverableCard(session) }
+            if (session.attachments.containsKey(app.umbra.core.orchestrator.CompletionEvidence.KEY)) item(key = "deliverable-receipt") { DeliverableCard(session, ops.onOpenFile) }
         }
         if (session.state == SessionState.RUNNING) item(key = "orb-activity") {
             val orb = app.umbra.agent.ui.porcelain.thinkingOrbState(conversation)

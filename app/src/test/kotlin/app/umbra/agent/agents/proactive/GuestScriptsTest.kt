@@ -172,6 +172,24 @@ class LinuxDesktopDemonstrationTest {
 }
 
 class BriefHeadlineTest {
+    @Test fun completedFailedAndRunningCountsReadNaturallyInBothLanguages() {
+        assertEquals("3 things done, 1 task failed, 2 tasks running.",
+            BriefHeadline.of(DailyBrief.Kind.EVENING, 0, 0, 0, 3, zh = false, failed = 1, running = 2))
+        assertEquals("已完成 3 項，1 項任務失敗，2 項任務執行中。",
+            BriefHeadline.of(DailyBrief.Kind.EVENING, 0, 0, 0, 3, zh = true, failed = 1, running = 2))
+        assertEquals("2 tasks failed, 1 task running.",
+            BriefHeadline.of(DailyBrief.Kind.MORNING, 0, 0, 0, 0, zh = false, failed = 2, running = 1))
+        assertEquals("2 項任務失敗，1 項任務執行中。",
+            BriefHeadline.of(DailyBrief.Kind.MORNING, 0, 0, 0, 0, zh = true, failed = 2, running = 1))
+    }
+
+    @Test fun waitingPausedAndStoppedTasksAreNotReportedAsAnEmptyBrief() {
+        assertEquals("1 task awaiting approval, 2 tasks paused, 1 task stopped.",
+            BriefHeadline.of(DailyBrief.Kind.EVENING, 0, 0, 0, 0, zh = false, waiting = 1, paused = 2, stopped = 1))
+        assertEquals("1 項任務等待核准，2 項任務已暫停，1 項任務已停止。",
+            BriefHeadline.of(DailyBrief.Kind.EVENING, 0, 0, 0, 0, zh = true, waiting = 1, paused = 2, stopped = 1))
+    }
+
     @Test fun headlinesReadLikeASentenceAndNeverAsZeroCounts() {
         assertEquals("All quiet tonight: nothing needs you.", BriefHeadline.of(DailyBrief.Kind.EVENING, 0, 0, 0, 0, zh = false))
         assertEquals("1 conflict to settle, 2 decisions waiting, 3 events today.", BriefHeadline.of(DailyBrief.Kind.MORNING, 3, 2, 1, 0, zh = false))

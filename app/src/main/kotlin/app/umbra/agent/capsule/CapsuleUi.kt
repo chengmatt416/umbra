@@ -55,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
@@ -72,6 +73,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -151,7 +153,7 @@ private val LIVE = setOf(SessionState.RUNNING, SessionState.WAITING_APPROVAL, Se
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
-internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
+internal fun CapsuleView(capsule: Capsule, container: AppContainer, card: Boolean = false) {
     val everySession by remember(container) { container.capsuleSignals.content { container.sessionStore.list() } }.collectAsState(emptyList())
     // The Capsule follows coding tasks; an agent's conversation shows in its own block of the card.
     val sessions = everySession.filter { it.kind == app.umbra.core.session.SessionKind.CODING }
@@ -178,8 +180,9 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     val nowMs = remember(revision) { System.currentTimeMillis() }
     val suggestions by remember(container) { container.capsuleSignals.content { container.capsuleSuggestions.snapshot(System.currentTimeMillis()) } }
         .collectAsState(CapsuleSuggestionSnapshot())
-    SideEffect { capsule.projectedSuggestions = suggestions.count }
-    LaunchedEffect(suggestions.nextExpiryAtMs) {
+    // The pill's window owns these; the card's window (open at the same time) only shows.
+    if (!card) SideEffect { capsule.projectedSuggestions = suggestions.count }
+    if (!card) LaunchedEffect(suggestions.nextExpiryAtMs) {
         suggestions.nextExpiryAtMs?.let { expiry ->
             var remaining = expiry - System.currentTimeMillis()
             while (remaining > 0) {
@@ -198,7 +201,7 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     val clock = rememberCompanionClock(crew.members.map { it.mood }.toSet() + headMood, moving)
     val tick: () -> Long = remember(clock) { { clock.value } }
     val done = crew.members.firstOrNull { it.mood == Mood.DONE }
-    LaunchedEffect(failed?.id) { if (failed != null && !container.ui.appVisible.value) { capsule.tucked.value = false; capsule.expanded.value = true } }
+    if (!card) LaunchedEffect(failed?.id) { if (failed != null && !container.ui.appVisible.value) { capsule.tucked.value = false; capsule.expanded.value = true } }
 
     val label = when {
         locked -> stringResource(R.string.cap_lockdown)
@@ -220,30 +223,34 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
     val crewSaid = crewDescription(crew)
     val capsuleDescription = stringResource(R.string.cap_description, label).let { if (crewSaid.isEmpty()) it else stringResource(R.string.capc_description_more, it, crewSaid) }
 
-    val collapsing by capsule.collapsing.collectAsState()
-    if (expanded || collapsing) {
-        // The card grows out of the pill at the camera and folds back into it; the window waits for the fold. Only
-        // graphics-layer properties move: resizing an overlay window every frame makes the window manager stall.
-        val progress = remember { androidx.compose.animation.core.Animatable(if (moving) 0f else 1f) }
-        LaunchedEffect(expanded) {
-            if (expanded) progress.animateTo(1f, if (moving) spring(dampingRatio = 0.8f, stiffness = 420f) else androidx.compose.animation.core.snap())
+    if (card) {
+        // The card's own window: the card grows out of the pill and folds back into it (see CardMorph).
+        val collapsing by capsule.collapsing.collectAsState()
+        val progress = remember { androidx.compose.animation.core.Animatable(0f) }
+        var placed by remember { mutableStateOf<Offset?>(null) }
+        LaunchedEffect(expanded, collapsing, placed != null) {
+            if (placed == null) return@LaunchedEffect
+            if (expanded && !collapsing) progress.animateTo(1f, if (moving) spring(dampingRatio = 0.82f, stiffness = 380f) else androidx.compose.animation.core.snap())
             else {
-                if (moving) progress.animateTo(0f, androidx.compose.animation.core.tween(190, easing = androidx.compose.animation.core.FastOutLinearInEasing))
+                if (moving) progress.animateTo(0f, androidx.compose.animation.core.tween(220, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+                else progress.snapTo(0f)
                 capsule.collapsing.value = false
             }
         }
+        // Once the growing shape covers the pill, the pill stops drawing; it draws again before the shape uncovers it.
+        LaunchedEffect(Unit) {
+            androidx.compose.runtime.snapshotFlow { progress.value > PILL_COVERED }.collect { capsule.pillHidden.value = it }
+        }
+        val pill by capsule.pillBounds.collectAsState()
         Box(
-            Modifier
-                .onPlaced { capsule.cardShown.value = true }
-                .graphicsLayer {
-                    val p = progress.value
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
-                    scaleX = 0.42f + 0.58f * p
-                    scaleY = 0.18f + 0.82f * p
-                    alpha = (p * 1.8f).coerceIn(0f, 1f)
-                },
+            Modifier.fillMaxSize()
+                // The empty part of the window is outside the card: a tap there folds it.
+                .pointerInput(Unit) { detectTapGestures { if (!capsule.cardFocused.value) capsule.expanded.value = false else capsule.focusCard(false) } },
         ) {
-            CapsuleCard(capsule, container, current, headMood, steps, activity, trail, crew, sessions, clockNow, tick, moving, locked, failed, approvals, questions, suggestions)
+            CapsuleCard(
+                capsule, container, current, headMood, steps, activity, trail, crew, sessions, clockNow, tick, moving, locked, failed, approvals, questions, suggestions,
+                frame = Modifier.cardMorph(progress, pill, placed) { placed = it },
+            )
         }
         return
     }
@@ -270,6 +277,63 @@ internal fun CapsuleView(capsule: Capsule, container: AppContainer) {
         return
     }
     CollapsedPill(capsule, hole, tucked, atRest && suggestions.count == 0, label, trailing, needsYou, crew, headMood, tick, moving, capsuleDescription)
+}
+
+/** Past this much of the growth the card's shape covers the whole pill (both start from the pill's rectangle). */
+private const val PILL_COVERED = 0.18f
+
+/**
+ * The card's surface while it grows out of the pill and folds back into it: a rounded rectangle from the pill's place
+ * ([pill], on the screen) to the card's own bounds, black like the pill at first and the card's glaze when open, its
+ * shadow coming in with it; the card's content fades in once there is room for it. Everything here is drawing (one
+ * graphics layer and a draw block), so nothing is measured or laid out again while it moves. [onPlaced] reports where
+ * the card is on the screen; until then nothing is drawn (the pill is still there under it).
+ */
+private fun Modifier.cardMorph(
+    progress: androidx.compose.animation.core.Animatable<Float, androidx.compose.animation.core.AnimationVector1D>,
+    pill: android.graphics.Rect?,
+    placed: Offset?,
+    onPlaced: (Offset) -> Unit,
+): Modifier = this
+    .onGloballyPositioned { c -> c.positionOnScreen().takeIf { it.x.isFinite() && it.y.isFinite() && it != placed }?.let(onPlaced) }
+    .graphicsLayer {
+        // The spring may overshoot a little; the outline stays within the card.
+        val p = progress.value.coerceIn(0f, 1f)
+        val target = androidx.compose.ui.geometry.Rect(Offset.Zero, size)
+        val from = if (pill != null && placed != null) {
+            androidx.compose.ui.geometry.Rect(pill.left - placed.x, pill.top - placed.y, pill.right - placed.x, pill.bottom - placed.y)
+        } else androidx.compose.ui.geometry.Rect(Offset(size.width / 2f, 0f), androidx.compose.ui.geometry.Size.Zero)
+        val now = androidx.compose.ui.geometry.lerp(from, target, p)
+        val radius = androidx.compose.ui.util.lerp(from.height / 2f, 32.dp.toPx(), p)
+        shape = MorphShape(now, radius)
+        clip = true
+        shadowElevation = 16.dp.toPx() * p
+        ambientShadowColor = Color.Black.copy(alpha = 0.3f)
+        spotShadowColor = Color.Black.copy(alpha = 0.4f)
+        // Fades in over the pill (which is under it and still drawn) instead of replacing it at once.
+        alpha = if (placed == null) 0f else (p / PILL_COVERED).coerceIn(0f, 1f)
+    }
+    .drawWithContent {
+        val p = progress.value.coerceIn(0f, 1f)
+        drawRect(Card)
+        // Black like the pill at first, the card's glaze once open.
+        val ink = 1f - (p / 0.6f).coerceIn(0f, 1f)
+        if (ink > 0f) drawRect(Ink, alpha = ink)
+        val content = ((p - 0.35f) / 0.5f).coerceIn(0f, 1f)
+        if (content >= 1f) drawContent()
+        else if (content > 0f) drawIntoCanvas { canvas ->
+            canvas.saveLayer(androidx.compose.ui.geometry.Rect(Offset.Zero, size), androidx.compose.ui.graphics.Paint().apply { alpha = content })
+            drawContent()
+            canvas.restore()
+        }
+    }
+    // A tap on the card that none of its controls takes (on its text, say) stays on the card: only the empty part of
+    // the window around it is "outside".
+    .pointerInput(Unit) { detectTapGestures { } }
+
+private class MorphShape(private val rect: androidx.compose.ui.geometry.Rect, private val radius: Float) : androidx.compose.ui.graphics.Shape {
+    override fun createOutline(size: androidx.compose.ui.geometry.Size, layoutDirection: androidx.compose.ui.unit.LayoutDirection, density: androidx.compose.ui.unit.Density) =
+        androidx.compose.ui.graphics.Outline.Rounded(androidx.compose.ui.geometry.RoundRect(rect, androidx.compose.ui.geometry.CornerRadius(radius.coerceAtMost(minOf(rect.width, rect.height) / 2f).coerceAtLeast(0f))))
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -307,11 +371,13 @@ private fun CollapsedPill(
         }
     }
     val away by androidx.compose.animation.core.animateFloatAsState(if (yielding) 0f else 1f, if (moving) spring(dampingRatio = 0.9f, stiffness = 380f) else androidx.compose.animation.core.snap(), label = "capsule-yield")
+    // Covered by the card growing out of it (the card's window is above this one): nothing to draw.
+    val covered by capsule.pillHidden.collectAsState()
     Row(
         Modifier
             .graphicsLayer {
                 val k = pop.value * pulse.value * (0.86f + 0.14f * away)
-                scaleX = k; scaleY = k; alpha = away
+                scaleX = k; scaleY = k; alpha = if (covered) 0f else away
                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
             }
             .clip(shape).background(Ink).animateContentSize(spring(dampingRatio = 0.82f, stiffness = 520f))
@@ -335,11 +401,16 @@ private fun CollapsedPill(
                     },
                 ) { change, drag -> change.consume(); total += drag }
             }
-            .combinedClickable(onClickLabel = expandLabel, onLongClickLabel = selectLabel, onLongClick = { capsule.startSelection() }, onClick = { capsule.tap() })
+            // No ripple: a grey wash over the black pill read as a flicker (and, paused while the card covered the pill,
+            // it finished after the card folded back). The card growing out of the pill is the feedback.
+            .combinedClickable(interactionSource = null, indication = null, onClickLabel = expandLabel, onLongClickLabel = selectLabel, onLongClick = { capsule.startSelection() }, onClick = { capsule.tap() })
             .semantics { contentDescription = description }
             .onGloballyPositioned { coordinates ->
                 val at = coordinates.positionOnScreen()
-                if (at.x.isFinite() && at.y.isFinite()) capsule.noteDebugTarget(null, Point((at.x + coordinates.size.width / 4f).toInt(), (at.y + coordinates.size.height / 2f).toInt()))
+                if (at.x.isFinite() && at.y.isFinite()) {
+                    capsule.noteDebugTarget(null, Point((at.x + coordinates.size.width / 4f).toInt(), (at.y + coordinates.size.height / 2f).toInt()))
+                    capsule.pillBounds.value = android.graphics.Rect(at.x.toInt(), at.y.toInt(), at.x.toInt() + coordinates.size.width, at.y.toInt() + coordinates.size.height)
+                }
             }
             .heightIn(min = height),
         verticalAlignment = Alignment.CenterVertically,
@@ -417,6 +488,8 @@ private fun CapsuleCard(
     allApprovals: List<app.umbra.core.safety.ApprovalRequest>,
     questions: List<app.umbra.core.orchestrator.QuestionBroker.Pending>,
     suggestions: CapsuleSuggestionSnapshot,
+    /** How the card's surface is drawn: its shadow, shape and glaze ([cardMorph] while it grows and folds). */
+    frame: Modifier? = null,
 ) {
     val density = LocalDensity.current
     val emergency by container.emergency.state.onCapsuleSignal(container)
@@ -435,8 +508,8 @@ private fun CapsuleCard(
     val approvals = if (current == null && agentMode && agent?.sessionId != null) allApprovals.filter { it.sessionId != agent.sessionId } else allApprovals
     Column(
         Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 18.dp)
-            .shadow(16.dp, shape, ambientColor = Color.Black.copy(alpha = 0.3f), spotColor = Color.Black.copy(alpha = 0.4f))
-            .clip(shape).background(Card).animateContentSize(spring(dampingRatio = 0.86f, stiffness = 480f))
+            .then(frame ?: Modifier.shadow(16.dp, shape, ambientColor = Color.Black.copy(alpha = 0.3f), spotColor = Color.Black.copy(alpha = 0.4f)).clip(shape).background(Card))
+            .animateContentSize(spring(dampingRatio = 0.86f, stiffness = 480f))
             .padding(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 14.dp),
     ) {
         // The camera's row: the camera sits in the middle of it, between the companion and the collapse button.

@@ -2,6 +2,7 @@ package app.umbra.core.orchestrator
 
 import app.umbra.core.model.Clock
 import app.umbra.core.session.Session
+import app.umbra.core.session.ProactiveTurnMode
 import app.umbra.core.session.SessionKind
 import app.umbra.core.session.SessionFilter
 import app.umbra.core.session.SessionState
@@ -76,8 +77,10 @@ class SessionBus(
             store.changes.collect { change ->
                 val s = (change as? StoreChange.SessionChanged)?.session ?: return@collect
                 // Research and routine results are handled by the attention engine; feeding them into the
-                // authorized conversation would both escalate capabilities and create recursive report turns.
-                if (s.kind == SessionKind.AGENT && s.spawnedBy != null) return@collect
+                // authorized conversation would both escalate capabilities and create recursive report turns. Work the
+                // user authorized from an agent (an adopted suggestion) is the agent's own task: it reports like a
+                // subagent, so its result reaches the agent that started it.
+                if (s.kind == SessionKind.AGENT && s.spawnedBy != null && !reportsToAgent(s)) return@collect
                 // Who hears about this session's turns: the session that started it as a subagent, or the agent a coding
                 // session works for (docs/design/agents-2026-10.md §9).
                 val parent = s.spawnedBy
@@ -182,13 +185,26 @@ class SessionBus(
             put("sessionId", kotlinx.serialization.json.JsonPrimitive(child.id)); put("atMs", kotlinx.serialization.json.JsonPrimitive(child.updatedAtMs))
             put("verified", verification["verified"] ?: kotlinx.serialization.json.JsonPrimitive(false))
         })) }
-        if (!agentDelivery(parent, text)) supervisor.send(parent.id, text, whileRunning = StreamingBehavior.FOLLOW_UP, messageSource = "report")
+        // Into the parent's own conversation, always: an agent's subagents, coding sessions and adopted tasks are work
+        // it started and is told "its report comes back to you". agentDelivery screens messages from other sessions,
+        // which an agent's conversation must not take as instructions; reports used to pass through it too, which
+        // diverted them into a read-only research run or the attention list, so the results never reached the agent.
+        supervisor.send(parent.id, text, whileRunning = StreamingBehavior.FOLLOW_UP, messageSource = "report")
         mutableTraffic.tryEmit(Envelope("m" + counter.incrementAndGet(), child.id, parent.id, answer, 1, clock.nowMs(), kind = Kind.REPORT))
     }
+
+    /** An agent-kind child that reports: work the user authorized (an adopted suggestion), not research or a routine run. */
+    private fun reportsToAgent(s: Session): Boolean =
+        s.turnMode == ProactiveTurnMode.AUTHORIZED_EXECUTION && s.routineRunId == null && s.request.startsWith(ADOPTED_PREFIX)
 
     /** The parent took [childId]'s next report itself (subagent_wait): do not deliver it again. */
     fun markConsumed(childId: String) {
         consumed.add(childId)
+    }
+
+    /** A wait ended before [childId] finished: its report must arrive as a message after all. */
+    fun unmarkConsumed(childId: String) {
+        consumed.remove(childId)
     }
 
     private suspend fun render(e: Envelope, from: Session): String {
@@ -207,6 +223,8 @@ class SessionBus(
         const val PER_MINUTE = 20
         const val CHAIN_WINDOW_MS = 10 * 60_000L
         const val REPORT_LIMIT = 6_000
+        /** How an adopted suggestion's task begins (ProactiveRuntime.adopt). */
+        const val ADOPTED_PREFIX = "[User adopted opportunity "
 
         /** What the UI shows for a message on the bus: the kind and who, parsed back from a user message's text. */
         val HEADER = Regex("""^\[(Message (m\d+) from|Reply to (m\d+) from|Report from|Subagent) ([#@][^\]\s]+)[^\]]*\]\n?""")

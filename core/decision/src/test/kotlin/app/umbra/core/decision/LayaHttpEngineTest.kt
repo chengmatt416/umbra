@@ -17,6 +17,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import mockwebserver3.MockResponse
@@ -85,7 +86,8 @@ class LayaHttpEngineTest {
         assertEquals("it worked", q["ok"]!!.jsonObject["instructions"]!!.jsonPrimitive.content)
         // The documented noul example names both sides; the request does too, rather than rely on a default.
         assertEquals(setOf("false", "true"), q["ok"]!!.jsonObject["criteria"]!!.jsonObject.keys)
-        assertEquals(listOf("low", "mid", "high"), q["urg"]!!.jsonObject["criteria"]!!.jsonObject.keys.toList(), "scale order is preserved")
+        // Laya refuses a score whose criteria are a map (422): levels go as a list, lowest first.
+        assertEquals(listOf("minor", "some", "urgent"), q["urg"]!!.jsonObject["criteria"]!!.jsonArray.map { it.jsonPrimitive.content }, "scale order is preserved")
     }
 
     @Test

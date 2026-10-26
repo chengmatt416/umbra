@@ -4,7 +4,7 @@ package app.umbra.core.orchestrator
 object ScopedTools {
     private val messages = setOf("sms", "whatsapp", "telegram", "line", "instagram", "messenger", "snapchat", "x", "imessage")
     fun allows(name: String, scope: Set<String>): Boolean = when {
-        name in setOf("context_resolve", "sessions_list", "session_read", "deliverable_publish", "decide", "agent_status") -> true
+        name in setOf("context_resolve", "sessions_list", "session_read", "wait_until", "deliverable_publish", "decide", "agent_status") -> true
         name.startsWith("memory_") || name.startsWith("note_") || name.startsWith("goal_") || name.startsWith("opportunity_") || name.startsWith("brief_") || name.startsWith("skill_") || name.startsWith("routine_") || name.startsWith("watcher_") || name.startsWith("queue_") -> true
         name.startsWith("messages_") -> scope.any { it in messages }
         name == "notifications_query" -> "notifications" in scope

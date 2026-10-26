@@ -77,6 +77,12 @@ fun OutgoingSessionCard(call: Block.ToolCall, run: ToolRun?): Boolean {
         "subagent_send" -> stringResource(R.string.ses_to, "#" + (arg("name") ?: "?").removePrefix("#")) to (arg("message") ?: "")
         "session_reply" -> stringResource(R.string.ses_reply_to, arg("message_id") ?: "?") to (arg("message") ?: "")
         "subagent_start" -> stringResource(R.string.ses_started, "#" + (arg("name") ?: "?"), listOfNotNull(arg("model"), arg("effort")?.let { "effort $it" }).joinToString(" · ").ifEmpty { "auto" }) to (arg("task") ?: "")
+        "wait_until" -> {
+            val target = arg("target") ?: arg("pid") ?: arg("pattern") ?: arg("command") ?: "?"
+            val seconds = arg("timeout_s")?.toIntOrNull() ?: 0
+            val duration = if (seconds >= 60 && seconds % 60 == 0) stringResource(R.string.ses_wait_minutes, seconds / 60) else stringResource(R.string.ses_wait_seconds, seconds)
+            stringResource(R.string.ses_wait_until, target, duration) to ""
+        }
         else -> return false
     }
     val failed = run?.isError == true

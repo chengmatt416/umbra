@@ -210,7 +210,7 @@ private fun LayaStep(onNext: () -> Unit) {
     val container = LocalContext.current.container
     val prefs by container.settings.flow.collectAsStateWithLifecycle()
     val laya by container.laya.state.collectAsStateWithLifecycle()
-    val guest by container.guest.state.collectAsStateWithLifecycle()
+    val progress by container.laya.progress.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize()) {
         Title(stringResource(R.string.r_ob_laya), Modifier.padding(top = 28.dp, bottom = 12.dp))
         Text(stringResource(R.string.r_ob_laya_body), Modifier.padding(horizontal = 8.dp), fontSize = 14.5.sp, lineHeight = 22.sp, color = P.sub)
@@ -222,11 +222,10 @@ private fun LayaStep(onNext: () -> Unit) {
                 RestingCompanion(size = 22.dp)
                 Column(Modifier.weight(1f)) {
                     Text(stringResource(R.string.r_ob_laya_downloading), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = P.ink)
-                    val ready = guest == GuestManager.State.Ready || guest == GuestManager.State.Installed
                     Text(
                         when {
-                            !ready -> stringResource(R.string.r_ob_laya_wait_linux)
                             laya == LayaSidecar.State.FAILED -> container.laya.message ?: stringResource(R.string.laya_failed)
+                            progress != null -> progress!!.let { "${it.have shr 20} / ${it.total shr 20} MB" }
                             laya == LayaSidecar.State.STOPPED || laya == LayaSidecar.State.RUNNING -> stringResource(R.string.r_set_laya_on)
                             else -> stringResource(R.string.r_ob_laya_background)
                         },

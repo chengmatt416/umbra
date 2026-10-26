@@ -32,7 +32,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -73,6 +72,7 @@ import app.umbra.agent.ui.porcelain.PIconButton
 import app.umbra.agent.ui.porcelain.PIcons
 import app.umbra.agent.ui.porcelain.Tone
 import app.umbra.agent.ui.porcelain.pc
+import app.umbra.agent.ui.rememberPolled
 import app.umbra.agent.ui.shell.NavRow
 import app.umbra.agent.ui.shell.PageColumn
 import app.umbra.agent.ui.shell.PorcelainPage
@@ -80,7 +80,7 @@ import app.umbra.agent.ui.shell.RowGroup
 import app.umbra.agent.ui.shell.SwitchRow
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** The agent's live profile, or null once it is gone. */
@@ -97,7 +97,7 @@ private fun Gone(onBack: () -> Unit) = PorcelainPage(stringResource(R.string.ag_
 /** The agent's files and counts, read again every few seconds while a page shows them. */
 @Composable
 private fun <T> polled(agentId: String, initial: T, everyMs: Long = 3_000, read: () -> T): T {
-    val value by produceState(initial, agentId) { while (true) { value = runCatching(read).getOrDefault(value); delay(everyMs) } }
+    val value by rememberPolled(initial, agentId, periodMs = everyMs) { runCatching(read).onFailure { if (it is CancellationException) throw it }.getOrDefault(value) }
     return value
 }
 
@@ -228,7 +228,7 @@ fun MemoryScreen(agentId: String, onBack: () -> Unit) {
     val p = agent(agentId) ?: return Gone(onBack)
     val memory = container.agents.store.memory(agentId)
     var version by remember { mutableIntStateOf(0) }
-    val entries by produceState(emptyList<Memory.Entry>(), agentId, version) { while (true) { value = memory.entries(); delay(3_000) } }
+    val entries by rememberPolled(emptyList<Memory.Entry>(), agentId, version, periodMs = 3_000) { memory.entries() }
     var query by remember { mutableStateOf("") }
     var adding by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Memory.Entry?>(null) }
@@ -328,10 +328,10 @@ fun TimersScreen(agentId: String, onBack: () -> Unit) {
     val context = LocalContext.current
     val p = agent(agentId) ?: return Gone(onBack)
     var version by remember { mutableIntStateOf(0) }
-    val timers by produceState(emptyList<AgentTimer>(), agentId, version) { while (true) { value = container.agents.store.timers(agentId).sortedBy { it.nextMs }; delay(3_000) } }
-    val rules by produceState(emptyList<AgentRule>(), agentId, version) { while (true) { value = container.agents.store.rules(agentId); delay(3_000) } }
-    val queue by produceState(emptyList<QueueItem>(), agentId, version) { while (true) { value = container.agents.store.queue(agentId).filter { !it.done }; delay(3_000) } }
-    val state by produceState(AgentState(), agentId) { while (true) { value = container.agents.store.state(agentId); delay(5_000) } }
+    val timers by rememberPolled(emptyList<AgentTimer>(), agentId, version, periodMs = 3_000) { container.agents.store.timers(agentId).sortedBy { it.nextMs } }
+    val rules by rememberPolled(emptyList<AgentRule>(), agentId, version, periodMs = 3_000) { container.agents.store.rules(agentId) }
+    val queue by rememberPolled(emptyList<QueueItem>(), agentId, version, periodMs = 3_000) { container.agents.store.queue(agentId).filter { !it.done } }
+    val state by rememberPolled(AgentState(), agentId, periodMs = 5_000) { container.agents.store.state(agentId) }
     var menu by remember { mutableStateOf(false) }
     var addRule by remember { mutableStateOf(false) }
     var addTimer by remember { mutableStateOf(false) }

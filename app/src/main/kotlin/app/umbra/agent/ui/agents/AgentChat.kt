@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import app.umbra.agent.ui.current.scrollToEnd
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -73,6 +74,7 @@ import app.umbra.agent.ui.porcelain.ThinkingOrbActivity
 import app.umbra.agent.ui.porcelain.ThinkingOrbState
 import app.umbra.agent.ui.porcelain.thinkingOrbState
 import app.umbra.agent.ui.porcelain.pc
+import app.umbra.agent.ui.rememberPolled
 import app.umbra.core.orchestrator.Block
 import app.umbra.core.orchestrator.ChatItem
 import app.umbra.core.orchestrator.ConversationState
@@ -83,7 +85,6 @@ import app.umbra.runtime.omp.ContentBlock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -220,8 +221,8 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
     val approvals by container.approvals.pending.collectAsStateWithLifecycle()
     val mine = approvals.filter { it.sessionId == sid }
     val activity by container.agents.activity.collectAsStateWithLifecycle()
-    val timers by produceState(emptyList<app.umbra.agent.agents.AgentTimer>(), agentId) { while (true) { value = container.agents.store.timers(agentId).sortedBy { it.nextMs }; delay(3_000) } }
-    val state by produceState(app.umbra.agent.agents.AgentState(), agentId) { while (true) { value = container.agents.store.state(agentId); delay(5_000) } }
+    val timers by rememberPolled(emptyList<app.umbra.agent.agents.AgentTimer>(), agentId, periodMs = 3_000) { container.agents.store.timers(agentId).sortedBy { it.nextMs } }
+    val state by rememberPolled(app.umbra.agent.agents.AgentState(), agentId, periodMs = 5_000) { container.agents.store.state(agentId) }
     val toolNote = rememberToolNote()
     val lines = remember(conversation.items, conversation.tools, toolNote) { chatLines(conversation, toolNote) }
     // Sent but not yet in the agent's conversation (its process may be starting): shown at once, with a clock.
@@ -241,7 +242,12 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
         container.agents.markRead(agentId)
         onDispose { if (container.agents.onScreen.value == agentId) container.agents.onScreen.value = null }
     }
-    LaunchedEffect(lines.size) { if (lines.isNotEmpty()) list.animateScrollToItem(lines.size + mine.size) ; container.agents.markRead(agentId) }
+    // Follows new messages and the keyboard opening while the list is at its end (rememberStickToBottom).
+    val stick by app.umbra.agent.ui.current.rememberStickToBottom(list)
+    LaunchedEffect(lines.size) {
+        if (lines.isNotEmpty() && stick) list.scrollToEnd(animate = true)
+        container.agents.markRead(agentId)
+    }
     androidx.activity.compose.BackHandler(onBack = onBack)
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->
@@ -384,7 +390,7 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                     draft = ""; pictures.clear(); error = null
                     val entry = System.currentTimeMillis() to text.ifEmpty { "(picture)" }
                     sending += entry
-                    scope.launch { list.animateScrollToItem(lines.size + sending.size) }
+                    scope.launch { list.scrollToEnd(animate = true) }
                     scope.launch { runCatching { container.agents.talk(agentId, text.ifEmpty { "(picture)" }, imgs) }.onFailure { error = it.message; draft = text; sending -= entry } }
                 }.semantics { contentDescription = send },
                 contentAlignment = Alignment.Center,
@@ -514,7 +520,7 @@ internal data class AgentStatus(val label: String, val working: Boolean, val orb
 internal fun agentStatus(p: AgentProfile, conversation: ConversationState): AgentStatus {
     val container = LocalContext.current.container
     val context = LocalContext.current
-    val state by produceState(app.umbra.agent.agents.AgentState(), p.id) { while (true) { value = container.agents.store.state(p.id); delay(10_000) } }
+    val state by rememberPolled(app.umbra.agent.agents.AgentState(), p.id, periodMs = 10_000) { container.agents.store.state(p.id) }
     val changes by container.sessionStore.changes.collectAsStateWithLifecycle(null)
     val session by produceState<app.umbra.core.session.Session?>(null, p.sessionId, changes) { value = p.sessionId?.let { container.sessionStore.get(it) } }
     val activities by container.agents.activity.collectAsStateWithLifecycle()

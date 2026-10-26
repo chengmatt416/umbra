@@ -2,8 +2,10 @@
 
 Static, bilingual (English `/en/`, 繁體中文 `/zh-tw/`) landing page on **Cloudflare Pages**; the APK is served from **Cloudflare R2**.
 
-The build also publishes `/privacy/`, `/policy/` and `/licenses/` from the repository's legal documents,
+The build also publishes `/privacy/`, `/terms/`, `/policy/` and `/licenses/` from the repository's legal documents,
 with original license/notice files under `/legal/`. Both language footers link to these English documents.
+Privacy and terms use readable headings, paragraphs and lists. Edit `../PRIVACY.md` and `../TERMS.md`
+to update their content, then run `node build.mjs` and `node --test tools/legal-pages.test.mjs`.
 Before announcing binary downloads, complete the outstanding requirements in
 [`docs/RELEASE_LEGAL_REVIEW.md`](../docs/RELEASE_LEGAL_REVIEW.md), including matching source distribution;
 publishing the policy pages alone does not clear the APK's bundled components.
@@ -17,6 +19,13 @@ functions/download/[[path]].js   /download/<umbra-x.y.z.apk> streams from the R2
 tools/upload-release.mjs         big-file upload to R2 (multipart through a temporary Worker, deleted afterwards)
 wrangler.toml     Pages project umbra-agent, R2 binding RELEASES -> bucket umbra-releases, LATEST_APK
 ```
+
+Share **https://umbra.ideastone.tech/download/latest** as the permanent APK download link
+(also available at https://umbra-agent.pages.dev/download/latest).
+It redirects without caching to the release named by `LATEST_APK` in `wrangler.toml`, preserving
+the versioned filename and resumable downloads. Both website download buttons use this URL.
+For each release, update `LATEST_APK` alongside `src/apk.json` and deploy the site as described below;
+uploading an APK to R2 alone does not change which release this link serves.
 
 ## Publish a new APK
 

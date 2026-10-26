@@ -121,7 +121,9 @@ class LayaHttpEngine(
             is Question.Score -> {
                 put("type", "score")
                 put("instructions", q.instructions)
-                put("criteria", buildJsonObject { q.levels.forEach { put(it.id, it.description) } })
+                // Laya takes score levels as a list, lowest first (a map is refused with 422), with the text the native
+                // engine renders as "level i: …".
+                put("criteria", JsonArray(q.levels.map { JsonPrimitive(it.description.ifEmpty { it.id }) }))
             }
             is Question.Noul -> {
                 put("type", "noul")

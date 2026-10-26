@@ -46,6 +46,7 @@ import app.umbra.agent.R
 import app.umbra.agent.capsule.RestingCompanion
 import app.umbra.agent.container
 import app.umbra.agent.data.GuestManager
+import app.umbra.agent.ui.PollWhileStarted
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.Callout
 import app.umbra.agent.ui.porcelain.P
@@ -62,7 +63,6 @@ import app.umbra.core.model.action.Environment
 import app.umbra.core.model.Point
 import app.umbra.core.model.observation.DisplayInfo
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -89,7 +89,7 @@ private fun BackgroundScreens() {
     var tick by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(tick) { displays = runCatching { container.displays.list().filter { it.isVirtual } }.onFailure { error = it.message }.getOrDefault(emptyList()) }
-    LaunchedEffect(Unit) { while (true) { delay(1_500); tick++ } }
+    PollWhileStarted(Unit, periodMs = 1_500) { tick++ }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         error?.let { Callout(it, Tone.Danger) }
         if (displays.isEmpty()) Text(stringResource(R.string.r_screens_none), Modifier.padding(top = 24.dp), fontSize = 14.sp, color = P.sub)
@@ -137,7 +137,7 @@ private fun LinuxDesktop() {
     var text by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(guest) { running = runCatching { container.linuxGui.isAvailable() }.getOrDefault(false) }
-    LaunchedEffect(running) { while (running == true) { delay(1_000); tick++ } }
+    if (running == true) PollWhileStarted(running, periodMs = 1_000) { tick++ }
     val image = if (running == true) rememberCapture(container, Environment.LINUX_GUI, null, tick) else null
     val userHolds = leases.values.any { it.resourceId == "gui:0" && it.state == LeaseState.ACTIVE && it.owner == Principal.User }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {

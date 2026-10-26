@@ -70,7 +70,6 @@ import app.umbra.agent.ui.porcelain.Tag
 import app.umbra.agent.ui.porcelain.Tone
 import app.umbra.agent.ui.shell.PorcelainPage
 import app.umbra.runtime.linux.LinuxMode
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -98,12 +97,7 @@ fun SetupScreen(onBack: () -> Unit, onModels: () -> Unit) {
         }
     }
     // Settings screens change things behind our back: look again while this screen is open.
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(4_000)
-            tick++
-        }
-    }
+    PollWhileStarted(Unit, periodMs = 4_000) { tick++ }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {

@@ -64,7 +64,7 @@ fun ProcessesScreen(onBack: () -> Unit) {
             emptyList()
         }
     }
-    LaunchedEffect(Unit) { while (true) { delay(5_000); tick++ } }
+    PollWhileStarted(Unit, periodMs = 5_000) { tick++ }
 
     val apps = sessions.filter { !it.state.isTerminal }.flatMap { s -> s.activeApps.map { app -> s.title to app } }
     PorcelainPage(

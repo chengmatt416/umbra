@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.umbra.agent.R
 import app.umbra.agent.container
+import app.umbra.agent.ui.PollWhileStarted
 import app.umbra.agent.ui.pressureLevelRes
 import app.umbra.agent.ui.porcelain.ButtonStyle
 import app.umbra.agent.ui.porcelain.Callout
@@ -207,11 +208,8 @@ private fun AdmissionCard(sessions: List<app.umbra.core.session.Session>, runnin
     val queued = sessions.filter { it.state == SessionState.CREATED && it.queuedAtMs != null }
     val order = remember(queued, running) { app.umbra.core.orchestrator.AdmissionOrder.forecast(queued, running) }
     var reason by remember { mutableStateOf<String?>(null) }
-    androidx.compose.runtime.LaunchedEffect(queued.size, running) {
-        while (true) {
-            reason = runCatching { container.supervisor.waitingReason(order.firstOrNull()?.projectId) }.getOrNull()
-            kotlinx.coroutines.delay(2_000)
-        }
+    PollWhileStarted(queued.size, running, periodMs = 2_000) {
+        reason = runCatching { container.supervisor.waitingReason(order.firstOrNull()?.projectId) }.getOrNull()
     }
     fun owner(p: String?) = nameOf(p ?: ResourcePolicy.INDEPENDENT)
     PCard {

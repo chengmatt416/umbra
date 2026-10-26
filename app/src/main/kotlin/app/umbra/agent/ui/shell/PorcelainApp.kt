@@ -187,6 +187,10 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
         }
     }
 
+    fun openFile(path: String, sessionId: String?) {
+        nav.navigate("file?path=${android.net.Uri.encode(path)}&session=${android.net.Uri.encode(sessionId.orEmpty())}")
+    }
+
     var stopAll by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     LaunchedEffect(openSession, openPage, onboarding) {
         if (openSession == null && openPage == app.umbra.agent.AgentService.PAGE_STOP_ALL) {
@@ -206,7 +210,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
             }
             else if (openPage.startsWith("messages/") && app.umbra.agent.agents.Channels.app(openPage.removePrefix("messages/")) != null) nav.navigate(openPage) { launchSingleTop = true }
             else if (openPage.matches(Regex("workspace/[A-Za-z0-9][A-Za-z0-9._-]{0,79}"))) nav.navigate(openPage) { launchSingleTop = true }
-            else if (openPage == "proactive-agents") nav.navigate(openPage) { launchSingleTop = true }
+            else if (openPage == "proactive-agents" || openPage == "capsule-position" || openPage == "laya") nav.navigate(openPage) { launchSingleTop = true }
             else if (openPage == "new-coding" || openPage == "new-agent") {
                 container.ui.homeSheet.value = openPage.removePrefix("new-")
                 nav.navigate(Dest.Home.route) { popUpTo(Dest.Home.route) { inclusive = false }; launchSingleTop = true }
@@ -339,6 +343,8 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                     app.umbra.agent.ui.agents.BriefingScreen(id, onBack = back, onOpenSession = ::openSessionNow,
                         onSettings = { nav.navigate("agent/$id/proactivity") { launchSingleTop = true } }, focus = e.arguments?.getString("focus") ?: "brief")
                 }
+                composable("capsule-position") { app.umbra.agent.ui.settings.CapsulePositionScreen(onBack = back) }
+                composable("laya") { app.umbra.agent.ui.settings.LayaScreen(onBack = back) }
                 composable("proactive-agents") {
                     app.umbra.agent.ui.agents.ProactiveAgentsScreen(onBack = back, onAgentSettings = { nav.navigate("agent/$it/proactivity") }, onBriefing = { nav.navigate("agent/$it/briefing") })
                 }
@@ -348,7 +354,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 composable("messages") { app.umbra.agent.ui.agents.MessageAppsScreen(onBack = back, onGo = { nav.navigate(it) }) }
                 composable("messages/{app}") { e -> app.umbra.agent.ui.agents.MessageAppScreen(e.arguments?.getString("app").orEmpty(), onBack = back, onGo = { nav.navigate(it) }) }
                 composable("notifications") { app.umbra.agent.ui.agents.NotificationReaderScreen(onBack = back) }
-                composable(Dest.Current.route) { CurrentScreen(onBack = back, onOpenSession = ::openSessionNow, onAccounts = { go(Dest.Accounts) }, onCommit = { go(Dest.Commit) }, onComputers = { go(Dest.Nodes) }) }
+                composable(Dest.Current.route) { CurrentScreen(onBack = back, onOpenSession = ::openSessionNow, onAccounts = { go(Dest.Accounts) }, onCommit = { go(Dest.Commit) }, onComputers = { go(Dest.Nodes) }, onOpenFile = ::openFile) }
                 composable(Dest.Accounts.route) { app.umbra.agent.ui.accounts.AccountsScreen(onBack = back, onGo = ::go) }
                 composable(Dest.Screens.route) { app.umbra.agent.ui.displays.ScreensScreen(onBack = back) }
                 composable(Dest.Safety.route) { app.umbra.agent.ui.hubs.SafetyHub(onBack = back, onGo = ::go) }
@@ -369,7 +375,20 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 composable(Dest.Emergency.route) { Page(Dest.Emergency, back) { app.umbra.agent.ui.emergency.EmergencyScreen() } }
                 composable(Dest.Terminals.route) { Page(Dest.Terminals, back) { app.umbra.agent.ui.terminal.TerminalsScreen() } }
                 composable(Dest.Workspaces.route) { WorkspacesScreen(onBack = back, onOpen = { nav.navigate("workspace/$it") }) }
-                composable("workspace/{id}") { e -> WorkspaceBrowserScreen(e.arguments?.getString("id").orEmpty(), onBack = back) }
+                composable("file?path={path}&session={session}", arguments = listOf(
+                    androidx.navigation.navArgument("path") { type = androidx.navigation.NavType.StringType },
+                    androidx.navigation.navArgument("session") { type = androidx.navigation.NavType.StringType; defaultValue = "" },
+                )) { e ->
+                    val sessionId = e.arguments?.getString("session")?.takeIf { it.isNotBlank() }
+                    app.umbra.agent.ui.files.FileViewerScreen(e.arguments?.getString("path").orEmpty(), sessionId, onBack = back,
+                        onAsk = { file, selection, instruction ->
+                            val text = app.umbra.agent.ui.files.aboutFileMessage(file, selection, instruction)
+                            val images = selection.image?.let { bytes -> listOf(app.umbra.runtime.omp.ContentBlock.Image(android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP), "image/png")) }.orEmpty()
+                            if (sessionId != null) container.supervisor.send(sessionId, text, images, whileRunning = app.umbra.runtime.omp.StreamingBehavior.FOLLOW_UP)
+                            else container.agents.talk(container.agents.ensureDefault().id, text, images)
+                        })
+                }
+                composable("workspace/{id}") { e -> WorkspaceBrowserScreen(e.arguments?.getString("id").orEmpty(), onBack = back, onOpenFile = ::openFile) }
                 composable(Dest.Linux.route) { SetupScreen(onBack = back, onModels = { go(Dest.Accounts) }) }
                 composable(Dest.Models.route) { ModelsScreen(onBack = back, onSetup = { go(Dest.Linux) }) }
                 composable(Dest.Displays.route) { DisplaysScreen(onBack = back) }

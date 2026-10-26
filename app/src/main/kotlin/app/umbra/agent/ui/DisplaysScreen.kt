@@ -52,7 +52,6 @@ import app.umbra.agent.container
 import app.umbra.core.model.action.Environment
 import app.umbra.core.model.observation.DisplayInfo
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -67,7 +66,7 @@ fun DisplaysScreen(onBack: () -> Unit) {
     LaunchedEffect(tick) {
         displays = try { container.displays.list() } catch (e: Exception) { error = e.message; emptyList() }
     }
-    LaunchedEffect(Unit) { while (true) { delay(3_000); tick++ } }
+    PollWhileStarted(Unit, periodMs = 3_000) { tick++ }
     PorcelainPage(stringResource(R.string.dest_displays), onBack) {
         if (displays.isEmpty() && error == null) {
             PEmpty(stringResource(R.string.disp_empty_title), stringResource(R.string.disp_empty_body), icon = PIcons.monitor)

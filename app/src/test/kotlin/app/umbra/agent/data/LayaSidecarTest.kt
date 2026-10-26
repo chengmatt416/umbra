@@ -1,202 +1,260 @@
 package app.umbra.agent.data
 
+import app.umbra.agent.data.laya.LayaExit
+import app.umbra.agent.data.laya.LayaNative
 import app.umbra.core.decision.DecisionEngine
 import app.umbra.core.decision.DecisionRequest
 import app.umbra.core.decision.DecisionResponse
-import app.umbra.platform.api.ShellResult
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 
 class LayaSidecarTest {
-    private class Host : LayaSidecar.Host, DecisionEngine {
+    private class Host : LayaSidecar.Host {
         override var wanted = true
-        override var ready = true
-        var installed = true
-        var available = false
-        var failStart = false
-        var failStop = false
-        var starts = 0
-        var kills = 0
-        var installs = 0
-        var failInstall = false
-        override var installFailedAt: Long? = null
-        var clock: () -> Long = { 0L }
-        override fun wallNowMs() = clock()
-        var installCommand = ""
-        var exit = CompletableDeferred<Unit>()
-        override val name = "local-test-laya"
-        override suspend fun ensureReady() = ready
-        override suspend fun isAvailable() = available
-        override suspend fun decide(request: DecisionRequest) = DecisionResponse(emptyMap(), name, 0)
-        override val apiKey = "fixture-key"
-        var startSecrets: Map<String, String>? = null
-        override suspend fun exec(argv: List<String>, timeoutMs: Long, maxOutputBytes: Int, secrets: Map<String, String>): ShellResult {
-            val command = argv.last()
-            require("fixture-key" !in command) { "the key must never be part of a command line" }
-            return when {
-                command.startsWith("test -x") -> ShellResult(if (installed) 0 else 1, "")
-                "pip install" in command -> {
-                    installs++; installCommand = command
-                    if (failInstall) ShellResult(1, "ERROR: No space left on device") else { installed = true; ShellResult(0, "") }
-                }
-                command.startsWith("pkill") -> {
-                    kills++
-                    if (failStop) return ShellResult(2, "Guest temporarily unavailable")
-                    available = false
-                    ShellResult(0, "")
-                }
-                "LAYA_PRELOAD=1" in command -> {
-                    starts++
-                    startSecrets = secrets
-                    if (failStart) ShellResult(1, "") else {
-                        available = true
-                        try { exit.await() } finally { available = false }
-                        ShellResult(1, "")
-                    }
-                }
-                else -> ShellResult(0, "startup failed")
+        override var failedAt: Long? = null
+        override var failures = 0
+        var clock = 0L
+        override fun wallNowMs() = clock
+        var unmetered = true
+        override fun unmetered() = unmetered
+        var downloaded = true
+        override fun downloaded() = downloaded
+        override fun bytesToDownload() = if (downloaded) 0L else 850L shl 20
+        override val progress = MutableStateFlow<LayaNative.Progress?>(null)
+        var fail: String? = null
+        var backend = "npu"
+        val downloads = mutableListOf<Boolean>()
+        var loads = 0
+        var closes = 0
+        var cleared = false
+        var gate: CompletableDeferred<Unit>? = null
+        /** The loaded engine's process: completing it is the process dying. */
+        var process = CompletableDeferred<LayaExit>()
+        val deaths = mutableListOf<Pair<String, LayaExit>>()
+        override fun died(opened: LayaSidecar.Opened, exit: LayaExit) { deaths += opened.backend to exit }
+        override suspend fun load(download: Boolean): LayaSidecar.Opened {
+            loads++
+            downloads += download
+            gate?.await()
+            fail?.let { throw IOException(it) }
+            if (!downloaded && !download) throw LayaNative.NeedsDownload(1)
+            downloaded = true
+            val engine = object : DecisionEngine {
+                override val name = "laya"
+                override suspend fun isAvailable() = true
+                override suspend fun decide(request: DecisionRequest) = DecisionResponse(emptyMap(), "laya-$backend", 1)
             }
+            process = CompletableDeferred()
+            return LayaSidecar.Opened(engine, backend, 12, if (backend == "cpu") listOf("npu: not compiled for this SoC", "gpu: logits off") else emptyList(), process) { closes++ }
         }
+        override fun clear() { cleared = true; downloaded = false }
     }
 
     @Test
-    fun preloadsOnceAndKeepsTheSameProcessBetweenIdleChecks() = runTest {
-        val host = Host().apply { installed = false }
-        val laya = LayaSidecar(host, backgroundScope, host) { testScheduler.currentTime }
+    fun maintenanceLoadsOnceAndKeepsTheEngine() = runTest {
+        val host = Host()
+        val laya = LayaSidecar(host, backgroundScope, StandardTestDispatcher(testScheduler))
         laya.maintain()
-        repeat(10) { advanceTimeBy(30_000); laya.maintain() }
+        laya.maintain()
         assertEquals(LayaSidecar.State.RUNNING, laya.state.value)
+        assertEquals("npu", laya.backend.value)
+        assertEquals(1, host.loads)
         assertTrue(laya.engine.isAvailable())
-        assertEquals(1, host.installs)
-        assertEquals(1, host.starts)
-        assertEquals(1, host.kills, "healthy maintenance must not kill the resident process")
-        assertEquals(mapOf("LAYA_API_KEY" to "fixture-key"), host.startSecrets, "the server gets its bearer key through the secret channel")
+        assertEquals("laya-npu", laya.engine.decide(DecisionRequest("s", mapOf("q" to app.umbra.core.decision.Question.Noul("x")))).engine)
     }
 
     @Test
-    fun anExistingHealthyServerIsReusedAndDisabledServiceStaysStopped() = runTest {
-        val host = Host().apply { available = true }
-        val laya = LayaSidecar(host, backgroundScope, host) { testScheduler.currentTime }
+    fun fallingBackToTheCpuSaysWhyTheBetterAcceleratorsWereSkipped() = runTest {
+        val host = Host().apply { backend = "cpu" }
+        val laya = LayaSidecar(host, backgroundScope, StandardTestDispatcher(testScheduler))
         laya.maintain()
-        assertEquals(0, host.starts)
-        host.wanted = false
-        laya.maintain()
-        assertEquals(LayaSidecar.State.STOPPED, laya.state.value)
-        repeat(3) { advanceTimeBy(30_000); laya.maintain() }
-        assertEquals(0, host.starts)
-        assertFalse(laya.engine.isAvailable())
-        assertEquals(1, host.kills)
+        assertEquals("cpu", laya.backend.value)
+        assertTrue(laya.message!!.contains("npu:") && laya.message!!.contains("gpu:"))
     }
 
     @Test
-    fun aFailedInstallIsNotDownloadedAgainOnEveryTickAndLeavesNoPipTemp() = runTest {
-        val host = Host().apply { installed = false; failInstall = true }
-        host.clock = { testScheduler.currentTime }
-        val laya = LayaSidecar(host, backgroundScope, host) { testScheduler.currentTime }
+    fun unaskedDownloadsWaitForAnUnmeteredNetworkButATapDownloadsNow() = runTest {
+        val host = Host().apply { downloaded = false; unmetered = false }
+        val laya = LayaSidecar(host, backgroundScope, StandardTestDispatcher(testScheduler))
         laya.maintain()
-        assertEquals(LayaSidecar.State.FAILED, laya.state.value)
-        assertEquals(1, host.installs)
-        // pip works in a private temp folder removed afterwards, and old pip leftovers in /tmp are cleared first.
-        assertTrue("TMPDIR=" in host.installCommand && "pip-unpack-*" in host.installCommand && host.installCommand.trimEnd().endsWith("exit \$rc"))
-        assertTrue("download.pytorch.org/whl/cpu torch" in host.installCommand, "CPU-only PyTorch, not PyPI's CUDA build")
-        // The failure time survives a restart: a new sidecar on the same host does not download again.
-        val restarted = LayaSidecar(host, backgroundScope, host) { testScheduler.currentTime }
-        restarted.maintain()
-        assertEquals(1, host.installs)
-        repeat(12) { advanceTimeBy(5 * 60_000); laya.maintain() }
-        assertEquals(1, host.installs, "an hour of maintenance does not download the wheels again")
-        advanceTimeBy(24 * 60 * 60_000L)
-        laya.maintain()
-        assertEquals(2, host.installs, "it tries again by itself after a day")
-        host.failInstall = false
-        laya.download()                       // the person asks: at once (on the IO dispatcher, so wait in real time)
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            kotlinx.coroutines.withTimeout(5_000) { while (host.installs < 3) kotlinx.coroutines.delay(10) }
-        }
-        assertEquals(3, host.installs)
+        assertEquals(LayaSidecar.State.NOT_INSTALLED, laya.state.value)
+        assertEquals(0, host.loads)
+        assertEquals(850L shl 20, laya.downloadSize())
+        laya.download()
+        runCurrent()
+        assertEquals(LayaSidecar.State.RUNNING, laya.state.value)
+        assertEquals(listOf(true), host.downloads)
     }
 
     @Test
-    fun failedStartsBackOffThenRecoverAndLinuxMayArriveLater() = runTest {
-        val host = Host().apply { ready = false; failStart = true }
-        val laya = LayaSidecar(host, backgroundScope, host) { testScheduler.currentTime }
-        laya.maintain()
-        assertEquals(LayaSidecar.State.NEEDS_LINUX, laya.state.value)
-        assertEquals(0, host.starts)
-        host.ready = true
-        laya.maintain()
-        assertEquals(LayaSidecar.State.FAILED, laya.state.value)
-        repeat(5) { laya.maintain() }
-        assertEquals(1, host.starts)
-        advanceTimeBy(30_000)
-        laya.maintain()
-        assertEquals(2, host.starts)
-        advanceTimeBy(30_000)
-        laya.maintain()
-        assertEquals(2, host.starts, "second failure backs off for a full minute")
-        host.failStart = false
-        advanceTimeBy(30_000)
+    fun withFilesHereButAMeteredNetworkItLoadsWithoutDownloadingMore() = runTest {
+        val host = Host().apply { unmetered = false }
+        val laya = LayaSidecar(host, backgroundScope, StandardTestDispatcher(testScheduler))
         laya.maintain()
         assertEquals(LayaSidecar.State.RUNNING, laya.state.value)
-        assertEquals(3, host.starts)
+        assertEquals(listOf(false), host.downloads)
     }
 
     @Test
-    fun processExitIsRecoveredWithoutAnActiveTask() = runTest {
-        val host = Host()
-        val laya = LayaSidecar(host, backgroundScope, host) { testScheduler.currentTime }
+    fun aFailureRetriesByItselfAtMostHourlyAndAtOnceWhenAsked() = runTest {
+        val host = Host().apply { fail = "No space left on device" }
+        val laya = LayaSidecar(host, backgroundScope, StandardTestDispatcher(testScheduler))
         laya.maintain()
-        host.exit.complete(Unit)
-        runCurrent()
         assertEquals(LayaSidecar.State.FAILED, laya.state.value)
-        assertFalse(laya.engine.isAvailable())
-        host.exit = CompletableDeferred()
+        assertEquals("No space left on device", laya.message)
+        host.clock += 30 * 60_000L
         laya.maintain()
-        assertEquals(2, host.starts)
+        assertEquals(1, host.loads, "no automatic retry within the hour")
+        host.fail = null
+        host.clock += 31 * 60_000L
+        laya.maintain()
+        assertEquals(2, host.loads)
+        assertEquals(LayaSidecar.State.RUNNING, laya.state.value)
+        assertNull(host.failedAt)
+        // An explicit start after a failure does not wait for the hour.
+        host.fail = "boom"
+        laya.stop(); runCurrent()
+        laya.start(); runCurrent()
+        assertEquals(LayaSidecar.State.FAILED, laya.state.value)
+        host.fail = null
+        laya.start(); runCurrent()
         assertEquals(LayaSidecar.State.RUNNING, laya.state.value)
     }
 
     @Test
-    fun aFailedStopKeepsMaintenanceAliveAndRetriesWithoutRestarting() = runTest {
-        val host = Host().apply { available = true }
-        val laya = LayaSidecar(host, backgroundScope, host) { testScheduler.currentTime }
+    fun stoppingReleasesTheEngineAndRemovingDeletesTheFiles() = runTest {
+        val host = Host()
+        val laya = LayaSidecar(host, backgroundScope, StandardTestDispatcher(testScheduler))
         laya.maintain()
-        host.wanted = false
-        host.failStop = true
-        laya.maintain()
-        assertEquals(LayaSidecar.State.FAILED, laya.state.value)
-        assertFalse(laya.engine.isAvailable())
-        host.failStop = false
-        laya.maintain()
+        laya.stop()
+        runCurrent()
         assertEquals(LayaSidecar.State.STOPPED, laya.state.value)
-        assertEquals(0, host.starts)
-        assertEquals(2, host.kills)
+        assertEquals(1, host.closes)
+        assertFalse(laya.engine.isAvailable())
+        assertNull(laya.backend.value)
+        laya.maintain()
+        assertEquals(1, host.loads, "not wanted: maintenance leaves it stopped")
+        laya.remove()
+        runCurrent()
+        assertTrue(host.cleared)
+        assertEquals(LayaSidecar.State.NOT_INSTALLED, laya.state.value)
     }
 
     @Test
-    fun concurrentMaintenanceDoesNotSpawnTwiceAndCancellationReleasesTheLock() = runTest {
-        val host = Host()
-        var probeBlocked = true
-        val endpoint = object : DecisionEngine by host {
-            override suspend fun isAvailable(): Boolean = if (probeBlocked) awaitCancellation() else host.isAvailable()
-        }
-        val laya = LayaSidecar(host, backgroundScope, endpoint) { testScheduler.currentTime }
-        val pending = async { laya.maintain() }
+    fun turningItOffWhileLoadingDoesNotLeaveAnEngineBehind() = runTest {
+        val host = Host().apply { gate = CompletableDeferred() }
+        val laya = LayaSidecar(host, backgroundScope, StandardTestDispatcher(testScheduler))
+        val loading = async { laya.maintain() }
         runCurrent()
+        assertEquals(LayaSidecar.State.STARTING, laya.state.value)
+        host.wanted = false
+        host.gate!!.complete(Unit)
+        loading.await()
+        assertEquals(1, host.closes)
+        assertFalse(laya.engine.isAvailable())
+        assertEquals(LayaSidecar.State.STOPPED, laya.state.value)
+    }
+
+    @Test
+    fun concurrentMaintenanceLoadsOnce() = runTest {
+        val host = Host().apply { gate = CompletableDeferred() }
+        val laya = LayaSidecar(host, backgroundScope, StandardTestDispatcher(testScheduler))
+        val first = async { laya.maintain() }
+        runCurrent()
+        laya.maintain() // returns at once: the first one holds the lock
+        host.gate!!.complete(Unit)
+        first.await()
+        assertEquals(1, host.loads)
+    }
+
+    @Test
+    fun aCrashInLayasProcessFallsBackAtOnceAndStartsOnTheNextProcessor() = runTest {
+        val host = Host()
+        val laya = LayaSidecar(host, backgroundScope, StandardTestDispatcher(testScheduler))
         laya.maintain()
-        assertEquals(0, host.starts)
-        pending.cancel()
-        pending.join()
-        probeBlocked = false
+        runCurrent()
+        assertEquals(LayaSidecar.State.RUNNING, laya.state.value)
+        assertTrue(laya.engine.target != null)
+
+        host.process.complete(LayaExit(crashed = true, lowMemory = false, text = "native crash"))
+        runCurrent()
+        // The router stops asking the dead engine at once; the app is still here.
+        assertNull(laya.engine.target)
+        assertNull(laya.backend.value)
+        assertEquals(LayaSidecar.State.FAILED, laya.state.value)
+        assertEquals(listOf("npu"), host.deaths.map { it.first })
+        assertNull(host.failedAt)
+
+        // A crash does not wait for the hourly retry: the next look loads again (the host refused the NPU).
+        host.backend = "gpu"
         laya.maintain()
-        assertEquals(1, host.starts)
+        runCurrent()
+        assertEquals(2, host.loads)
+        assertEquals("gpu", laya.backend.value)
+        assertEquals(LayaSidecar.State.RUNNING, laya.state.value)
+    }
+
+    @Test
+    fun androidEndingLayaForMemoryWaitsForTheHourlyRetry() = runTest {
+        val host = Host()
+        val laya = LayaSidecar(host, backgroundScope, StandardTestDispatcher(testScheduler))
+        laya.maintain()
+        runCurrent()
+        host.process.complete(LayaExit(crashed = false, lowMemory = true, text = "Android ended it to free memory"))
+        runCurrent()
+        assertEquals(LayaSidecar.State.FAILED, laya.state.value)
+        assertEquals(0L, host.failedAt)
+        host.clock = 30 * 60_000L
+        laya.maintain()
+        runCurrent()
+        assertEquals(1, host.loads)
+        host.clock = 61 * 60_000L
+        laya.maintain()
+        runCurrent()
+        assertEquals(2, host.loads)
+        assertEquals(LayaSidecar.State.RUNNING, laya.state.value)
+    }
+
+    @Test
+    fun anErrorFromANativeLibraryFailsLayaInsteadOfTheApp() = runTest {
+        val host = object : LayaSidecar.Host by Host() {
+            override suspend fun load(download: Boolean): LayaSidecar.Opened = throw UnsatisfiedLinkError("dlopen failed: libLiteRt.so")
+        }
+        val laya = LayaSidecar(host, backgroundScope, StandardTestDispatcher(testScheduler))
+        laya.start()
+        runCurrent()
+        assertEquals(LayaSidecar.State.FAILED, laya.state.value)
+        assertTrue(laya.message.orEmpty().contains("libLiteRt"))
+    }
+
+    @Test
+    fun repeatedFailuresWaitLongerAndLongerUntilAManualStart() = runTest {
+        val host = Host().apply { fail = "gpu: logits off" }
+        val laya = LayaSidecar(host, backgroundScope, StandardTestDispatcher(testScheduler))
+        laya.maintain(); runCurrent()
+        assertEquals(1, host.loads)
+        // Second try after an hour, the third only two hours after that.
+        host.clock = 61 * 60_000L; laya.maintain(); runCurrent()
+        assertEquals(2, host.loads)
+        host.clock += 61 * 60_000L; laya.maintain(); runCurrent()
+        assertEquals(2, host.loads)
+        host.clock += 60 * 60_000L; laya.maintain(); runCurrent()
+        assertEquals(3, host.loads)
+        // Tapping Start tries at once and starts the count again.
+        host.fail = null
+        laya.start(); runCurrent()
+        assertEquals(4, host.loads)
+        assertEquals(0, host.failures)
+        assertEquals(LayaSidecar.State.RUNNING, laya.state.value)
     }
 }

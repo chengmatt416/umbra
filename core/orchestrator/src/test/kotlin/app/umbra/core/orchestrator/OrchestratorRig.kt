@@ -58,6 +58,8 @@ class OrchestratorRig(
     usage: UsageBudgets? = null,
     modelCost: app.umbra.runtime.omp.OmpModelCost? = null,
     backupVision: Boolean = false,
+    /** As the app wires it for agents' conversations: messages to them may be screened (true = taken elsewhere). */
+    agentDelivery: suspend (Session, String) -> Boolean = { _, _ -> false },
     mainImages: Boolean = false,
     sessionPrompt: suspend (Session) -> String? = { null },
     validateModelPayload: (kotlinx.serialization.json.JsonElement) -> Unit = { app.umbra.core.safety.ModelPayloadGuard().requireSafe(it) },
@@ -158,7 +160,7 @@ class OrchestratorRig(
     val supervisor: AgentSupervisor = AgentSupervisor(deps, scope, governor).also { it.start() }
 
     /** Messages between sessions and the subagent tools, as the app wires them. */
-    val bus: SessionBus = SessionBus(supervisor, store, scope).also { it.start() }
+    val bus: SessionBus = SessionBus(supervisor, store, scope, agentDelivery = agentDelivery).also { it.start() }
     val sessionTools: SessionTools = SessionTools(bus, supervisor, store)
 
     // ---- helpers for tests ----
