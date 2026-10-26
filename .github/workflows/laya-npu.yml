@@ -1,0 +1,144 @@
+name: Laya NPU builds
+
+# Compiles Laya's fp16 file ahead of time for every NPU LiteRT 2.3.0 can target (runtime-build/laya/convert.py aot),
+# one SoC per job: LiteRT's vendor compiler plugins run only on Linux x86_64, and an 810 MB model needs more memory
+# than a laptop has. Each compiled file is published as an asset of the pre-release $TAG (never "Latest"; the APK
+# mirror only looks at vX.Y.Z tags), with a <key>.json next to it holding its size and SHA-256 for the app's manifest
+# (convert.py manifest --npu-url). A SoC whose compile fails publishes only its report; phones with it use the GPU.
+
+on:
+  push:
+    branches: [laya-npu]
+    paths: ['.github/workflows/laya-npu.yml', 'runtime-build/laya/convert.py']
+  workflow_dispatch:
+    inputs:
+      socs:
+        description: 'Optional comma-separated SoCs (blank: all of them)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: laya-npu
+  cancel-in-progress: false
+
+env:
+  REVISION: 1a793eb568e6
+  TAG: laya-npu-1a793eb568e6
+  FP16_URL: https://umbra-agent.pages.dev/download/laya/1a793eb568e6/laya-typed-decisions-fp16.tflite
+  FP16_SHA256: 7d612c524011b7935916d2eea9002b703a57c4fad95b783e6558f4cf02f8b1d7
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create the pre-release that holds the files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Laya NPU files ($REVISION)" \
+            --notes "Laya (convaiinnovations/laya-typed-decisions @ $REVISION) compiled ahead of time for each phone NPU by LiteRT 2.3.0. The Umbra app downloads the file for its own chip and checks its size and SHA-256 against the list built into the app. Not an app release."
+
+  compile:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include:
+          - { vendor: qualcomm, soc: SM8350 }
+          - { vendor: qualcomm, soc: SM8450 }
+          - { vendor: qualcomm, soc: SM8475 }
+          - { vendor: qualcomm, soc: SM8550 }
+          - { vendor: qualcomm, soc: SM8650 }
+          - { vendor: qualcomm, soc: SM8750 }
+          - { vendor: qualcomm, soc: SM8845 }
+          - { vendor: qualcomm, soc: SM8850 }
+          - { vendor: mediatek, soc: MT6853 }
+          - { vendor: mediatek, soc: MT6877 }
+          - { vendor: mediatek, soc: MT6878 }
+          - { vendor: mediatek, soc: MT6879 }
+          - { vendor: mediatek, soc: MT6886 }
+          - { vendor: mediatek, soc: MT6893 }
+          - { vendor: mediatek, soc: MT6895 }
+          - { vendor: mediatek, soc: MT6897 }
+          - { vendor: mediatek, soc: MT6983 }
+          - { vendor: mediatek, soc: MT6985 }
+          - { vendor: mediatek, soc: MT6989 }
+          - { vendor: mediatek, soc: MT6991 }
+          - { vendor: mediatek, soc: MT6993 }
+          - { vendor: mediatek, soc: MT8171 }
+          - { vendor: mediatek, soc: MT8188 }
+          - { vendor: mediatek, soc: MT8189 }
+          - { vendor: google_tensor, soc: Tensor_G3 }
+          - { vendor: google_tensor, soc: Tensor_G4 }
+          - { vendor: google_tensor, soc: Tensor_G5 }
+          - { vendor: google_tensor, soc: Tensor_G6 }
+    env:
+      KEY: ${{ matrix.vendor }}-${{ matrix.soc }}
+      WANTED: ${{ inputs.socs }}
+    steps:
+      - name: Skip SoCs that were not asked for
+        id: want
+        run: |
+          if [ -z "$WANTED" ] || echo ",$WANTED," | grep -q ",${{ matrix.soc }},"; then echo "run=1" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.want.outputs.run
+      - name: Room to work (disk and swap)
+        if: steps.want.outputs.run
+        run: |
+          # The compilers hold the whole graph and its weights several times over: the runner's 16 GB is not enough.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile /swapfile
+          sudo fallocate -l 32G /mnt/swapfile && sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile && sudo swapon /mnt/swapfile
+          sudo mkdir -p /mnt/laya && sudo chown "$USER" /mnt/laya
+          free -g; df -h / /mnt
+      - uses: actions/setup-python@v5
+        if: steps.want.outputs.run
+        with:
+          python-version: '3.12'
+      - name: LiteRT 2.3.0 and the vendor's compiler
+        if: steps.want.outputs.run
+        run: |
+          python -m pip install --upgrade pip
+          # The SDK packages download the vendor's compiler while they install (QAIRT, NeuroPilot, Tensor ML SDK).
+          pip install "ai-edge-litert==2.3.0" "ai-edge-litert-sdk-${{ matrix.vendor == 'google_tensor' && 'google-tensor' || matrix.vendor }}==2.3.0" numpy
+      - name: Laya's fp16 file
+        if: steps.want.outputs.run
+        run: |
+          curl -fL --retry 5 -o /mnt/laya/laya-typed-decisions-fp16.tflite "$FP16_URL"
+          echo "$FP16_SHA256  /mnt/laya/laya-typed-decisions-fp16.tflite" | sha256sum -c -
+      - name: Compile for ${{ matrix.soc }}
+        if: steps.want.outputs.run
+        run: |
+          ( while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/{print "mem " $3 " MB"} /Swap/{print "swap " $3 " MB"}' | tr '\n' ' ')"; done ) &
+          python runtime-build/laya/convert.py aot --out /mnt/laya --socs "${{ matrix.soc }}"
+          mv /mnt/laya/npu/aot-report.json "/mnt/laya/npu/$KEY.report.json"
+          cat "/mnt/laya/npu/$KEY.report.json"
+      - name: Publish
+        if: steps.want.outputs.run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd /mnt/laya/npu
+          files="$KEY.report.json"
+          if [ -f "$KEY.tflite" ]; then
+            files="$KEY.tflite $KEY.json $files"
+          fi
+          gh release upload "$TAG" $files --repo "$GITHUB_REPOSITORY" --clobber
+          ls -l
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.want.outputs.run
+        with:
+          name: report-${{ env.KEY }}
+          path: |
+            /mnt/laya/npu/*.json
+          retention-days: 14
+          if-no-files-found: ignore

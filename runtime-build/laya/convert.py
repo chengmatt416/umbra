@@ -6,9 +6,10 @@ Steps (each writes into --out, default build/laya-native):
   quantize  fp16 weights (GPU, CPU and the NPU compiler's input); int8 only for comparison
   verify    run the LiteRT files on this machine's CPU against the PyTorch model on golden requests
   golden    tokenizer + sequence + decoding fixtures for the Kotlin port (core/decision tests)
-  aot       ahead-of-time NPU compilation per SoC (Linux x86_64 only: the vendor compiler plugins ship only there)
+  aot       ahead-of-time NPU compilation per SoC (Linux x86_64 only: the vendor compiler plugins ship only there;
+            .github/workflows/laya-npu.yml runs it, one SoC per job, and publishes the files as a GitHub release)
   manifest  app assets: laya-native.json (every file with bytes, SHA-256, backend and SoC), config, tokenizer
-  upload    every manifest file to R2 under laya/<revision>/
+  upload    every manifest file hosted on R2 to laya/<revision>/ (NPU files with their own URL stay where they are)
   remote    download every published file and check size, SHA-256 and range support
 
 The graph (see `exportable`) per bucket length L, K = MAX_OPTIONS:
@@ -28,10 +29,13 @@ REVISION = "1a793eb568e6718f15941d08f85432581df534e3"  # laya.revisions.PINNED_R
 BUCKETS = (256, 1024)  # sequence lengths; a request uses the smallest that fits (max_len is 1024)
 MAX_OPTIONS = 32       # laya.structured.MAX_OPTIONS; more options fall back to another engine
 NPU_TARGETS = {
-    # fp16 HTP needs Hexagon v73 or later (Snapdragon 8 Gen 2 onwards)
-    "qualcomm": ["SM8550", "SM8650", "SM8750", "SM8845", "SM8850"],
-    "mediatek": ["MT6985", "MT6989", "MT6991", "MT6993"],
-    "google_tensor": ["Tensor_G3", "Tensor_G4", "Tensor_G5"],
+    # Every phone and tablet SoC LiteRT 2.3.0's compilers name (ai_edge_litert/aot/vendors/*/target.py; Qualcomm's
+    # automotive SA8255/SA8295 are left out). Laya's graph is fp16: a SoC whose NPU cannot take it (Hexagon before v73
+    # has no fp16, say) fails its compile, aot-report.json says why, and that SoC uses its GPU instead.
+    "qualcomm": ["SM8350", "SM8450", "SM8475", "SM8550", "SM8650", "SM8750", "SM8845", "SM8850"],
+    "mediatek": ["MT6853", "MT6877", "MT6878", "MT6879", "MT6886", "MT6893", "MT6895", "MT6897", "MT6983", "MT6985",
+                 "MT6989", "MT6991", "MT6993", "MT8171", "MT8188", "MT8189"],
+    "google_tensor": ["Tensor_G3", "Tensor_G4", "Tensor_G5", "Tensor_G6"],
 }
 
 
@@ -416,9 +420,13 @@ def cmd_aot(args):
                     produced = sorted(glob.glob(os.path.join(tmp, "compiled*.tflite")))
                     if len(produced) != 1:
                         raise RuntimeError("expected one compiled model, got %s" % produced)
-                    shutil.move(produced[0], os.path.join(out, key + ".tflite"))
-                    report[key] = {"seconds": round(time.time() - started), "bytes": os.path.getsize(os.path.join(out, key + ".tflite")),
+                    target = os.path.join(out, key + ".tflite")
+                    shutil.move(produced[0], target)
+                    report[key] = {"seconds": round(time.time() - started), "bytes": os.path.getsize(target),
                                    "report": result.compilation_report()[:2000]}
+                    # What the manifest needs, for a file that is published from this machine and never copied back.
+                    with open(os.path.join(out, key + ".json"), "w") as f:
+                        json.dump({"bytes": os.path.getsize(target), "sha256": sha256(target)}, f)
                 except Exception as e:  # noqa: BLE001 -- one SoC failing must not stop the others
                     report[key] = {"error": str(e)[:1000]}
             print(key, {k: v for k, v in report[key].items() if k != "report"}, flush=True)
@@ -444,10 +452,23 @@ def cmd_manifest(args):
     for name, backend in (("laya-typed-decisions-fp16.tflite", "gpu"), (CPU_FILE, "cpu")):
         path = os.path.join(args.out, name)
         files.append({"name": name, "backend": backend, "bytes": os.path.getsize(path), "sha256": sha256(path)})
-    for path in sorted(glob.glob(os.path.join(args.out, "npu", "*.tflite"))):
-        vendor, soc = os.path.basename(path)[:-len(".tflite")].split("-", 1)
-        files.append({"name": "npu/" + os.path.basename(path), "backend": "npu", "vendor": vendor, "soc": soc,
-                      "bytes": os.path.getsize(path), "sha256": sha256(path)})
+    # NPU files: the .tflite itself, or the .json the aot step writes next to it (bytes and SHA-256) when the file was
+    # compiled and published elsewhere (--npu-url: where they are, as <vendor>-<soc>.tflite).
+    npu = os.path.join(args.out, "npu")
+    keys = sorted({os.path.basename(p).rsplit(".", 1)[0] for p in glob.glob(os.path.join(npu, "*.tflite")) + glob.glob(os.path.join(npu, "*-*.json"))})
+    for key in keys:
+        vendor, soc = key.split("-", 1)
+        path = os.path.join(npu, key + ".tflite")
+        if os.path.exists(path):
+            size, digest = os.path.getsize(path), sha256(path)
+        else:
+            with open(os.path.join(npu, key + ".json")) as f:
+                meta = json.load(f)
+            size, digest = meta["bytes"], meta["sha256"]
+        entry = {"name": "npu/%s.tflite" % key, "backend": "npu", "vendor": vendor, "soc": soc, "bytes": size, "sha256": digest}
+        if args.npu_url:
+            entry["url"] = args.npu_url.rstrip("/") + "/%s.tflite" % key
+        files.append(entry)
     with open(os.path.join("core", "decision", "src", "test", "resources", "laya", "golden.json")) as f:
         golden = json.load(f)
     # A short row with a clear margin between its options, so the check tells "computes correctly" from "noise".
@@ -472,7 +493,7 @@ def cmd_upload(args):
     with open(os.path.join(ASSETS, "laya-native.json")) as f:
         manifest = json.load(f)
     revision = manifest["revision"][:12]
-    for entry in {e["name"]: e for e in manifest["files"]}.values():  # one file can serve two backends
+    for entry in {e["name"]: e for e in manifest["files"] if "url" not in e}.values():  # one file can serve two backends
         local = os.path.abspath(os.path.join(args.out, entry["name"]))
         assert os.path.getsize(local) == entry["bytes"] and sha256(local) == entry["sha256"], entry["name"]
         subprocess.run(["node", "tools/upload-release.mjs", local, "laya/%s/%s" % (revision, entry["name"]), "--asset"],
@@ -485,7 +506,7 @@ def cmd_remote(args):
     with open(os.path.join(ASSETS, "laya-native.json")) as f:
         manifest = json.load(f)
     for entry in {e["name"]: e for e in manifest["files"]}.values():
-        url = manifest["base"] + entry["name"]
+        url = entry.get("url") or manifest["base"] + entry["name"]
         req = urllib.request.Request(url, headers={"Range": "bytes=0-15", "User-Agent": "umbra-laya-check"})
         with urllib.request.urlopen(req, timeout=60) as r:
             assert r.status == 206 and r.headers["Content-Range"] == "bytes 0-15/%d" % entry["bytes"], (url, r.status)
@@ -507,6 +528,7 @@ def main():
     p.add_argument("--variants", default="fp32,fp16,int8")
     p.add_argument("--accelerators", default="cpu,gpu,gpu32")
     p.add_argument("--socs", default="", help="aot: comma-separated SoCs or vendors (default: all of NPU_TARGETS)")
+    p.add_argument("--npu-url", default="", help="manifest: where the NPU files are published (default: R2 next to the others)")
     args = p.parse_args()
     os.makedirs(args.out, exist_ok=True)
     globals()["cmd_" + args.step](args)
