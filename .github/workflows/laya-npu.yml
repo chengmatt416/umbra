@@ -1,0 +1,330 @@
+name: Laya NPU builds
+
+# Compiles Laya's fp16 file ahead of time for every NPU LiteRT 2.3.0 can target (runtime-build/laya/convert.py aot),
+# one SoC per job: LiteRT's vendor compiler plugins run only on Linux x86_64, and an 810 MB model needs more memory
+# than a laptop has. Each compiled file is published as an asset of the pre-release $TAG (never "Latest"; the APK
+# mirror only looks at vX.Y.Z tags), with a <key>.json next to it holding its size and SHA-256 for the app's manifest
+# (convert.py manifest --npu-url). A SoC whose compile fails publishes only its report; phones with it use the GPU.
+#
+# Qualcomm compiles the same fp16 file the GPU and CPU run. MediaTek's compiler refuses that graph's 3-D batch matmul,
+# so `npu-source` exports the checkpoint again with the `npu4d` layout (same maths), checks it against PyTorch on the
+# golden requests, and hands it to the MediaTek jobs. It holds only the 1024-token signature: MediaTek's compiler has
+# no weight sharing, so two signatures stored the weights twice (1.7 GB); the app pads shorter rows (LayaFile.buckets). Google Tensor is not built: its compiler is not downloadable.
+
+# Hexagon v68 (Snapdragon 888, 780G, 778G) has no GELU and cannot build the fp16 GATHER of the token lookup, so
+# `embeds-source` exports the "embeds" layout (embeddings in, GELU in tanh form), checks it against the exact PyTorch
+# model, and publishes the token table (laya-embeddings-fp16.bin) the app looks the rows up in.
+
+# By hand (or a push to the laya-npu branch, which builds $PUSH_SOCS: workflow_dispatch only works for a workflow on the
+# default branch): an app version pins each published file's size and SHA-256, and compiles are not byte-for-byte
+# reproducible, so a published file is never replaced (Publish refuses); a new conversion gets a new $TAG.
+on:
+  workflow_dispatch:
+    inputs:
+      socs:
+        description: 'Optional comma-separated SoCs (blank: all of them)'
+        required: false
+        type: string
+  push:
+    branches: [laya-npu]
+    paths: [.github/workflows/laya-npu.yml, runtime-build/laya/convert.py]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: laya-npu
+  cancel-in-progress: false
+
+env:
+  REVISION: 1a793eb568e6
+  TAG: laya-npu-1a793eb568e6
+  FP16_URL: https://umbra-agent.pages.dev/download/laya/1a793eb568e6/laya-typed-decisions-fp16.tflite
+  FP16_SHA256: 7d612c524011b7935916d2eea9002b703a57c4fad95b783e6558f4cf02f8b1d7
+  # What a push builds: the SoCs added since the last run (everything else is published already).
+  PUSH_SOCS: SM8635,SM8735,SM7675,SM7635,SM7550,SM7750,SM7435,SM7475,SM7450,SM6450,SM6475,SM6650,SM4450,SM4635,SM8350,SM7350,SM7325,SM7315
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create the pre-release that holds the files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Laya NPU files ($REVISION)" \
+            --notes "Laya (convaiinnovations/laya-typed-decisions @ $REVISION) compiled ahead of time for each phone NPU by LiteRT 2.3.0. The Umbra app downloads the file for its own chip and checks its size and SHA-256 against the list built into the app. Not an app release."
+
+  npu-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Only when a MediaTek SoC is wanted
+        id: want
+        env:
+          WANTED: ${{ inputs.socs }}
+        run: |
+          if [ -z "$WANTED" ] && [ "$GITHUB_EVENT_NAME" = push ]; then WANTED="$PUSH_SOCS"; fi
+          if [ -z "$WANTED" ] || echo ",$WANTED," | grep -q ",MT"; then echo "run=1" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.want.outputs.run
+      - name: Room to work (disk and swap)
+        if: steps.want.outputs.run
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile /swapfile
+          sudo fallocate -l 32G /mnt/swapfile && sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile && sudo swapon /mnt/swapfile
+          sudo mkdir -p /mnt/src && sudo chown "$USER" /mnt/src
+      - uses: actions/setup-python@v5
+        if: steps.want.outputs.run
+        with:
+          python-version: '3.12'
+      - name: PyTorch, LiteRT Torch, the quantizer and Laya
+        if: steps.want.outputs.run
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install litert-torch ai-edge-quantizer "ai-edge-litert==2.3.0" "laya==0.4.15" huggingface_hub numpy
+          pip list 2>/dev/null | grep -i -E "torch|litert|quantizer|laya|transformers"
+      - name: Checkpoint at the pinned revision
+        if: steps.want.outputs.run
+        run: |
+          python -c "from huggingface_hub import snapshot_download as d; d('convaiinnovations/laya-typed-decisions', revision='1a793eb568e6718f15941d08f85432581df534e3', local_dir='/mnt/src/ckpt')"
+      - name: Export (npu4d), fp16, verify against PyTorch
+        if: steps.want.outputs.run
+        run: |
+          ( while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/{print "mem " $3 " MB"} /Swap/{print "swap " $3 " MB"}' | tr '\n' ' ')"; done ) &
+          python runtime-build/laya/convert.py export --checkpoint /mnt/src/ckpt --out /mnt/src/out --layout npu4d --buckets 1024
+          python runtime-build/laya/convert.py quantize --checkpoint /mnt/src/ckpt --out /mnt/src/out --variants fp16 --layout npu4d
+          rm -f /mnt/src/out/laya-typed-decisions-fp32.tflite
+          python runtime-build/laya/convert.py verify --checkpoint /mnt/src/ckpt --out /mnt/src/out --variants fp16 --accelerators cpu
+          python - <<'PY'
+          import json
+          r = json.load(open("/mnt/src/out/verify-report.json"))["fp16/cpu"]
+          print(r)
+          assert r.get("argmax_flips") == 0 and r.get("max_abs_logit_diff", 9) <= 0.6, r
+          PY
+          sha256sum /mnt/src/out/laya-typed-decisions-fp16.tflite
+      - uses: actions/upload-artifact@v4
+        if: steps.want.outputs.run
+        with:
+          name: npu4d-source
+          path: |
+            /mnt/src/out/laya-typed-decisions-fp16.tflite
+            /mnt/src/out/verify-report.json
+          retention-days: 7
+          compression-level: 0
+
+  embeds-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Only when a Hexagon v68 SoC is wanted
+        id: want
+        env:
+          WANTED: ${{ inputs.socs }}
+        run: |
+          if [ -z "$WANTED" ] && [ "$GITHUB_EVENT_NAME" = push ]; then WANTED="$PUSH_SOCS"; fi
+          for soc in SM8350 SM7350 SM7325 SM7315; do
+            if [ -z "$WANTED" ] || echo ",$WANTED," | grep -q ",$soc,"; then echo "run=1" >> "$GITHUB_OUTPUT"; break; fi
+          done
+      - uses: actions/checkout@v4
+        if: steps.want.outputs.run
+      - name: Room to work (disk and swap)
+        if: steps.want.outputs.run
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile /swapfile
+          sudo fallocate -l 32G /mnt/swapfile && sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile && sudo swapon /mnt/swapfile
+          sudo mkdir -p /mnt/src && sudo chown "$USER" /mnt/src
+      - uses: actions/setup-python@v5
+        if: steps.want.outputs.run
+        with:
+          python-version: '3.12'
+      - name: PyTorch, LiteRT Torch, the quantizer and Laya
+        if: steps.want.outputs.run
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install litert-torch ai-edge-quantizer "ai-edge-litert==2.3.0" "laya==0.4.15" huggingface_hub numpy
+      - name: Checkpoint at the pinned revision
+        if: steps.want.outputs.run
+        run: |
+          python -c "from huggingface_hub import snapshot_download as d; d('convaiinnovations/laya-typed-decisions', revision='1a793eb568e6718f15941d08f85432581df534e3', local_dir='/mnt/src/ckpt')"
+      - name: Export (embeds), fp16, verify against PyTorch
+        if: steps.want.outputs.run
+        run: |
+          ( while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/{print "mem " $3 " MB"} /Swap/{print "swap " $3 " MB"}' | tr '\n' ' ')"; done ) &
+          python runtime-build/laya/convert.py export --checkpoint /mnt/src/ckpt --out /mnt/src/out --layout embeds
+          python runtime-build/laya/convert.py quantize --checkpoint /mnt/src/ckpt --out /mnt/src/out --variants fp16 --layout embeds
+          rm -f /mnt/src/out/laya-typed-decisions-fp32.tflite
+          python runtime-build/laya/convert.py verify --checkpoint /mnt/src/ckpt --out /mnt/src/out --variants fp16 --accelerators cpu --layout embeds
+          python - <<'PY'
+          import json
+          r = json.load(open("/mnt/src/out/verify-report.json"))["fp16/cpu"]
+          print(r)
+          assert r.get("argmax_flips") == 0 and r.get("max_abs_logit_diff", 9) <= 0.6, r
+          PY
+          sha256sum /mnt/src/out/laya-typed-decisions-fp16.tflite /mnt/src/out/laya-embeddings-fp16.bin
+          cat /mnt/src/out/laya-embeddings.json
+      - name: Publish the token table
+        if: steps.want.outputs.run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd /mnt/src/out
+          # The table is the checkpoint's own fp16 rows, the same bytes every time: publish it once, and check that a
+          # published one is these bytes.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' | grep -qx laya-embeddings-fp16.bin; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -p laya-embeddings.json -O published.json
+            python -c "import json,sys; a=json.load(open('published.json')); b=json.load(open('laya-embeddings.json')); sys.exit(0 if a['sha256']==b['sha256'] else 'the published table differs')"
+          else
+            gh release upload "$TAG" laya-embeddings-fp16.bin laya-embeddings.json --repo "$GITHUB_REPOSITORY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: steps.want.outputs.run
+        with:
+          name: embeds-source
+          path: |
+            /mnt/src/out/laya-typed-decisions-fp16.tflite
+            /mnt/src/out/laya-embeddings-fp16.bin
+            /mnt/src/out/laya-embeddings.json
+            /mnt/src/out/verify-report.json
+          retention-days: 7
+          compression-level: 0
+
+  compile:
+    needs: [release, npu-source, embeds-source]
+    if: always() && needs.release.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        include:
+          - { vendor: qualcomm, soc: SM8450 }
+          - { vendor: qualcomm, soc: SM8475 }
+          - { vendor: qualcomm, soc: SM8550 }
+          - { vendor: qualcomm, soc: SM8650 }
+          - { vendor: qualcomm, soc: SM8750 }
+          - { vendor: qualcomm, soc: SM8845 }
+          - { vendor: qualcomm, soc: SM8850 }
+          - { vendor: qualcomm, soc: SM8635 }
+          - { vendor: qualcomm, soc: SM8735 }
+          - { vendor: qualcomm, soc: SM7675 }
+          - { vendor: qualcomm, soc: SM7635 }
+          - { vendor: qualcomm, soc: SM7550 }
+          - { vendor: qualcomm, soc: SM7750 }
+          - { vendor: qualcomm, soc: SM7435 }
+          - { vendor: qualcomm, soc: SM7475 }
+          - { vendor: qualcomm, soc: SM7450 }
+          - { vendor: qualcomm, soc: SM6450 }
+          - { vendor: qualcomm, soc: SM6475 }
+          - { vendor: qualcomm, soc: SM6650 }
+          - { vendor: qualcomm, soc: SM4450 }
+          - { vendor: qualcomm, soc: SM4635 }
+          - { vendor: qualcomm, soc: SM8350, layout: embeds }
+          - { vendor: qualcomm, soc: SM7350, layout: embeds }
+          - { vendor: qualcomm, soc: SM7325, layout: embeds }
+          - { vendor: qualcomm, soc: SM7315, layout: embeds }
+          - { vendor: mediatek, soc: MT6877 }
+          - { vendor: mediatek, soc: MT6878 }
+          - { vendor: mediatek, soc: MT6879 }
+          - { vendor: mediatek, soc: MT6897 }
+          - { vendor: mediatek, soc: MT6983 }
+          - { vendor: mediatek, soc: MT6985 }
+          - { vendor: mediatek, soc: MT6989 }
+          - { vendor: mediatek, soc: MT6991 }
+          - { vendor: mediatek, soc: MT6993 }
+          - { vendor: mediatek, soc: MT8171 }
+          - { vendor: mediatek, soc: MT8188 }
+          - { vendor: mediatek, soc: MT8189 }
+    env:
+      KEY: ${{ matrix.vendor }}-${{ matrix.soc }}
+      WANTED: ${{ inputs.socs }}
+      SOURCE_OK: ${{ (matrix.vendor != 'mediatek' || needs.npu-source.result == 'success') && (matrix.layout != 'embeds' || needs.embeds-source.result == 'success') }}
+    steps:
+      - name: Skip SoCs that were not asked for
+        id: want
+        run: |
+          if [ -z "$WANTED" ] && [ "$GITHUB_EVENT_NAME" = push ]; then WANTED="$PUSH_SOCS"; fi
+          if [ -n "$WANTED" ] && ! echo ",$WANTED," | grep -q ",${{ matrix.soc }},"; then exit 0; fi
+          if [ "$SOURCE_OK" != "true" ]; then echo "the source file for ${{ matrix.soc }} was not built"; exit 1; fi
+          echo "run=1" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.want.outputs.run
+      - name: Room to work (disk and swap)
+        if: steps.want.outputs.run
+        run: |
+          # The compilers hold the whole graph and its weights several times over: the runner's 16 GB is not enough.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile /swapfile
+          sudo fallocate -l 32G /mnt/swapfile && sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile && sudo swapon /mnt/swapfile
+          sudo mkdir -p /mnt/laya && sudo chown "$USER" /mnt/laya
+          free -g; df -h / /mnt
+      - uses: actions/setup-python@v5
+        if: steps.want.outputs.run
+        with:
+          python-version: '3.12'
+      - name: LiteRT 2.3.0 and the vendor's compiler
+        if: steps.want.outputs.run
+        run: |
+          python -m pip install --upgrade pip
+          # The SDK packages download the vendor's compiler while they install (QAIRT, NeuroPilot, Tensor ML SDK).
+          # Qualcomm's compiler plugin is linked against LLVM's libc++, which the runner lacks.
+          sudo apt-get update -qq && sudo apt-get install -y -qq libc++1 libc++abi1
+          pip install "ai-edge-litert==2.3.0" "ai-edge-litert-sdk-${{ matrix.vendor == 'google_tensor' && 'google-tensor' || matrix.vendor }}==2.3.0" numpy
+      - name: Laya's npu4d file (MediaTek)
+        if: steps.want.outputs.run && matrix.vendor == 'mediatek'
+        uses: actions/download-artifact@v4
+        with:
+          name: npu4d-source
+          path: /mnt/laya
+      - name: Laya's embeds file (Hexagon v68)
+        if: steps.want.outputs.run && matrix.layout == 'embeds'
+        uses: actions/download-artifact@v4
+        with:
+          name: embeds-source
+          path: /mnt/laya
+      - name: Laya's fp16 file
+        if: steps.want.outputs.run && matrix.vendor != 'mediatek' && matrix.layout != 'embeds'
+        run: |
+          curl -fL --retry 5 -o /mnt/laya/laya-typed-decisions-fp16.tflite "$FP16_URL"
+          echo "$FP16_SHA256  /mnt/laya/laya-typed-decisions-fp16.tflite" | sha256sum -c -
+      - name: Compile for ${{ matrix.soc }}
+        if: steps.want.outputs.run
+        run: |
+          ( while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/{print "mem " $3 " MB"} /Swap/{print "swap " $3 " MB"}' | tr '\n' ' ')"; done ) &
+          python runtime-build/laya/convert.py aot --out /mnt/laya --socs "${{ matrix.soc }}" --layout "${{ matrix.layout || 'default' }}" \
+            --plugin-flags "${{ matrix.vendor == 'qualcomm' && 'qualcomm_enable_weight_sharing=true' || '' }}"
+          mv /mnt/laya/npu/aot-report.json "/mnt/laya/npu/$KEY.report.json"
+          cat "/mnt/laya/npu/$KEY.report.json"
+      - name: Publish
+        if: steps.want.outputs.run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd /mnt/laya/npu
+          files="$KEY.report.json"
+          if [ -f "$KEY.tflite" ]; then
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' | grep -qx "$KEY.tflite"; then
+              echo "$KEY.tflite is already published and app versions pin it: not replacing it"; exit 1
+            fi
+            files="$KEY.tflite $KEY.json $files"
+          fi
+          gh release upload "$TAG" $files --repo "$GITHUB_REPOSITORY" --clobber
+          ls -l
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.want.outputs.run
+        with:
+          name: report-${{ env.KEY }}
+          path: |
+            /mnt/laya/npu/*.json
+          retention-days: 14
+          if-no-files-found: ignore

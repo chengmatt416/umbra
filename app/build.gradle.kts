@@ -21,8 +21,8 @@ android {
     defaultConfig {
         applicationId = "app.umbra.agent"
         // `-Pumbra.versionCode=… -Pumbra.versionName=…` override them, for testing the updater with a later build.
-        versionCode = providers.gradleProperty("umbra.versionCode").orNull?.toInt() ?: 16
-        versionName = providers.gradleProperty("umbra.versionName").orNull ?: "0.6.2"
+        versionCode = providers.gradleProperty("umbra.versionCode").orNull?.toInt() ?: 20
+        versionName = providers.gradleProperty("umbra.versionName").orNull ?: "0.7.0"
         // Every native part of the app is arm64 (proot, the Linux image, LiteRT's NPU runtimes).
         ndk { abiFilters += "arm64-v8a" }
     }

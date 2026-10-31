@@ -14,6 +14,222 @@
    "backend": "cpu",
    "bytes": 848871808,
    "sha256": "7d612c524011b7935916d2eea9002b703a57c4fad95b783e6558f4cf02f8b1d7"
+  },
+  {
+   "name": "npu/mediatek-MT6877.tflite",
+   "backend": "npu",
+   "vendor": "mediatek",
+   "soc": "MT6877",
+   "bytes": 1190323576,
+   "sha256": "6dde2a787e918defd167cb418754734c7ca4c89d2b29ef2f99d74d266297653d",
+   "buckets": [
+    1024
+   ],
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/mediatek-MT6877.tflite"
+  },
+  {
+   "name": "npu/mediatek-MT6878.tflite",
+   "backend": "npu",
+   "vendor": "mediatek",
+   "soc": "MT6878",
+   "bytes": 958321804,
+   "sha256": "641b7e0c80de1b9ed0239fe535e4c86bc1d187c4e169a1c381143ac69f10a675",
+   "buckets": [
+    1024
+   ],
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/mediatek-MT6878.tflite"
+  },
+  {
+   "name": "npu/mediatek-MT6879.tflite",
+   "backend": "npu",
+   "vendor": "mediatek",
+   "soc": "MT6879",
+   "bytes": 1190323576,
+   "sha256": "308f86d09518c8390270c2f2190e7351c320316745d0282415733683a806b1ed",
+   "buckets": [
+    1024
+   ],
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/mediatek-MT6879.tflite"
+  },
+  {
+   "name": "npu/mediatek-MT6897.tflite",
+   "backend": "npu",
+   "vendor": "mediatek",
+   "soc": "MT6897",
+   "bytes": 957908472,
+   "sha256": "3dff61264e5349cee8cf4cba3781b3055b20f96a11905616374eac5723a8fdb9",
+   "buckets": [
+    1024
+   ],
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/mediatek-MT6897.tflite"
+  },
+  {
+   "name": "npu/mediatek-MT6983.tflite",
+   "backend": "npu",
+   "vendor": "mediatek",
+   "soc": "MT6983",
+   "bytes": 958321804,
+   "sha256": "f1ce632f882a402e1211ef4aab2b666f352d8aaeb0f4fd0b57675e35442b8fec",
+   "buckets": [
+    1024
+   ],
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/mediatek-MT6983.tflite"
+  },
+  {
+   "name": "npu/mediatek-MT6985.tflite",
+   "backend": "npu",
+   "vendor": "mediatek",
+   "soc": "MT6985",
+   "bytes": 958321804,
+   "sha256": "5bc30929abfc7013425a2b4a68973d15c76baf54ec8cf52298bfdfffa54255fb",
+   "buckets": [
+    1024
+   ],
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/mediatek-MT6985.tflite"
+  },
+  {
+   "name": "npu/mediatek-MT6989.tflite",
+   "backend": "npu",
+   "vendor": "mediatek",
+   "soc": "MT6989",
+   "bytes": 957790336,
+   "sha256": "4ec9f531b6961183fb187f4ad6959fd29a039b4519ea67ff5c7899b8fb1d0a73",
+   "buckets": [
+    1024
+   ],
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/mediatek-MT6989.tflite"
+  },
+  {
+   "name": "npu/mediatek-MT6991.tflite",
+   "backend": "npu",
+   "vendor": "mediatek",
+   "soc": "MT6991",
+   "bytes": 957644776,
+   "sha256": "adf952bf63bc9db72249055ba8c72e4cf940edeed4e3dc218e49949903f694ea",
+   "buckets": [
+    1024
+   ],
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/mediatek-MT6991.tflite"
+  },
+  {
+   "name": "npu/mediatek-MT6993.tflite",
+   "backend": "npu",
+   "vendor": "mediatek",
+   "soc": "MT6993",
+   "bytes": 957943200,
+   "sha256": "a3e4167a13db65da92e1c5dbf2994b1cca185d23de84b72bd860d3dbd056f9a9",
+   "buckets": [
+    1024
+   ],
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/mediatek-MT6993.tflite"
+  },
+  {
+   "name": "npu/mediatek-MT8171.tflite",
+   "backend": "npu",
+   "vendor": "mediatek",
+   "soc": "MT8171",
+   "bytes": 957644776,
+   "sha256": "ebeaa912b12ea5ed63b2877890f670c1da4fd2a5f986c50d25d7db048a8e4c9d",
+   "buckets": [
+    1024
+   ],
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/mediatek-MT8171.tflite"
+  },
+  {
+   "name": "npu/mediatek-MT8188.tflite",
+   "backend": "npu",
+   "vendor": "mediatek",
+   "soc": "MT8188",
+   "bytes": 958321804,
+   "sha256": "226865664e6e4eb7a93d5f9f183e22770ad1d81e133a3d8d55c10ce797e028d6",
+   "buckets": [
+    1024
+   ],
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/mediatek-MT8188.tflite"
+  },
+  {
+   "name": "npu/mediatek-MT8189.tflite",
+   "backend": "npu",
+   "vendor": "mediatek",
+   "soc": "MT8189",
+   "bytes": 957644776,
+   "sha256": "7e151fac1f9de9e4cc7e65e8a155d6f708c02d84af8e6e144c156e818f11f648",
+   "buckets": [
+    1024
+   ],
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/mediatek-MT8189.tflite"
+  },
+  {
+   "name": "npu/qualcomm-SM7450.tflite",
+   "backend": "npu",
+   "vendor": "qualcomm",
+   "soc": "SM7450",
+   "bytes": 909695568,
+   "sha256": "050d677252471e9edf50d32fd5386badb1c9512b68f5cf50cd1defb63d36e34e",
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/qualcomm-SM7450.tflite"
+  },
+  {
+   "name": "npu/qualcomm-SM8450.tflite",
+   "backend": "npu",
+   "vendor": "qualcomm",
+   "soc": "SM8450",
+   "bytes": 880294480,
+   "sha256": "d3e8f4bcde6e0defdd8a26e15859ddd503395485d894b73d94caa0dd8ff48713",
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/qualcomm-SM8450.tflite"
+  },
+  {
+   "name": "npu/qualcomm-SM8475.tflite",
+   "backend": "npu",
+   "vendor": "qualcomm",
+   "soc": "SM8475",
+   "bytes": 880323152,
+   "sha256": "0d570fcaa2c62409658441f9dfb88bb05f0c88bfb8cdd6ca3e8932f1136569c7",
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/qualcomm-SM8475.tflite"
+  },
+  {
+   "name": "npu/qualcomm-SM8550.tflite",
+   "backend": "npu",
+   "vendor": "qualcomm",
+   "soc": "SM8550",
+   "bytes": 885131856,
+   "sha256": "2360351d9d2de6470517cdf691b4c588cb4f42415663ee5ce301869d032f667e",
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/qualcomm-SM8550.tflite"
+  },
+  {
+   "name": "npu/qualcomm-SM8650.tflite",
+   "backend": "npu",
+   "vendor": "qualcomm",
+   "soc": "SM8650",
+   "bytes": 887896656,
+   "sha256": "95a419ef019bcd61047e0bbe12451b453f2ed4e4054c8bf9b5b23d9bbec6917e",
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/qualcomm-SM8650.tflite"
+  },
+  {
+   "name": "npu/qualcomm-SM8750.tflite",
+   "backend": "npu",
+   "vendor": "qualcomm",
+   "soc": "SM8750",
+   "bytes": 884357712,
+   "sha256": "23aad5738aaedc4f245f6c31df9e6ffa8574f9dee22326c67db3f340318c3e80",
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/qualcomm-SM8750.tflite"
+  },
+  {
+   "name": "npu/qualcomm-SM8845.tflite",
+   "backend": "npu",
+   "vendor": "qualcomm",
+   "soc": "SM8845",
+   "bytes": 883038800,
+   "sha256": "ab686396229487f9f168e60fae1a50186df91e9a82234f43ddce4ca4195d64d9",
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/qualcomm-SM8845.tflite"
+  },
+  {
+   "name": "npu/qualcomm-SM8850.tflite",
+   "backend": "npu",
+   "vendor": "qualcomm",
+   "soc": "SM8850",
+   "bytes": 888978000,
+   "sha256": "7e059df8f661885b097ab258e1e81d3df0a9c004634f6007a85aeb5646262612",
+   "url": "https://github.com/chengmatt416/umbra/releases/download/laya-npu-1a793eb568e6/qualcomm-SM8850.tflite"
   }
  ],
  "check": {

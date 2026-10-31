@@ -6,9 +6,10 @@ Steps (each writes into --out, default build/laya-native):
   quantize  fp16 weights (GPU, CPU and the NPU compiler's input); int8 only for comparison
   verify    run the LiteRT files on this machine's CPU against the PyTorch model on golden requests
   golden    tokenizer + sequence + decoding fixtures for the Kotlin port (core/decision tests)
-  aot       ahead-of-time NPU compilation per SoC (Linux x86_64 only: the vendor compiler plugins ship only there)
+  aot       ahead-of-time NPU compilation per SoC (Linux x86_64 only: the vendor compiler plugins ship only there;
+            .github/workflows/laya-npu.yml runs it, one SoC per job, and publishes the files as a GitHub release)
   manifest  app assets: laya-native.json (every file with bytes, SHA-256, backend and SoC), config, tokenizer
-  upload    every manifest file to R2 under laya/<revision>/
+  upload    every manifest file hosted on R2 to laya/<revision>/ (NPU files with their own URL stay where they are)
   remote    download every published file and check size, SHA-256 and range support
 
 The graph (see `exportable`) per bucket length L, K = MAX_OPTIONS:
@@ -28,10 +29,24 @@ REVISION = "1a793eb568e6718f15941d08f85432581df534e3"  # laya.revisions.PINNED_R
 BUCKETS = (256, 1024)  # sequence lengths; a request uses the smallest that fits (max_len is 1024)
 MAX_OPTIONS = 32       # laya.structured.MAX_OPTIONS; more options fall back to another engine
 NPU_TARGETS = {
-    # fp16 HTP needs Hexagon v73 or later (Snapdragon 8 Gen 2 onwards)
-    "qualcomm": ["SM8550", "SM8650", "SM8750", "SM8845", "SM8850"],
-    "mediatek": ["MT6985", "MT6989", "MT6991", "MT6993"],
-    "google_tensor": ["Tensor_G3", "Tensor_G4", "Tensor_G5"],
+    # Every phone and tablet SoC LiteRT 2.3.0's compilers name (ai_edge_litert/aot/vendors/*/target.py; Qualcomm's
+    # automotive SA8255/SA8295 are left out). Laya's graph is fp16: a SoC whose NPU cannot take it fails its compile,
+    # aot-report.json says why, and that SoC uses its GPU instead.
+    # Hexagon v69 and later: Snapdragon 8 Gen 1 on, 8s Gen 3/4, 7 Gen 1/3/4, 7+ Gen 2/3, 7s Gen 2/3, 6 Gen 1/3/4,
+    # 4 Gen 2 and 4s Gen 2 (the mid-range names are in the compiler plugin's SoC table, not LiteRT's Python list: see aot).
+    "qualcomm": ["SM8450", "SM8475", "SM8550", "SM8650", "SM8750", "SM8845", "SM8850",
+                 "SM8635", "SM8735", "SM7675", "SM7635", "SM7550", "SM7750", "SM7435", "SM7475", "SM7450",
+                 "SM6450", "SM6475", "SM6650", "SM4450", "SM4635"],
+    # Hexagon v68 (Snapdragon 888/888+, 780G, 778G/778G+/782G) has no fp16 GATHER and no GELU at all, so it compiles
+    # the "embeds" layout (see exportable): the app looks the token embeddings up itself and GELU is written in tanh.
+    "qualcomm_v68": ["SM8350", "SM7350", "SM7325", "SM7315"],
+    # Google Tensor is listed for completeness: LiteRT 2.3.0's Tensor compiler download (tensor-ml-sdk 6.1.0) answers
+    # 404, so CI cannot build it and Pixels use their GPU.
+    # (MT6886 and MT6895 are in LiteRT's list, but NeuroPilot's compiler answers "Not a valid platform" for them.)
+    # (MT6853 and MT6893, older APUs, refuse a dozen of its ops: they use their GPU.)
+    "mediatek": ["MT6877", "MT6878", "MT6879", "MT6897", "MT6983", "MT6985",
+                 "MT6989", "MT6991", "MT6993", "MT8171", "MT8188", "MT8189"],
+    "google_tensor": ["Tensor_G3", "Tensor_G4", "Tensor_G5", "Tensor_G6"],
 }
 
 
@@ -45,7 +60,7 @@ def load_agent(checkpoint_dir):
 MASKED = -1e4  # finite: representable in fp16 and still exp() == 0 next to real scores
 
 
-def exportable(model, length):
+def exportable(model, length, layout="default"):
     """laya.common.DecisionModel.forward (sequential layout, inference) for one fixed sequence length, written so that
     LiteRT's CPU, GPU and NPU backends can all run it. Same weights, same maths; what changes is the shape of the graph:
 
@@ -63,6 +78,18 @@ def exportable(model, length):
       LayerNorm takes (TFLite has no LayerNorm op) do not, so a GPU or NPU computing in fp16 returned inf.
 
     Inputs: input_ids int32[1,L], key_mask f32[1,L] (0 or MASKED), markers f32[1,K,L], qtype f32[1,3] -> logits f32[1,K]
+
+    layout "npu4d": the same maths, with the option pick (markers x hidden states) shaped like the attention's batch
+    matmuls ([16,K,L] x [16,L,64]). The converter turns the plain pick into BATCH_MATMUL [1,K,L] x [L,H], mixed ranks,
+    which MediaTek's Neuron compiler refuses ("input rank is invalid") and so compiled nothing. This file is only the
+    NPU compilers' input; the GPU and CPU file stays as it is. Its attention is written in 3-D too (see attend).
+
+    layout "embeds": for Hexagon v68, whose HTP has no GELU and cannot build the fp16 GATHER of the token lookup
+    (aot-report: "no properties registered for q::QNN_Gelu", "could not create op: q::Gather"). The graph starts at the
+    token embeddings, embeddings f32[1,L,H] in place of input_ids (the app looks the rows up in
+    laya-embeddings-fp16.bin, the same fp16 values the other files hold), and GELU is the tanh form
+    0.5x(1 + tanh(sqrt(2/pi)(x + 0.044715x^3))) with x clamped inside the cubic (fp16 overflows past |x| = 40, and tanh
+    is already +-1 at |x| = 10). verify checks it against the exact-GELU PyTorch model.
     """
     import torch
     import torch.nn.functional as F
@@ -92,6 +119,24 @@ def exportable(model, length):
             y = y * ln.weight
         return y + ln.bias if ln.bias is not None else y
 
+    def gelu(x):
+        c = x.clamp(-10.0, 10.0)
+        return 0.5 * x * (1.0 + torch.tanh(0.7978845608028654 * (c + 0.044715 * c * c * c)))
+
+    if layout == "embeds" and cfg.hidden_activation not in ("gelu", "gelu_python", "gelu_new", "gelu_pytorch_tanh"):
+        raise ValueError("the embeds layout writes GELU out, but this checkpoint's MLP uses %s" % cfg.hidden_activation)
+
+    def mlp(module, x):
+        if layout != "embeds":
+            return module(x)
+        # ModernBertMLP (GeGLU): Wi gives the input and the gate side by side, act(input) * gate goes through Wo.
+        inp, gate = module.Wi(x).chunk(2, dim=-1)
+        return module.Wo(gelu(inp) * gate)
+
+    def head_activation(layer):
+        # nn.TransformerEncoderLayer records which of relu (1) and gelu (2) it was built with.
+        return gelu if layout == "embeds" and getattr(layer, "activation_relu_or_gelu", 0) == 2 else layer.activation
+
     def rotate_half(x):
         half = x.shape[-1] // 2
         return torch.cat((-x[..., half:], x[..., :half]), dim=-1)
@@ -100,6 +145,12 @@ def exportable(model, length):
         return x.reshape(1, length, n, d).transpose(1, 2)
 
     def attend(q, k, v, mask, d):
+        if layout == "npu4d":
+            # In 3-D ([heads, L, d], mask [1, L, L]): the converter folds the batch of 1 out of the scores but not out
+            # of the mask, and MediaTek's MDLA refuses ADD <16 x L x L> + <1 x 1 x L x L>.
+            q, k, v, mask = q[0], k[0], v[0], mask[0]
+            scores = torch.matmul(q, k.transpose(-1, -2)) * (d ** -0.5) + mask
+            return torch.matmul(torch.softmax(scores, dim=-1), v).transpose(0, 1).reshape(1, length, -1)
         scores = torch.matmul(q, k.transpose(-1, -2)) * (d ** -0.5) + mask
         return torch.matmul(torch.softmax(scores, dim=-1), v).transpose(1, 2).reshape(1, length, -1)
 
@@ -113,12 +164,21 @@ def exportable(model, length):
                 self.register_buffer("sin_" + name, sin, persistent=False)
 
         def forward(self, input_ids, key_mask, markers, qtype):
-            m = self.model
+            if layout == "npu4d":
+                # The lookup first: MediaTek runs it on the CPU, and an NPU op before it (the masks) would be a
+                # partition of its own.
+                looked_up = enc.embeddings.tok_embeddings(input_ids.long())
             full = key_mask[:, None, None, :]
             masks = {"full_attention": full, "sliding_attention": full + self.near}
             # nn.Embedding lowers to EMBEDDING_LOOKUP, which Qualcomm's compiler takes and the quantizer stores as fp16
             # (index_select lowers to GATHER_ND plus bounds checks, and its table stays fp32: 100 MB more).
-            h = norm(enc.embeddings.norm, enc.embeddings.tok_embeddings(input_ids.long()))
+            if layout != "npu4d":
+                looked_up = enc.embeddings.tok_embeddings(input_ids.long())
+            return self.encode(looked_up, masks, full, markers, qtype)
+
+        def encode(self, looked_up, masks, full, markers, qtype):
+            m = self.model
+            h = norm(enc.embeddings.norm, looked_up)
             width = heads * head_dim
             for layer in enc.layers:
                 a = layer.attn
@@ -131,7 +191,7 @@ def exportable(model, length):
                 q = q * cos + rotate_half(q) * sin
                 k = k * cos + rotate_half(k) * sin
                 h = h + a.Wo(attend(q, k, v, masks[layer.attention_type], head_dim))
-                h = h + layer.mlp(norm(layer.mlp_norm, h))
+                h = h + mlp(layer.mlp, norm(layer.mlp_norm, h))
             h = norm(enc.final_norm, h)
             h = h + torch.matmul(qtype, m.type_emb.weight)[:, None, :]
             if m.head is not None:
@@ -144,23 +204,49 @@ def exportable(model, length):
                     att = attend(split_heads(qkv[..., :e], n, d), split_heads(qkv[..., e:2 * e], n, d),
                                  split_heads(qkv[..., 2 * e:], n, d), full, d)
                     h = h + sa.out_proj(att)
-                    h = h + layer.linear2(layer.activation(layer.linear1(norm(layer.norm2, h))))
-            picked = torch.matmul(markers, h)
+                    h = h + layer.linear2(head_activation(layer)(layer.linear1(norm(layer.norm2, h))))
+            if layout == "npu4d":
+                k = markers.shape[1]
+                parts = h.reshape(1, length, heads, head_dim).transpose(1, 2)               # [1, 16, L, 64]
+                picks = torch.cat([markers[:, None]] * heads, dim=1)                         # [1, 16, K, L]
+                picked = torch.matmul(picks, parts).transpose(1, 2).reshape(1, k, width)     # [1, K, H]
+            else:
+                picked = torch.matmul(markers, h)
             ln, *rest = m.scorer
             picked = norm(ln, picked)
             for module in rest:
                 picked = module(picked)
             return picked.squeeze(-1)
 
-    return Exported().eval()
+    class ExportedEmbeds(Exported):
+        def forward(self, embeddings, key_mask, markers, qtype):
+            full = key_mask[:, None, None, :]
+            masks = {"full_attention": full, "sliding_attention": full + self.near}
+            return self.encode(embeddings, masks, full, markers, qtype)
+
+    return (ExportedEmbeds() if layout == "embeds" else Exported()).eval()
 
 
-def graph_inputs(ids, markers, qtype, pad_id, length=None):
-    """The padded graph inputs for one question row, as numpy arrays (the Kotlin engine builds the same)."""
+EMBEDDINGS = "laya-embeddings-fp16.bin"  # the "embeds" layout's token table: [vocab, hidden] fp16, little-endian
+
+
+def embedding_table(out):
+    """The token table the "embeds" layout reads its rows from (written by export), as fp16 [vocab, hidden]."""
+    import numpy as np
+    with open(os.path.join(out, "laya-embeddings.json")) as f:
+        meta = json.load(f)
+    return np.fromfile(os.path.join(out, EMBEDDINGS), dtype="<f2").reshape(meta["vocab"], meta["hidden"])
+
+
+def graph_inputs(ids, markers, qtype, pad_id, length=None, table=None):
+    """The padded graph inputs for one question row, as numpy arrays (the Kotlin engine builds the same). With the
+    "embeds" layout's [table], the first input is the padded row's token embeddings instead of its ids."""
     import numpy as np
     length = length or bucket_for(len(ids))
     x = np.full((1, length), pad_id, dtype=np.int32)
     x[0, :len(ids)] = ids
+    if table is not None:
+        x = table[x].astype(np.float32)
     key = np.full((1, length), MASKED, dtype=np.float32)
     key[0, :len(ids)] = 0.0
     onehot = np.zeros((1, MAX_OPTIONS, length), dtype=np.float32)
@@ -171,27 +257,40 @@ def graph_inputs(ids, markers, qtype, pad_id, length=None):
     return length, (x, key, onehot, qt)
 
 
-def sample(length):
+def sample(length, hidden=None):
     import torch
     _, arrays = graph_inputs([1] * 16, [4, 8], 0, 0, length)
-    return tuple(torch.from_numpy(a) for a in arrays)
+    tensors = [torch.from_numpy(a) for a in arrays]
+    if hidden:
+        tensors[0] = torch.zeros((1, length, hidden), dtype=torch.float32)
+    return tuple(tensors)
 
 
 def cmd_export(args):
     import torch
     import litert_torch
     agent = load_agent(args.checkpoint)
+    hidden = agent.model.encoder.config.hidden_size if args.layout == "embeds" else None
     converter = None
-    for length in BUCKETS:
+    for length in (int(b) for b in args.buckets.split(",")):
         name = "l%d" % length
-        module = exportable(agent.model, length)
-        converter = (litert_torch.signature if converter is None else converter.signature)(name, module, sample(length))
+        module = exportable(agent.model, length, args.layout)
+        converter = (litert_torch.signature if converter is None else converter.signature)(name, module, sample(length, hidden))
     started = time.time()
     with torch.no_grad():
         edge = converter.convert()
     path = os.path.join(args.out, "laya-typed-decisions-fp32.tflite")
     edge.export(path)
     print("exported %s (%d bytes) in %.0f s" % (path, os.path.getsize(path), time.time() - started))
+    if args.layout == "embeds":
+        # The rows the app looks up for this layout: the fp16 values the other files' EMBEDDING_LOOKUP holds.
+        weight = agent.model.encoder.embeddings.tok_embeddings.weight.detach().float().numpy().astype("<f2")
+        table = os.path.join(args.out, EMBEDDINGS)
+        weight.tofile(table)
+        with open(os.path.join(args.out, "laya-embeddings.json"), "w") as f:
+            json.dump({"vocab": int(weight.shape[0]), "hidden": int(weight.shape[1]), "bytes": os.path.getsize(table),
+                       "sha256": sha256(table)}, f)
+        print("embeddings: %s %s (%d bytes)" % (table, weight.shape, os.path.getsize(table)))
 
 
 FP16_RECIPE = [{
@@ -201,12 +300,19 @@ FP16_RECIPE = [{
 }]
 
 
+# npu4d: the embedding table stays fp32. MediaTek runs the lookup on the CPU, and a DEQUANTIZE of an fp16 table would
+# be an NPU partition with no input of its own, which LiteRT's MediaTek plugin cannot compile ("Failed to identify
+# model I/Os"). 100 MB more, in that file only.
+FP16_NPU4D_RECIPE = FP16_RECIPE + [{"regex": ".*", "operation": "EMBEDDING_LOOKUP", "algorithm_key": "no_quantize"}]
+
+
 def cmd_quantize(args):
     from ai_edge_quantizer import quantizer, recipe
     source = os.path.join(args.out, "laya-typed-decisions-fp32.tflite")
     # int8 (dynamic range) is kept for comparison only: it quantizes activations per tensor, and ModernBERT's outliers
     # (~28,600) leave too little precision for everything else (decisions flipped in verify). The CPU uses fp16 too.
-    for name, rec in (("fp16", FP16_RECIPE), ("int8", recipe.dynamic_wi8_afp32())):
+    fp16 = FP16_NPU4D_RECIPE if args.layout == "npu4d" else FP16_RECIPE
+    for name, rec in (("fp16", fp16), ("int8", recipe.dynamic_wi8_afp32())):
         if name not in args.variants.split(","):
             continue
         started = time.time()
@@ -335,6 +441,7 @@ def cmd_verify(args):
     with open(os.path.join("core", "decision", "src", "test", "resources", "laya", "golden.json")) as f:
         golden = json.load(f)
     pad = golden["config"]["pad"]
+    table = embedding_table(args.out) if args.layout == "embeds" else None
     report = {}
     for variant in args.variants.split(","):
         path = os.path.join(args.out, "laya-typed-decisions-%s.tflite" % variant)
@@ -351,9 +458,12 @@ def cmd_verify(args):
                 report["%s/%s" % (variant, accel_name)] = {"error": str(e)[:300]}
                 continue
             worst, flips, times = 0.0, 0, []
+            # A file exported with fewer buckets (--buckets) answers a short row padded to the next length it has.
+            have = sorted(int(n[1:]) for n in model.get_signature_list())
             for fx in golden["requests"]:
                 for r in fx["rows"]:
-                    length, inputs = graph_inputs(r["ids"], r["markers"], r["qtype"], pad)
+                    length, inputs = graph_inputs(r["ids"], r["markers"], r["qtype"], pad,
+                                                  next(n for n in have if n >= bucket_for(len(r["ids"]))), table)
                     started = time.time()
                     logits = run_litert(model, "l%d" % length, inputs)
                     times.append((length, time.time() - started))
@@ -390,10 +500,27 @@ def cmd_aot(args):
     if not (sys.platform.startswith("linux") and platform.machine() in ("x86_64", "AMD64")):
         raise SystemExit("aot needs Linux x86_64 (LiteRT ships its NPU compiler plugins only for it)")
     from ai_edge_litert.aot import aot_compile
+    from ai_edge_litert.aot.core import apply_plugin
+    # LiteRT's Python layer passes no compiler flags of its own; these go to the apply_plugin tool as --key=value.
+    # Qualcomm: the two signatures (256 and 1024 tokens) are two graphs with the same weights, which without sharing
+    # are stored twice (1.73 GB for an 0.85 GB model).
+    plugin_flags = dict(f.split("=", 1) for f in args.plugin_flags.split(",") if f)
+    if plugin_flags:
+        call = apply_plugin.ApplyPlugin.__call__
+        apply_plugin.ApplyPlugin.__call__ = lambda self, *a, **kw: call(self, *a, **{**kw, **plugin_flags})
     from ai_edge_litert.aot.vendors.google_tensor import target as tensor
     from ai_edge_litert.aot.vendors.mediatek import target as mediatek
     from ai_edge_litert.aot.vendors.qualcomm import target as qualcomm
+    # LiteRT 2.3.0's Python list names only the flagship Snapdragons, while its compiler plugin's SoC table
+    # (litert/vendors/qualcomm/core/schema/soc_table.h) has every one with an HTP, and the backend turns the name back
+    # into this enum: give the enum the other names too. A SoC the plugin does not know fails its own compile.
+    import enum
+    known = [m.value for m in qualcomm.SocModel]
+    extra = [soc for soc in NPU_TARGETS["qualcomm"] + NPU_TARGETS["qualcomm_v68"] if soc not in known]
+    if extra:
+        qualcomm.SocModel = enum.StrEnum("SocModel", {name: name for name in known + extra})
     targets = {"qualcomm": lambda soc: qualcomm.Target(qualcomm.SocModel(soc)),
+               "qualcomm_v68": lambda soc: qualcomm.Target(qualcomm.SocModel(soc)),
                "mediatek": lambda soc: mediatek.Target(mediatek.SocModel(soc)),
                "google_tensor": lambda soc: tensor.Target(tensor.SocModel(soc))}
     source = os.path.join(args.out, "laya-typed-decisions-fp16.tflite")
@@ -405,7 +532,8 @@ def cmd_aot(args):
         for soc in socs:
             if wanted and soc not in wanted and vendor not in wanted:
                 continue
-            key = "%s-%s" % (vendor, soc)
+            # Files are named for the vendor the app knows (a v68 Snapdragon is still "qualcomm").
+            key = "%s-%s" % (vendor.split("_v")[0], soc)
             started = time.time()
             with tempfile.TemporaryDirectory() as tmp:
                 try:
@@ -416,14 +544,39 @@ def cmd_aot(args):
                     produced = sorted(glob.glob(os.path.join(tmp, "compiled*.tflite")))
                     if len(produced) != 1:
                         raise RuntimeError("expected one compiled model, got %s" % produced)
-                    shutil.move(produced[0], os.path.join(out, key + ".tflite"))
-                    report[key] = {"seconds": round(time.time() - started), "bytes": os.path.getsize(os.path.join(out, key + ".tflite")),
+                    target = os.path.join(out, key + ".tflite")
+                    shutil.move(produced[0], target)
+                    report[key] = {"seconds": round(time.time() - started), "bytes": os.path.getsize(target),
                                    "report": result.compilation_report()[:2000]}
+                    # What the manifest needs, for a file that is published from this machine and never copied back,
+                    # with the sequence lengths it holds when not all of BUCKETS (the app pads up to them).
+                    meta = {"bytes": os.path.getsize(target), "sha256": sha256(target)}
+                    held = signature_lengths(source)
+                    if held != list(BUCKETS):
+                        meta["buckets"] = held
+                    if args.layout == "embeds":
+                        meta["embeddings"] = EMBEDDINGS
+                    with open(os.path.join(out, key + ".json"), "w") as f:
+                        json.dump(meta, f)
                 except Exception as e:  # noqa: BLE001 -- one SoC failing must not stop the others
                     report[key] = {"error": str(e)[:1000]}
+                    # The plugin writes why to a temporary file ("See /tmp/....error for details"), gone with tmp.
+                    import re
+                    for detail in re.findall(r"See (\S+\.error)", str(e)):
+                        if os.path.exists(detail):
+                            with open(detail, errors="replace") as f:
+                                report[key]["detail"] = f.read()[-6000:]
             print(key, {k: v for k, v in report[key].items() if k != "report"}, flush=True)
     with open(os.path.join(out, "aot-report.json"), "w") as f:
         json.dump(report, f, indent=1)
+
+
+def signature_lengths(path):
+    """The sequence lengths a converted file has signatures for ("l256", "l1024")."""
+    from ai_edge_litert import schema_py_generated as schema
+    with open(path, "rb") as f:
+        model = schema.Model.GetRootAsModel(f.read(), 0)
+    return sorted(int(model.SignatureDefs(i).SignatureKey().decode()[1:]) for i in range(model.SignatureDefsLength()))
 
 
 def sha256(path):
@@ -444,10 +597,42 @@ def cmd_manifest(args):
     for name, backend in (("laya-typed-decisions-fp16.tflite", "gpu"), (CPU_FILE, "cpu")):
         path = os.path.join(args.out, name)
         files.append({"name": name, "backend": backend, "bytes": os.path.getsize(path), "sha256": sha256(path)})
-    for path in sorted(glob.glob(os.path.join(args.out, "npu", "*.tflite"))):
-        vendor, soc = os.path.basename(path)[:-len(".tflite")].split("-", 1)
-        files.append({"name": "npu/" + os.path.basename(path), "backend": "npu", "vendor": vendor, "soc": soc,
-                      "bytes": os.path.getsize(path), "sha256": sha256(path)})
+    # NPU files: the .tflite itself, or the .json the aot step writes next to it (bytes and SHA-256) when the file was
+    # compiled and published elsewhere (--npu-url: where they are, as <vendor>-<soc>.tflite).
+    npu = os.path.join(args.out, "npu")
+    sidecars = [p for p in glob.glob(os.path.join(npu, "*-*.json"))
+                if not p.endswith(".report.json") and os.path.basename(p) != "laya-embeddings.json"]
+    keys = sorted({os.path.basename(p).rsplit(".", 1)[0] for p in glob.glob(os.path.join(npu, "*.tflite")) + sidecars})
+    for key in keys:
+        vendor, soc = key.split("-", 1)
+        path = os.path.join(npu, key + ".tflite")
+        if os.path.exists(path):
+            size, digest = os.path.getsize(path), sha256(path)
+        else:
+            with open(os.path.join(npu, key + ".json")) as f:
+                meta = json.load(f)
+            size, digest = meta["bytes"], meta["sha256"]
+        entry = {"name": "npu/%s.tflite" % key, "backend": "npu", "vendor": vendor, "soc": soc, "bytes": size, "sha256": digest}
+        if os.path.exists(os.path.join(npu, key + ".json")):
+            with open(os.path.join(npu, key + ".json")) as f:
+                held = json.load(f).get("buckets")
+            if held:
+                entry["buckets"] = held
+            with open(os.path.join(npu, key + ".json")) as f:
+                table = json.load(f).get("embeddings")
+            if table:
+                entry["embeddings"] = table
+        if args.npu_url:
+            entry["url"] = args.npu_url.rstrip("/") + "/%s.tflite" % key
+        files.append(entry)
+    # The token table the "embeds" files read their rows from, published next to them (laya-embeddings.json: its size
+    # and SHA-256). It is no processor's file of its own.
+    if any(f.get("embeddings") for f in files):
+        with open(os.path.join(npu, "laya-embeddings.json")) as f:
+            meta = json.load(f)
+        files.append({"name": EMBEDDINGS, "backend": "aux", "bytes": meta["bytes"], "sha256": meta["sha256"],
+                      "shape": [meta["vocab"], meta["hidden"]],
+                      **({"url": args.npu_url.rstrip("/") + "/" + EMBEDDINGS} if args.npu_url else {})})
     with open(os.path.join("core", "decision", "src", "test", "resources", "laya", "golden.json")) as f:
         golden = json.load(f)
     # A short row with a clear margin between its options, so the check tells "computes correctly" from "noise".
@@ -472,7 +657,7 @@ def cmd_upload(args):
     with open(os.path.join(ASSETS, "laya-native.json")) as f:
         manifest = json.load(f)
     revision = manifest["revision"][:12]
-    for entry in {e["name"]: e for e in manifest["files"]}.values():  # one file can serve two backends
+    for entry in {e["name"]: e for e in manifest["files"] if "url" not in e}.values():  # one file can serve two backends
         local = os.path.abspath(os.path.join(args.out, entry["name"]))
         assert os.path.getsize(local) == entry["bytes"] and sha256(local) == entry["sha256"], entry["name"]
         subprocess.run(["node", "tools/upload-release.mjs", local, "laya/%s/%s" % (revision, entry["name"]), "--asset"],
@@ -485,7 +670,7 @@ def cmd_remote(args):
     with open(os.path.join(ASSETS, "laya-native.json")) as f:
         manifest = json.load(f)
     for entry in {e["name"]: e for e in manifest["files"]}.values():
-        url = manifest["base"] + entry["name"]
+        url = entry.get("url") or manifest["base"] + entry["name"]
         req = urllib.request.Request(url, headers={"Range": "bytes=0-15", "User-Agent": "umbra-laya-check"})
         with urllib.request.urlopen(req, timeout=60) as r:
             assert r.status == 206 and r.headers["Content-Range"] == "bytes 0-15/%d" % entry["bytes"], (url, r.status)
@@ -507,6 +692,11 @@ def main():
     p.add_argument("--variants", default="fp32,fp16,int8")
     p.add_argument("--accelerators", default="cpu,gpu,gpu32")
     p.add_argument("--socs", default="", help="aot: comma-separated SoCs or vendors (default: all of NPU_TARGETS)")
+    p.add_argument("--plugin-flags", default="", help="aot: key=value,... passed to LiteRT's apply_plugin tool")
+    p.add_argument("--buckets", default=",".join(map(str, BUCKETS)), help="export: sequence lengths to give signatures")
+    p.add_argument("--layout", default="default", choices=["default", "npu4d", "embeds"],
+                   help="export/quantize/verify/aot: graph layout (see exportable)")
+    p.add_argument("--npu-url", default="", help="manifest: where the NPU files are published (default: R2 next to the others)")
     args = p.parse_args()
     os.makedirs(args.out, exist_ok=True)
     globals()["cmd_" + args.step](args)

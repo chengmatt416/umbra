@@ -89,10 +89,11 @@ class ProactiveTools(private val container: AppContainer) {
             }
             HostToolPayload.text(if (cards.isEmpty()) "No open suggestions." else buildJsonArray { cards.forEach { add(summary(it)) } }.toString())
         },
-        tool("opportunity_update", "Change one of your open suggestions (id from opportunity_list) when there is news about the same thing: a new time, more evidence, a better next step. Omitted fields keep their value. The user sees the updated card, not a new one.", {
+        tool("opportunity_update", "Change one of your open suggestions (id from opportunity_list) when there is news about the same thing: a new time, more evidence, a better next step. Omitted fields keep their value. The user sees the updated card, not a new one. Rewrite the explanation fields too when what you will do or why has changed.", {
             string("id", required = true); string("title"); string("summary"); stringArray("evidence_refs"); number("urgency"); number("confidence")
             string("action_label"); enum("action_type", listOf("start_coding", "send_message_draft", "create_goal", "run_skill", "agent_turn"))
             raw("action_payload", buildJsonObject { put("type", "object"); put("additionalProperties", true) }); integer("expires_at_ms"); string("reason")
+            explanationFields(required = false)
         }) { a ->
             val now = System.currentTimeMillis()
             val payload = a["action_payload"]?.let { it as? JsonObject ?: error("action_payload must be an object") }
@@ -102,7 +103,8 @@ class ProactiveTools(private val container: AppContainer) {
                 old.copy(title = a.str("title") ?: old.title, summary = a.str("summary") ?: old.summary,
                     evidenceRefs = if (a["evidence_refs"] != null) a.strings("evidence_refs") else old.evidenceRefs,
                     urgency = a.double("urgency") ?: old.urgency, confidence = a.double("confidence") ?: old.confidence,
-                    preparedAction = step, expiresAtMs = a.long("expires_at_ms") ?: old.expiresAtMs, sourceSessionId = sessionId, error = null)
+                    preparedAction = step, expiresAtMs = a.long("expires_at_ms") ?: old.expiresAtMs, sourceSessionId = sessionId, error = null,
+                    explain = explanation(a, old.explain))
             }
             goalSuggestionRefusal(card, now)?.let { return@tool HostToolPayload.error(it) }
             refreshDelivery(card)
@@ -116,17 +118,18 @@ class ProactiveTools(private val container: AppContainer) {
             store.writeNote(agentId, card.id, "Withdrawn \"${card.title}\": ${a.required("reason")}", true)
             HostToolPayload.text("Withdrew ${card.id}.")
         },
-        tool("opportunity_propose", "Prepare a suggestion with evidence and a reviewable next step. The user must explicitly adopt it before any execution. One event, message or item is one suggestion: when you already have an open one about it (opportunity_list), use opportunity_update instead; a repeat is merged into it, and one the user dismissed or adopted lately is refused. Give evidence_refs that name the item (\"calendar:<event id>\", \"email:<id>\").", {
+        tool("opportunity_propose", "Prepare a suggestion with evidence and a reviewable next step. The user must explicitly adopt it before any execution. One event, message or item is one suggestion: when you already have an open one about it (opportunity_list), use opportunity_update instead; a repeat is merged into it, and one the user dismissed or adopted lately is refused. Give evidence_refs that name the item (\"calendar:<event id>\", \"email:<id>\"). The card is a decision for a person: title, summary, action_label and the explanation fields are what they read, so write them in the user's language as plain sentences a friend would say, with names, days and times as people say them; never ids, JSON, field names, scores or raw data.", {
             enum("kind", OpportunityCard.Kind.entries.map { it.name }, required = true); string("title", required = true); string("summary", required = true)
             stringArray("evidence_refs", required = true); number("urgency", required = true); number("confidence", required = true)
             string("action_label", required = true); enum("action_type", listOf("start_coding", "send_message_draft", "create_goal", "run_skill", "agent_turn"), required = true)
             raw("action_payload", buildJsonObject { put("type", "object"); put("additionalProperties", true) }, required = true); integer("expires_at_ms")
+            explanationFields(required = true)
         }) { a ->
             val payload = a["action_payload"] as? JsonObject ?: error("action_payload must be an object")
             val card = OpportunityCard(store.id("opp"), agentId, OpportunityCard.Kind.valueOf(a.required("kind")), a.required("title"), a.required("summary"), a.strings("evidence_refs"),
                 a.double("urgency") ?: error("urgency is required"), a.double("confidence") ?: error("confidence is required"),
                 PreparedNextStep(a.required("action_label"), a.required("action_type"), payload.toString()), createdAtMs = System.currentTimeMillis(), expiresAtMs = a.long("expires_at_ms"),
-                sourceSessionId = sessionId)
+                sourceSessionId = sessionId, explain = explanation(a, null))
             goalSuggestionRefusal(card, card.createdAtMs)?.let { return@tool HostToolPayload.error(it) }
             val running = container.agents.store.profiles.value.filter { it.running }.map { it.id }
             when (val outcome = store.proposeOpportunity(card, running, card.createdAtMs)) {
@@ -275,6 +278,28 @@ class ProactiveTools(private val container: AppContainer) {
     /** Calendar titles from yesterday to two weeks ahead, when the agent can read the calendar. */
     private suspend fun eventTitles(agentId: String, now: Long): List<String> =
         runCatching { container.personalContext.calendar(agentId, now - 86_400_000L, now + 14 * 86_400_000L).map { it.title } }.getOrDefault(emptyList())
+
+    /** The plain-language fields of a suggestion (see [CardExplanation]); [required] makes `why` mandatory. */
+    private fun SchemaBuilder.explanationFields(required: Boolean) {
+        string("why", "Why this matters now, in one or two plain sentences to the user (\"Your dentist moved to Thursday 3 pm, which now overlaps the team sync.\").", required = required)
+        stringArray("steps", "What happens if they confirm, step by step, each a short sentence starting with a verb (\"Draft a message to Dr. Lin asking for 4 pm\", \"Show you the draft before anything is sent\"). At most 5.")
+        string("needs_from_you", "What the user must decide or give, as a short instruction (\"Pick which meeting to move.\"); empty when confirming is enough.")
+        string("if_ignored", "What happens if they do nothing (\"Both stay on your calendar as they are.\").")
+        stringArray("sources", "Where you saw it, as people say it: \"Calendar · Dentist, Thu 15:00\", \"WhatsApp · Mom, yesterday 21:40\". No ids.")
+    }
+
+    /** Reads the explanation fields; on an update, omitted ones keep [old]'s. */
+    private fun explanation(a: JsonObject, old: CardExplanation?): CardExplanation? {
+        fun clean(text: String?, max: Int) = text?.replace(Regex("\\s+"), " ")?.trim()?.take(max)
+        val next = CardExplanation(
+            why = clean(a.str("why"), 600) ?: old?.why.orEmpty(),
+            steps = if (a["steps"] != null) a.strings("steps").mapNotNull { clean(it, 200) }.filter { it.isNotEmpty() }.take(5) else old?.steps.orEmpty(),
+            needs = clean(a.str("needs_from_you"), 300) ?: old?.needs.orEmpty(),
+            ifIgnored = clean(a.str("if_ignored"), 300) ?: old?.ifIgnored.orEmpty(),
+            sources = if (a["sources"] != null) a.strings("sources").mapNotNull { clean(it, 160) }.filter { it.isNotEmpty() }.take(6) else old?.sources.orEmpty(),
+        )
+        return next.takeUnless { it.isEmpty() }
+    }
 
     private fun summary(c: OpportunityCard) = buildJsonObject {
         put("id", c.id); put("kind", c.kind.name); put("state", c.state.name); put("title", c.title); put("summary", c.summary.take(300))

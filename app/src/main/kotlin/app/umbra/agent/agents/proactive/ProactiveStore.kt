@@ -111,7 +111,8 @@ class ProactiveStore(private val root: File) {
             if (earlier.state != OpportunityCard.State.PENDING || !proposed(earlier)) return Proposal.Duplicate(earlier)
             val merged = earlier.copy(kind = card.kind, title = card.title, summary = card.summary,
                 evidenceRefs = (earlier.evidenceRefs + card.evidenceRefs).distinct().take(100), urgency = card.urgency, confidence = card.confidence,
-                preparedAction = card.preparedAction, expiresAtMs = card.expiresAtMs ?: earlier.expiresAtMs, sourceSessionId = card.sourceSessionId, updatedAtMs = now)
+                preparedAction = card.preparedAction, expiresAtMs = card.expiresAtMs ?: earlier.expiresAtMs, sourceSessionId = card.sourceSessionId, updatedAtMs = now,
+                explain = card.explain ?: earlier.explain)
             saveOpportunity(merged)
             return Proposal.Updated(merged)
         }

@@ -73,6 +73,11 @@ class Capsule(internal val context: Context, private val container: AppContainer
     internal val pillHidden = MutableStateFlow(false)
     /** Another capsule app is expanded over the camera: Umbra's pill fades out of its way and takes no touches. */
     internal val yielding = MutableStateFlow(false)
+    /**
+     * Which side of the pill's window stays put ([Gravity.START], [Gravity.END] or [Gravity.CENTER_HORIZONTAL]): the
+     * pill keeps to it while its window is wider than the pill for a moment (see SteadyPill).
+     */
+    internal val edge = MutableStateFlow(Gravity.CENTER_HORIZONTAL)
     /** The other capsule app Umbra is making room for (Material Capsule, ...), or null. */
     val neighbourName = MutableStateFlow<String?>(null)
     /** In the top corner instead of around the camera (see [CapsuleNeighbours]). */
@@ -330,13 +335,27 @@ class Capsule(internal val context: Context, private val container: AppContainer
     private fun canShow() = enabled && (UmbraAccessibilityService.connected.value || Settings.canDrawOverlays(context)) &&
         !(container.ui.appVisible.value && UmbraAccessibilityService.instance == null)
 
+    /** While Umbra's accessibility service is away for a moment: the capsule waits for it instead of being replaced. */
+    private var serviceGrace: Job? = null
+    private var graceOver = false
+    /** The service connection the capsule's window belongs to: Android removes a service's windows with its connection. */
+    private var capsuleHost: UmbraAccessibilityService? = null
+
     /** Creates, moves to the right window type, or removes the capsule window to match the settings and the services. */
     private fun sync() {
+        val service = UmbraAccessibilityService.instance
+        // The service drops out for a moment now and then (Android rebinds it, a dump suspends it): replacing the capsule
+        // with an ordinary overlay and then back flashed it twice. A capsule on the service waits up to SERVICE_GRACE_MS
+        // for it; a service that comes back is a new connection, which gets a new window (the old one went with it).
+        if (service != null) { serviceGrace?.cancel(); serviceGrace = null; graceOver = false }
+        else if (capsuleWindow != null && capsuleType == WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY && enabled && !graceOver) {
+            if (serviceGrace?.isActive != true) serviceGrace = scope.launch { delay(SERVICE_GRACE_MS); graceOver = true; sync() }
+            return
+        }
         if (!canShow()) { closeCapsule(); closeComposer(); return }
         if (selecting) return
-        val service = UmbraAccessibilityService.instance
         val type = if (service != null) WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY else WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        if (capsuleWindow != null && capsuleType == type) return
+        if (capsuleWindow != null && capsuleType == type && service === capsuleHost) return
         closeCapsule()
         val host: Context = service ?: context
         val wm = host.getSystemService(WindowManager::class.java)
@@ -353,6 +372,7 @@ class Capsule(internal val context: Context, private val container: AppContainer
             title = UmbraOverlay.WINDOW_TITLE
         }
         capsuleType = type
+        capsuleHost = service
         capsuleWindow = runCatching {
             OverlayWindow(
                 wm, params, host,
@@ -459,6 +479,7 @@ class Capsule(internal val context: Context, private val container: AppContainer
                 p.y = rowY
                 p.width = WindowManager.LayoutParams.WRAP_CONTENT
             }
+            edge.value = Gravity.CENTER_HORIZONTAL
             cardY = rowY
             return
         }
@@ -469,6 +490,7 @@ class Capsule(internal val context: Context, private val container: AppContainer
                 p.y = statusTop + dp(6)
                 p.gravity = Gravity.TOP or (if (container.settings.value.leftHanded) Gravity.START else Gravity.END); p.width = WindowManager.LayoutParams.WRAP_CONTENT; p.x = dp(10)
             }
+            edge.value = if (container.settings.value.leftHanded) Gravity.START else Gravity.END
             cardY = statusTop + dp(6)
             return
         }
@@ -517,6 +539,10 @@ class Capsule(internal val context: Context, private val container: AppContainer
                     p.y = y
                 }
             }
+        }
+        edge.value = when {
+            wrap != null && camera != null && !wrap.centered -> if (wrap.contentLeft) Gravity.END else Gravity.START
+            else -> Gravity.CENTER_HORIZONTAL
         }
     }
 
@@ -841,6 +867,8 @@ class Capsule(internal val context: Context, private val container: AppContainer
         const val COLLAPSE_MS = 420L
         /** About three frames: the pill is drawn again before the card's window that covered it goes. */
         const val HANDOFF_MS = 50L
+        /** How long a capsule on the accessibility service waits for the service to come back before it moves. */
+        const val SERVICE_GRACE_MS = 1_500L
         /** At most this wide on each side of the camera. */
         const val ZONE_DP = 104
         /** The card's first row, the one the camera sits in. */

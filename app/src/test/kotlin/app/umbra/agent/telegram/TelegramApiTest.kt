@@ -122,4 +122,38 @@ class TelegramApiTest {
             assertEquals(0, server.requestCount)
         }
     }
+    @Test
+    fun rejectedHtmlFallsBackToPlainTextWithTheSameButtons(): Unit = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse.Builder().code(400).body("""{"ok":false}""").build())
+            server.enqueue(MockResponse.Builder().body("""{"ok":true,"result":{"message_id":8}}""").build())
+            val api = TelegramApi(OkHttpClient(), { "fixture-token" }, server.url("/"))
+            val markup = telegramKeyboard(listOf(listOf(telegramButton("Choose", "opaque"))))
+            val result = api.callHtml("sendMessage", buildJsonObject {
+                put("chat_id", 42); put("text", "<b>A &amp; &lt;B&gt;</b>"); put("parse_mode", "HTML"); put("reply_markup", markup)
+            })
+            assertEquals(8, result.jsonObject["message_id"]?.jsonPrimitive?.int)
+            val first = Json.parseToJsonElement(requireNotNull(server.takeRequest().body).utf8()).jsonObject
+            val fallback = Json.parseToJsonElement(requireNotNull(server.takeRequest().body).utf8()).jsonObject
+            assertEquals("HTML", first["parse_mode"]?.jsonPrimitive?.content)
+            assertFalse("parse_mode" in fallback)
+            assertEquals("A & <B>", fallback["text"]?.jsonPrimitive?.content)
+            assertEquals(markup, fallback["reply_markup"])
+        }
+    }
+
+    @Test
+    fun htmlTransportErrorsDoNotRetryTheMessage(): Unit = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse.Builder().code(500).body("""{"ok":false}""").build())
+            val api = TelegramApi(OkHttpClient(), { "fixture-token" }, server.url("/"))
+            assertFailsWith<TelegramApiException> {
+                api.callHtml("sendMessage", buildJsonObject { put("chat_id", 42); put("text", "<b>Text</b>"); put("parse_mode", "HTML") })
+            }
+            assertEquals(1, server.requestCount)
+        }
+    }
+
 }

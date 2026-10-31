@@ -63,3 +63,6 @@ reports/
 /marketing/**/*.wav
 /marketing/**/*.mov
 *.bak
+
+# graphify generated knowledge graph
+graphify-out/

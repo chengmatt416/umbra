@@ -37,6 +37,7 @@ fun InboxScreen(onOpenSession: (String) -> Unit, onHistory: () -> Unit) {
     val questions by container.questions.pending.collectAsStateWithLifecycle()
     val sessions by remember { container.sessionStore.sessionsFlow() }.collectAsStateWithLifecycle(emptyList())
     val titles = sessions.associate { it.id to it.title }
+    app.umbra.agent.ui.questions.ShowsQuestions(null)
 
     if (approvals.isEmpty() && questions.isEmpty()) {
         PEmpty(

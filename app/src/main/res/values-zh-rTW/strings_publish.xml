@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pub_publish">發布</string>
+    <string name="pub_update">發布更新</string>
+    <string name="pub_live">已上線</string>
+    <string name="pub_working">發布中 · %1$d%%</string>
+    <string name="pub_stage_scanning">正在收集頁面和它的檔案…</string>
+    <string name="pub_stage_hashing">準備檔案 · %1$d／%2$d</string>
+    <string name="pub_stage_project">正在 Cloudflare 上建立網站…</string>
+    <string name="pub_stage_uploading">上傳中 · %1$d／%2$d</string>
+    <string name="pub_stage_nothing_new">沒有新的檔案要上傳</string>
+    <string name="pub_stage_deploying">正在上線…</string>
+    <string name="pub_stage_done">已上線</string>
+    <string name="pub_failed">沒有發布：%1$s</string>
+    <string name="pub_retry">再試一次</string>
+    <string name="pub_live_eyebrow">已在網路上</string>
+    <string name="pub_anyone">任何拿到連結的人都能開啟。</string>
+    <string name="pub_share">分享</string>
+    <string name="pub_copy">複製</string>
+    <string name="pub_copied">已複製連結</string>
+    <string name="pub_open">開啟</string>
+    <string name="pub_changed">頁面在發布後有變更。發布更新後，同一個連結會顯示新內容。</string>
+    <string name="pub_takedown">下架</string>
+    <string name="pub_takedown_hint">下架會從你的 Cloudflare 帳號刪除這個網站。</string>
+    <string name="pub_takedown_title">要下架這個網站嗎？</string>
+    <string name="pub_takedown_body">%1$s 將對所有人失效。之後再發布時，頁面會拿到新的連結。</string>
+    <plurals name="pub_files">
+        <item quantity="other">%1$d 個檔案</item>
+    </plurals>
+    <string name="pub_connect_title">用 Cloudflare Pages 發布</string>
+    <string name="pub_connect_body">頁面會放到你自己的 Cloudflare 帳號，免費在 pages.dev 上提供。Umbra 需要你的帳戶 ID 和一個可以編輯 Pages 的 API 權杖。只需設定一次。</string>
+    <string name="pub_connect_step1">在 Cloudflare 打開「我的個人資料」→「API 權杖」，建立自訂權杖。</string>
+    <string name="pub_connect_open_tokens">開啟 API 權杖</string>
+    <string name="pub_connect_step2">只給它一個權限：帳戶 · Cloudflare Pages · 編輯。建立後複製權杖。</string>
+    <string name="pub_connect_step3">複製你的帳戶 ID：在帳戶首頁的「帳戶詳細資料」裡，是 32 個英數字。</string>
+    <string name="pub_account_id">帳戶 ID</string>
+    <string name="pub_api_token">API 權杖</string>
+    <string name="pub_connect">連結 Cloudflare</string>
+    <string name="pub_connect_and_publish">連結並發布</string>
+    <string name="pub_connecting">正在向 Cloudflare 確認…</string>
+    <string name="pub_connect_privacy">權杖只存在這支手機上 Umbra 的加密儲存區，而且只會傳給 api.cloudflare.com。</string>
+    <string name="pub_settings_title">發布</string>
+    <string name="pub_settings_body">代理人做的 HTML 頁面和應用程式可以放上網路：打開它，在預覽裡點「發布」。</string>
+    <string name="pub_cloudflare">Cloudflare Pages</string>
+    <string name="pub_connected">已連結</string>
+    <string name="pub_connected_sub">網站會發布到這個帳號，在 pages.dev 上。</string>
+    <string name="pub_connect_sub">第一次發布時需要設定一次。</string>
+    <string name="pub_disconnect">中斷連結</string>
+    <string name="pub_disconnect_title">要中斷 Cloudflare 連結嗎？</string>
+    <string name="pub_disconnect_body">已發布的網站會繼續在線上。之後要更新或下架，請重新連結同一個帳號。</string>
+    <string name="pub_sites">已發布的網站 · %1$d</string>
+    <string name="pub_settings_row">發布</string>
+    <string name="pub_settings_row_on">Cloudflare</string>
+    <string name="pub_settings_row_off">尚未連結</string>
+    <string name="pub_settings_row_sub">一鍵把 HTML 頁面放上網路</string>
+</resources>

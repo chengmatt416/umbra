@@ -99,6 +99,7 @@
     <string name="dest_diagnostics">Diagnostics</string>
     <string name="dest_settings">Settings</string>
     <string name="dest_reference">Reference</string>
+    <string name="dest_cards">Card templates</string>
     <string name="ws_empty_title">No workspaces yet</string>
     <string name="ws_empty_body">Each task gets a project folder. The files it makes appear here.</string>
     <plurals name="ws_tasks">

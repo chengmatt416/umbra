@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Reads current device pressure. The Android implementation lives in `:app`. */
 fun interface ResourceSampler {
@@ -26,9 +27,10 @@ class ResourceGovernor(
     private val sampler: ResourceSampler,
     policy: ThrottlePolicy = ThrottlePolicy(),
     private val intervalMs: Long = 5_000,
+    private val idleIntervalMs: Long = 30_000,
 ) {
     private data class Active(val sessions: Int = 0, val light: Int = 0, val expensive: Int = 0)
-    private data class State(val decision: ThrottleDecision, val active: Active = Active())
+    private data class State(val decision: ThrottleDecision, val active: Active = Active(), val waiting: Int = 0)
 
     private val throttle = HysteresisThrottle(policy)
     private val state = MutableStateFlow(State(throttle.decision))
@@ -53,7 +55,9 @@ class ResourceGovernor(
             } catch (e: Exception) {
                 // A failing sampler must not stop the governor; keep the last decision.
             }
-            delay(intervalMs)
+            // Sensors can rest between tasks, but admission must not wait for the idle interval to pass.
+            if (state.value.busy) delay(intervalMs)
+            else withTimeoutOrNull(idleIntervalMs) { state.first { it.busy } }
         }
     }
 
@@ -101,20 +105,33 @@ class ResourceGovernor(
         }
     }
 
+    /**
+     * Sampling keeps its normal pace while work runs or waits, and while the device is under any pressure: that is
+     * when the next sample decides whether a task may start, so an idle phone recovering from a memory squeeze must
+     * not refuse new tasks for the length of the idle interval.
+     */
+    private val State.busy: Boolean get() = active.sessions > 0 || waiting > 0 || decision.level != PressureLevel.NORMAL ||
+        !decision.allowNewSessions || decision.pauseAll || decision.pauseExpensive
+
     private suspend fun acquire(workClass: WorkClass) {
-        while (true) {
-            var acquired = false
-            state.update { s ->
-                if (admits(s, workClass)) {
-                    acquired = true
-                    s.copy(active = s.active.bump(workClass, +1))
-                } else {
-                    acquired = false
-                    s
+        state.update { it.copy(waiting = it.waiting + 1) }
+        try {
+            while (true) {
+                var acquired = false
+                state.update { s ->
+                    if (admits(s, workClass)) {
+                        acquired = true
+                        s.copy(active = s.active.bump(workClass, +1))
+                    } else {
+                        acquired = false
+                        s
+                    }
                 }
+                if (acquired) return
+                state.first { admits(it, workClass) }
             }
-            if (acquired) return
-            state.first { admits(it, workClass) }
+        } finally {
+            state.update { it.copy(waiting = it.waiting - 1) }
         }
     }
 

@@ -27,6 +27,19 @@ import kotlinx.serialization.Serializable
     val label: String, val actionType: String, val payloadJson: String,
     val secondaryOptions: List<String> = emptyList(),
 )
+
+/**
+ * What a person needs to decide, in their own language and in plain sentences (never ids, JSON, field names or scores):
+ * [why] it comes up now, the [steps] that happen if they confirm, what it [needs] from them, what happens [ifIgnored],
+ * and the [sources] it rests on ("Calendar · Dentist, Thu 15:00"). The agent writes it with the suggestion; Umbra writes
+ * it for what it finds itself (a calendar conflict).
+ */
+@Serializable data class CardExplanation(
+    val why: String = "", val steps: List<String> = emptyList(), val needs: String = "",
+    val ifIgnored: String = "", val sources: List<String> = emptyList(),
+) {
+    fun isEmpty() = why.isBlank() && steps.isEmpty() && needs.isBlank() && ifIgnored.isBlank() && sources.isEmpty()
+}
 @Serializable data class OpportunityCard(
     val id: String, val agentId: String, val kind: Kind, val title: String, val summary: String,
     val evidenceRefs: List<String>, val urgency: Double, val confidence: Double,
@@ -35,6 +48,8 @@ import kotlinx.serialization.Serializable
     val executionSessionId: String? = null, val error: String? = null,
     /** The agent run that last proposed or updated it; its closing words are not delivered as a second item. */
     val sourceSessionId: String? = null, val updatedAtMs: Long? = null,
+    /** The plain-language account the card shows before the user decides (null on cards from before it existed). */
+    val explain: CardExplanation? = null,
 ) {
     @Serializable enum class Kind { TASK_DISCOVERY, CONFLICT_ALERT, FOLLOW_UP, PRICE_OR_MONITOR, GOAL_SUGGESTION }
     @Serializable enum class State { PENDING, ACCEPTING, ACCEPTED, DISMISSED, EXPIRED }
@@ -69,6 +84,8 @@ import kotlinx.serialization.Serializable
 @Serializable data class ConflictAlert(
     val id: String, val severity: String, val description: String, val sources: List<String>,
     val resolutionOptions: List<PreparedNextStep> = emptyList(),
+    /** A short headline ("Dentist and Team sync overlap") and the plain account; [description] stays the one-line text. */
+    val title: String = "", val explain: CardExplanation? = null,
 )
 @Serializable data class BriefItem(val title: String, val detail: String, val linkedSessionId: String? = null,
     val linkedGoalId: String? = null, val preparedStep: PreparedNextStep? = null)

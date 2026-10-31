@@ -100,6 +100,7 @@ class AgentRuntime(private val container: AppContainer) {
     val store = AgentStore(File(container.context.filesDir, "agents"))
     val proactive by lazy { app.umbra.agent.agents.proactive.ProactiveRuntime(container, this) }
     private val locks = ConcurrentHashMap<String, Mutex>()
+    private val idleHeartbeats = ConcurrentHashMap<String, Int>()
     private val sources = CopyOnWriteArrayList<IncomingSource>()
     private var started = false
     private val delivery = AgentDeliveryRouter(container.laya.engine) { container.laya.state.value == LayaSidecar.State.RUNNING }
@@ -281,7 +282,7 @@ class AgentRuntime(private val container: AppContainer) {
         while (true) {
             runCatching { tick() }.onFailure { Log.w(TAG, "tick", it) }
             val next = reschedule()
-            val wait = (next - System.currentTimeMillis()).coerceIn(5_000, 60_000)
+            val wait = (next - System.currentTimeMillis()).coerceIn(5_000, 300_000)
             delay(wait)
         }
     }
@@ -294,7 +295,7 @@ class AgentRuntime(private val container: AppContainer) {
         for (p in store.profiles.value.filter { it.running && it.sessionId != null && it.proactivityLevel >= 1 }) {
             val due = store.timers(p.id).filter { it.nextMs <= now }
             val state = store.state(p.id)
-            val interval = intervalMs(p)
+            val interval = intervalMs(p)?.let { heartbeatIntervalMs(it, idleHeartbeats[p.id] ?: 0) }
             when {
                 due.isNotEmpty() -> wake(p.id, Reason.TIMER, timers = due)
                 p.proactivityLevel >= 3 && interval != null && now - state.lastWakeMs >= interval -> wake(p.id, Reason.HEARTBEAT)
@@ -343,6 +344,7 @@ class AgentRuntime(private val container: AppContainer) {
     suspend fun wake(agentId: String, reason: Reason, timers: List<AgentTimer> = emptyList(), fired: List<Pair<AgentRule, Incoming>> = emptyList(), extra: List<Incoming> = emptyList(), skipTriage: Boolean = false) {
         val mutex = locks.getOrPut(agentId) { Mutex() }
         mutex.withLock {
+            if (reason != Reason.HEARTBEAT) idleHeartbeats.remove(agentId)
             val p = store.get(agentId) ?: return
             if (!p.running || reason != Reason.MANUAL && p.proactivityLevel < 1) return
             val sid = p.sessionId ?: return
@@ -361,6 +363,7 @@ class AgentRuntime(private val container: AppContainer) {
             // What arrived since the last look, from the agent's own sources.
             val arrived = (sources.flatMap { runCatching { it.since(state.seenUntilMs) }.getOrDefault(emptyList()) } + extra)
                 .filter { watches(p, it) }.distinctBy { it.key }.sortedBy { it.atMs }
+            if (arrived.isNotEmpty()) idleHeartbeats.remove(agentId)
             val newSeen = maxOf(state.seenUntilMs, arrived.maxOfOrNull { it.atMs } ?: 0, if (reason == Reason.HEARTBEAT) now else 0)
             val queue = store.queue(agentId).filter { !it.done }
             val freshQueue = queue.filter { it.addedAtMs > state.lastRunMs }
@@ -393,10 +396,12 @@ class AgentRuntime(private val container: AppContainer) {
                 }
             }
             if (!runNow) {
+                if (reason == Reason.HEARTBEAT && arrived.isEmpty()) idleHeartbeats.compute(agentId) { _, idle -> ((idle ?: 0).toLong() + 1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() }
                 store.setState(agentId, state.copy(seenUntilMs = newSeen, later = (state.later + later).takeLast(MAX_LATER)))
                 Log.i(TAG, "${p.name}: woke (${reason.word}), nothing to do (${arrived.size} new, ${later.size} for later)")
                 return
             }
+            idleHeartbeats.remove(agentId)
             val digest = digest(p, reason, timers, fired, now_, freshQueue, state.later + later + state.deferred)
             store.setState(agentId, state.copy(seenUntilMs = newSeen, later = emptyList(), deferred = emptyList(), lastRunMs = now, runsToday = state.runsToday + 1,
                 backgroundRuns = if (background) WakeBudget.record(state.backgroundRuns, now) else state.backgroundRuns))
@@ -602,27 +607,37 @@ class AgentRuntime(private val container: AppContainer) {
 
     // ---- the phone's alarm ----
 
-    /** When the next agent needs a look; the alarm is set for it so Doze cannot delay it much. Returns that time. */
+    /** Timers can wake a sleeping phone; quiet heartbeats wait for it to be awake to save battery. */
     fun reschedule(): Long {
         val now = System.currentTimeMillis()
-        var next = Long.MAX_VALUE
+        var nextWakeup = Long.MAX_VALUE
+        var nextHeartbeat = Long.MAX_VALUE
         for (p in store.profiles.value.filter { it.running }) {
-            proactive.nextDue(p, now)?.let { next = minOf(next, it) }
-            store.timers(p.id).minOfOrNull { it.nextMs }?.let { next = minOf(next, it) }
-            intervalMs(p)?.let { next = minOf(next, store.state(p.id).lastWakeMs + it) }
-            val mine = minOf(store.timers(p.id).minOfOrNull { it.nextMs } ?: Long.MAX_VALUE, intervalMs(p)?.let { store.state(p.id).lastWakeMs + it } ?: Long.MAX_VALUE)
-            if (mine != Long.MAX_VALUE) store.setState(p.id, store.state(p.id).copy(nextWakeMs = mine))
+            val state = store.state(p.id)
+            val due = proactive.nextDue(p, now) ?: Long.MAX_VALUE
+            val timer = store.timers(p.id).minOfOrNull { it.nextMs } ?: Long.MAX_VALUE
+            val heartbeat = if (p.proactivityLevel >= 3 && p.sessionId != null) intervalMs(p)?.let {
+                state.lastWakeMs + heartbeatIntervalMs(it, idleHeartbeats[p.id] ?: 0)
+            } ?: Long.MAX_VALUE else Long.MAX_VALUE
+            nextWakeup = minOf(nextWakeup, due, timer)
+            nextHeartbeat = minOf(nextHeartbeat, heartbeat)
+            val mine = minOf(due, timer, heartbeat).takeUnless { it == Long.MAX_VALUE } ?: 0L
+            // Scheduling runs often; an unchanged next wake does not need another state-file write.
+            if (state.nextWakeMs != mine) store.setState(p.id, state.copy(nextWakeMs = mine))
         }
         val alarms = context.getSystemService(AlarmManager::class.java)
         val pending = PendingIntent.getBroadcast(context, 7_001, Intent(context, AgentWakeReceiver::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        if (next == Long.MAX_VALUE) {
-            alarms.cancel(pending)
-            return now + 60_000
+        val heartbeatPending = PendingIntent.getBroadcast(context, 7_002, Intent(context, AgentWakeReceiver::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        if (nextWakeup == Long.MAX_VALUE) alarms.cancel(pending)
+        else {
+            val at = maxOf(nextWakeup, now + 5_000)
+            runCatching { alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending) }
+                .onFailure { runCatching { alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending) } }
         }
-        val at = maxOf(next, now + 5_000)
-        runCatching { alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending) }
-            .onFailure { runCatching { alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending) } }
-        return at
+        if (nextHeartbeat == Long.MAX_VALUE) alarms.cancel(heartbeatPending)
+        else runCatching { alarms.set(AlarmManager.RTC, maxOf(nextHeartbeat, now + 5_000), heartbeatPending) }
+        val next = minOf(nextWakeup, nextHeartbeat)
+        return if (next == Long.MAX_VALUE) now + 300_000 else maxOf(next, now + 5_000)
     }
 
     companion object {
@@ -635,6 +650,9 @@ class AgentRuntime(private val container: AppContainer) {
         private const val NOTIFY_BASE = 40_000
     }
 }
+
+/** Empty heartbeats back off to at most four times the setting, reducing idle battery use without changing it. */
+internal fun heartbeatIntervalMs(intervalMs: Long, idle: Int): Long = intervalMs * (1L shl idle.coerceIn(0, 2))
 
 /** The phone's alarm for the next agent wake: the process wakes, the loop looks at every agent. */
 class AgentWakeReceiver : BroadcastReceiver() {

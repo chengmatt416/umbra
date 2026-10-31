@@ -65,7 +65,8 @@ internal fun subsystems(container: AppContainer, taskRunning: suspend () -> Bool
         override val id = "logs"
         override val criticality = Criticality.OPTIONAL
 
-        override suspend fun probe(): Health = if (container.logMonitor.isRunning) Health.Healthy else Health.Failed("The log monitor is not running.")
+        // No logcat is needed between sessions; restarting it then would spend battery without a consumer.
+        override suspend fun probe(): Health = if (!container.logMonitorWanted || container.logMonitor.isRunning) Health.Healthy else Health.Failed("The log monitor is not running.")
 
         override suspend fun restart(): RestartResult {
             container.startLogMonitor()

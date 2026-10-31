@@ -1,6 +1,10 @@
 package app.umbra.agent
 
 import android.app.Notification
+import app.umbra.runtime.omp.AskAnswer
+import app.umbra.runtime.omp.UiResponse
+import app.umbra.runtime.omp.UiRequest
+import app.umbra.core.orchestrator.QuestionBroker
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -41,6 +45,8 @@ class AgentService : Service() {
     private lateinit var manager: NotificationManager
     private var started = false
     private val approvalNotifications = HashMap<String, Int>()
+    private val questionNotifications = HashMap<String, Int>()
+    private var staleQuestionsCleared = false
     private val lastMinuteWarned = HashSet<String>()
     private val lastStates = HashMap<String, SessionState>()
     private var wakeLock: PowerManager.WakeLock? = null
@@ -88,8 +94,9 @@ class AgentService : Service() {
             }
         }
         scope.launch {
-            combine(container.sessionStore.sessionsFlow(), container.approvals.pending, container.questions.pending) { sessions, approvals, questions -> Triple(sessions, approvals, questions.size) }
-                .collect { (sessions, approvals, questionCount) ->
+            combine(container.sessionStore.sessionsFlow(), container.approvals.pending, container.questions.pending) { sessions, approvals, questions -> Triple(sessions, approvals, questions) }
+                .collect { (sessions, approvals, questions) ->
+                    val questionCount = questions.size
                     val active = sessions.filter { it.state == SessionState.RUNNING || it.state == SessionState.WAITING_APPROVAL }
                     val paused = sessions.filter { it.state == SessionState.PAUSED }
                     manager.notify(ONGOING_ID, ongoing(active, paused, approvals.size + questionCount))
@@ -97,6 +104,7 @@ class AgentService : Service() {
                     // (an approval arrives through a notification or the app, which wake the phone anyway).
                     holdAwake(sessions.any { it.state == SessionState.RUNNING })
                     syncApprovals(approvals)
+                    syncQuestions(questions)
                     announceResults(sessions)
                 }
         }
@@ -251,6 +259,87 @@ class AgentService : Service() {
         manager.notify(id, notification)
     }
 
+    /**
+     * A question an agent or session is waiting on (omp's ask, select, confirm, text): a heads-up notification that
+     * answers it where it can — up to three options or No/Yes as buttons, a short text as a reply — and otherwise opens
+     * it. Answered anywhere, it goes away. Agents talking on Telegram ask there instead, as approvals do.
+     */
+    private suspend fun syncQuestions(pending: List<QuestionBroker.Pending>) {
+        if (!staleQuestionsCleared) {
+            staleQuestionsCleared = true
+            // Questions live in memory: one shown before the app last stopped belongs to a turn that is gone, and its
+            // buttons would do nothing.
+            manager.activeNotifications.map { it.id }.filter { it in QUESTION_BASE..QUESTION_BASE + 0xFFFF }.forEach(::closeQuestion)
+        }
+        val local = pending.filterNot { fromTelegram(it.sessionId) }
+        val ids = local.map { it.request.id }.toSet()
+        questionNotifications.keys.filter { it !in ids }.forEach { closeQuestion(questionNotifications.remove(it)!!) }
+        if (!container.settings.value.notifyOnApproval) return
+        for (q in local) if (q.request.id !in questionNotifications) notifyQuestion(q)
+    }
+
+    private suspend fun notifyQuestion(q: QuestionBroker.Pending) {
+        val id = questionNotifications.getOrPut(q.request.id) { QUESTION_BASE + (q.request.id.hashCode() and 0xFFFF) }
+        val asker = app.umbra.agent.ui.questions.askerOf(container, q.sessionId)
+        val agent = app.umbra.agent.ui.questions.agentOf(container, q.sessionId)
+        val single = (q.request as? UiRequest.Ask)?.questions?.singleOrNull()
+        val text = when (val r = q.request) {
+            is UiRequest.Select -> r.title
+            is UiRequest.Confirm -> listOf(r.title, r.message).filter { it.isNotBlank() }.joinToString("\n")
+            is UiRequest.Input -> r.title
+            is UiRequest.Editor -> r.title
+            is UiRequest.Ask -> r.questions.joinToString("\n") { it.question }
+        }
+        val choices = when (val r = q.request) {
+            is UiRequest.Select -> r.options
+            is UiRequest.Confirm -> listOf(getString(R.string.q_no), getString(R.string.q_yes))
+            is UiRequest.Ask -> single?.takeIf { !it.multi }?.options?.map { it.label }.orEmpty()
+            else -> emptyList()
+        }
+        val typed = q.request is UiRequest.Input || single?.options?.isEmpty() == true
+        val opens = if (agent != null) openPage("agent/$agent", id * 4) else open(q.sessionId)
+        val builder = Notification.Builder(this, CHANNEL_APPROVALS)
+            .setSmallIcon(R.drawable.ic_stat_umbra)
+            .setContentTitle(asker?.let { getString(R.string.qa_asks, it) } ?: getString(R.string.qa_asks_anon))
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentIntent(opens)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(false)
+        when {
+            choices.size in 1..3 -> choices.forEachIndexed { i, label ->
+                builder.addAction(Notification.Action.Builder(null, label, PendingIntent.getBroadcast(this, id * 4 + i,
+                    Intent(this, ApprovalActionReceiver::class.java).setAction(ACTION_ANSWER).putExtra(EXTRA_REQUEST, q.request.id).putExtra(EXTRA_OPTION, i),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)).build())
+            }
+            typed -> {
+                // A reply needs a mutable PendingIntent for Android to fill in the words; the intent is explicit.
+                val reply = PendingIntent.getBroadcast(this, id * 4 + 3,
+                    Intent(this, ApprovalActionReceiver::class.java).setAction(ACTION_ANSWER_TEXT).putExtra(EXTRA_REQUEST, q.request.id),
+                    PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                builder.addAction(Notification.Action.Builder(null, getString(R.string.qa_reply), reply)
+                    .addRemoteInput(android.app.RemoteInput.Builder(EXTRA_ANSWER_TEXT).setLabel(getString(R.string.qa_your_answer)).build()).build())
+            }
+            else -> builder.addAction(Notification.Action.Builder(null, getString(R.string.qa_answer), opens).build())
+        }
+        manager.notify(id, builder.build())
+    }
+
+    /**
+     * A question's notification goes when the question does. One answered from its reply field is kept by Android to
+     * show the reply, and the app may not cancel it then: it becomes a quiet "Answered" that times out instead.
+     */
+    private fun closeQuestion(id: Int) {
+        val replied = manager.activeNotifications.any { it.id == id && it.notification.flags and FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY != 0 }
+        if (!replied) { manager.cancel(id); return }
+        manager.notify(id, Notification.Builder(this, CHANNEL_APPROVALS)
+            .setSmallIcon(R.drawable.ic_stat_umbra)
+            .setContentTitle(getString(R.string.qa_answered))
+            .setOnlyAlertOnce(true)
+            .setTimeoutAfter(1_500)
+            .build())
+    }
+
     private suspend fun fromTelegram(sessionId: String): Boolean =
         container.sessionStore.get(sessionId)?.agentId?.let { container.agents.repliesOnTelegram(it) } == true
 
@@ -282,6 +371,13 @@ class AgentService : Service() {
         const val ACTION_PAUSE = "app.umbra.agent.PAUSE"
         const val ACTION_RESUME = "app.umbra.agent.RESUME"
         const val EXTRA_REQUEST = "request"
+        const val ACTION_ANSWER = "app.umbra.agent.ANSWER"
+        const val ACTION_ANSWER_TEXT = "app.umbra.agent.ANSWER_TEXT"
+        const val EXTRA_OPTION = "option"
+        const val EXTRA_ANSWER_TEXT = "answer"
+        private const val QUESTION_BASE = 200_000
+        /** Notification.FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY, hidden in the SDK: set while Android keeps a replied notification. */
+        private const val FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY = 0x00010000
         const val EXTRA_SESSION = "session"
         const val PAGE_STOP_ALL = "stop-all"
         private const val ONGOING_ID = 1
@@ -317,6 +413,34 @@ class ApprovalActionReceiver : BroadcastReceiver() {
                 if (approveGesture(request, ApprovalSurface.NOTIFICATION) == ApproveGesture.ONE_TAP) container.approvals.resolve(id, ApprovalDecision.Approved())
             }
             AgentService.ACTION_DENY -> intent.getStringExtra(AgentService.EXTRA_REQUEST)?.let { container.approvals.resolve(it, ApprovalDecision.Denied("denied from the notification")) }
+            // A question answered from its notification: the answer is rebuilt from the question still waiting, never
+            // taken from the intent beyond which option was tapped or the words typed.
+            AgentService.ACTION_ANSWER -> {
+                val id = intent.getStringExtra(AgentService.EXTRA_REQUEST) ?: return
+                val index = intent.getIntExtra(AgentService.EXTRA_OPTION, -1)
+                val q = container.questions.pending.value.firstOrNull { it.request.id == id } ?: return
+                val response = when (val r = q.request) {
+                    is UiRequest.Select -> r.options.getOrNull(index)?.let { UiResponse.Value(it) }
+                    is UiRequest.Confirm -> when (index) { 0 -> UiResponse.Confirmed(false); 1 -> UiResponse.Confirmed(true); else -> null }
+                    is UiRequest.Ask -> r.questions.singleOrNull()?.takeIf { !it.multi }?.let { one ->
+                        one.options.getOrNull(index)?.let { UiResponse.Answers(listOf(AskAnswer(one.id, listOf(it.label), null))) }
+                    }
+                    else -> null
+                } ?: return
+                container.questions.answer(id, response)
+            }
+            AgentService.ACTION_ANSWER_TEXT -> {
+                val id = intent.getStringExtra(AgentService.EXTRA_REQUEST) ?: return
+                val text = android.app.RemoteInput.getResultsFromIntent(intent)?.getCharSequence(AgentService.EXTRA_ANSWER_TEXT)?.toString()?.trim()
+                    ?.takeIf { it.isNotEmpty() } ?: return
+                val q = container.questions.pending.value.firstOrNull { it.request.id == id } ?: return
+                val response = when (val r = q.request) {
+                    is UiRequest.Input -> UiResponse.Value(text)
+                    is UiRequest.Ask -> r.questions.singleOrNull()?.let { UiResponse.Answers(listOf(AskAnswer(it.id, emptyList(), text))) }
+                    else -> null
+                } ?: return
+                container.questions.answer(id, response)
+            }
             AgentService.ACTION_PAUSE, AgentService.ACTION_RESUME -> {
                 val id = intent.getStringExtra(AgentService.EXTRA_SESSION) ?: return
                 val pending = goAsync()

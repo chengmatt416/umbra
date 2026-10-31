@@ -27,8 +27,8 @@ class ConflictJudgeTest {
         val pairs = ConflictDetector.candidates(listOf(work, personal, dentist), now)
         assertEquals(3, pairs.size)
         // Nothing judged: nothing is called a conflict, only a possible one that may be the same event.
-        val alerts = ConflictDetector.alerts(pairs.map { ConflictReading(it, null, null) })
-        assertTrue(alerts.all { it.severity == ConflictJudge.POSSIBLE && "same event" in it.description })
+        val alerts = ConflictDetector.alerts(pairs.map { ConflictReading(it, null, null) }, ConflictWords(zh = false, zone = ZoneId.of("UTC")))
+        assertTrue(alerts.all { it.severity == ConflictJudge.POSSIBLE && "one meeting on two calendars" in it.description && it.title.endsWith("may clash") })
     }
 
     @Test
@@ -54,10 +54,26 @@ class ConflictJudgeTest {
             assertTrue(prompt.contains("calendar Work, mei@corp.example") && prompt.contains("iCalendar UID abc@corp") && prompt.contains("untrusted"))
             assertEquals(listOf(ConflictVerdict.SAME_EVENT, ConflictVerdict.CONFLICT), readings.map { it.verdict })
             assertEquals(listOf("model", "model"), readings.map { it.by })
-            val alerts = ConflictDetector.alerts(readings)
-            assertEquals(listOf("Design review overlaps Dentist."), alerts.map { it.description })
-            assertEquals(ConflictJudge.OVERLAP, alerts.single().severity)
+            val alerts = ConflictDetector.alerts(readings, ConflictWords(zh = false, zone = ZoneId.of("UTC")))
+            // Said as a person would: names, day and times, the calendar, by how much; never ids.
+            val alert = alerts.single()
+            assertEquals("Design review and Dentist overlap", alert.title)
+            assertEquals("Design review (Fri 09:00–10:00, Work) overlaps Dentist (Fri 09:30–11:00, Main St 4) by 30 minutes.", alert.description)
+            assertEquals(alert.description, alert.explain?.why)
+            assertEquals(3, alert.explain?.steps?.size)
+            assertEquals(listOf("Calendar · Design review · Fri 09:00–10:00", "Calendar · Dentist · Fri 09:30–11:00"), alert.explain?.sources)
+            assertTrue(alert.resolutionOptions.single().payloadJson.contains("Ask before sending anything"))
+            assertEquals(ConflictJudge.OVERLAP, alert.severity)
         }
+    }
+
+    @Test
+    fun conflictsAreWrittenInChineseOnAChinesePhone() {
+        val words = ConflictWords(zh = true, zone = ZoneId.of("UTC"))
+        val alert = ConflictDetector.alerts(listOf(ConflictReading(ConflictCandidate(work, dentist, ConflictJudge.OVERLAP), ConflictVerdict.CONFLICT, null)), words).single()
+        assertEquals("「Design review」和「Dentist」時間重疊", alert.title)
+        assertTrue(alert.description.startsWith("「Design review」（週五 09:00–10:00，Work）和「Dentist」") && alert.description.endsWith("重疊 30 分鐘。"), alert.description)
+        assertEquals("請它提出解決辦法", alert.resolutionOptions.single().label)
     }
 
     @Test

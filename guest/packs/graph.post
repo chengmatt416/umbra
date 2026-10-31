@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Code graphs use graphify in its own environment so its pinned wheels cannot change Debian's Python packages.
+# The system pip installs into it because Debian ships ensurepip separately.
+# Run by `umbra-pack install graph` as root, after the apt packages; safe to run again.
+set -euo pipefail
+umask 022
+
+python3 -m venv --without-pip /opt/graphify
+python3 -m pip --python /opt/graphify/bin/python install --no-deps --require-hashes --only-binary=:all: \
+  --no-input --disable-pip-version-check -r /opt/umbra/packs/graph.requirements
+ln -sfn /opt/graphify/bin/graphify /usr/local/bin/graphify
+graphify --version

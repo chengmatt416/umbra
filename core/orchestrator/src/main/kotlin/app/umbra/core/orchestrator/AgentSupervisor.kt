@@ -35,6 +35,7 @@ data class SessionSpec(
     val routineRunId: String? = null,
     val connectorScope: List<String>? = null,
     val approvalTtlMs: Long? = null,
+    val skills: List<String>? = null,
 )
 
 /** Raised when the device cannot take another running session right now (spec §30). */
@@ -138,6 +139,7 @@ class AgentSupervisor(
         routineRunId: String? = null,
         connectorScope: List<String>? = null,
         approvalTtlMs: Long? = null,
+        skills: List<String>? = null,
     ): Session {
         deps.validateModelInput(request)
         title?.let(deps.validateModelInput)
@@ -167,6 +169,7 @@ class AgentSupervisor(
             routineRunId = routineRunId,
             connectorScope = connectorScope,
             approvalTtlMs = approvalTtlMs,
+            skills = skills,
         )
         return deps.store.create(session)
     }
@@ -179,7 +182,7 @@ class AgentSupervisor(
         deps.admission(projectId, runningByProject())?.let { throw CapacityException(it) }
         deps.serviceAdmission(null)?.let { throw CapacityException(it) }
         governor?.decision?.value?.let { if (!it.allowNewSessions) throw CapacityException(capacityReason()) }
-        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser, usageLimit = spec.usageLimit, turnMode = spec.turnMode, routineRunId = spec.routineRunId, connectorScope = spec.connectorScope, approvalTtlMs = spec.approvalTtlMs)
+        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser, usageLimit = spec.usageLimit, turnMode = spec.turnMode, routineRunId = spec.routineRunId, connectorScope = spec.connectorScope, approvalTtlMs = spec.approvalTtlMs, skills = spec.skills)
         try {
             send(session.id, request, images)
         } catch (e: Exception) {
@@ -207,7 +210,7 @@ class AgentSupervisor(
         if (problem == null && (images.isNotEmpty() || queued().isEmpty())) return@owned launch(request, title, workspaceId, model, projectId, images, effort, spec)
         if (images.isNotEmpty()) throw CapacityException("$problem A request with a picture is not queued; send it again when a slot is free.")
         if (queued().size >= QUEUE_LIMIT) throw CapacityException("${problem ?: "Requests are waiting."} The queue is full ($QUEUE_LIMIT waiting); stop or wait for some.")
-        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser, usageLimit = spec.usageLimit, turnMode = spec.turnMode, routineRunId = spec.routineRunId, connectorScope = spec.connectorScope, approvalTtlMs = spec.approvalTtlMs)
+        val session = create(request, title, workspaceId, model, projectId = projectId, effort = effort, kind = spec.kind, handle = spec.handle, spawnedBy = spec.spawnedBy, agentId = spec.agentId, browser = spec.browser, usageLimit = spec.usageLimit, turnMode = spec.turnMode, routineRunId = spec.routineRunId, connectorScope = spec.connectorScope, approvalTtlMs = spec.approvalTtlMs, skills = spec.skills)
         val waiting = deps.store.update(session.id) { it.copy(queuedAtMs = deps.clock.nowMs()) } ?: session
         wake.trySend(Unit)
         waiting

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An agent's SOUL suggestions and MEMORY details (ui/agents/AgentPages.kt). -->
+<resources>
+    <string name="soul_proposal_from">%1$s suggests</string>
+    <string name="soul_proposal_adds">Add to “%1$s”</string>
+    <string name="soul_proposal_why">Why: %1$s</string>
+    <string name="soul_proposal_accept">Add to SOUL.md</string>
+    <string name="soul_proposal_decline">Not this</string>
+    <string name="ag_memory_about">about %1$s</string>
+    <string name="ag_memory_about_you">you</string>
+    <plurals name="ag_memory_confirmed">
+        <item quantity="one">confirmed %d time</item>
+        <item quantity="other">confirmed %d times</item>
+    </plurals>
+</resources>

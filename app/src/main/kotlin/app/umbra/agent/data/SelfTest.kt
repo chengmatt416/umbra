@@ -111,6 +111,8 @@ class SelfTest(private val container: AppContainer) {
             "${model.provider}/${model.modelId}: “${reply.take(60)}”"
         },
         Step("logs", container.context.getString(app.umbra.agent.R.string.st_logs)) {
+            // The log stream runs only while a task needs it: the check starts it for a few minutes.
+            container.ensureLogMonitor()
             val summary = container.logMonitor.summary()
             if (container.logMonitor.linesSeen == 0L && container.logMonitor.lastError != null) error(container.logMonitor.lastError!!)
             "${container.logMonitor.linesSeen} log lines seen; ${summary.crashes.size} crashes"

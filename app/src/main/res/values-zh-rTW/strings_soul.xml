@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="soul_proposal_from">%1$s 建議</string>
+    <string name="soul_proposal_adds">加到「%1$s」</string>
+    <string name="soul_proposal_why">原因：%1$s</string>
+    <string name="soul_proposal_accept">加進 SOUL.md</string>
+    <string name="soul_proposal_decline">不要</string>
+    <string name="ag_memory_about">關於%1$s</string>
+    <string name="ag_memory_about_you">你</string>
+    <plurals name="ag_memory_confirmed">
+        <item quantity="other">確認過 %d 次</item>
+    </plurals>
+</resources>

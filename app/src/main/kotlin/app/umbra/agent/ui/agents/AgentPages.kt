@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.umbra.agent.R
 import app.umbra.agent.agents.AgentProfile
+import app.umbra.agent.agents.SoulProposal
 import app.umbra.agent.agents.AgentRule
 import app.umbra.agent.agents.AgentState
 import app.umbra.agent.agents.AgentTimer
@@ -62,6 +63,8 @@ import app.umbra.agent.data.UiMode
 import app.umbra.agent.ui.models.EffortPicker
 import app.umbra.agent.ui.models.ModelPicker
 import app.umbra.agent.ui.porcelain.ButtonStyle
+import app.umbra.agent.ui.porcelain.CardStyle
+import app.umbra.agent.ui.porcelain.inkSurface
 import app.umbra.agent.ui.porcelain.Callout
 import app.umbra.agent.ui.porcelain.P
 import app.umbra.agent.ui.porcelain.PButton
@@ -159,6 +162,8 @@ fun AgentProfileScreen(agentId: String, onBack: () -> Unit, onGo: (String) -> Un
             }
             RowGroup {
                 NavRow(PIcons.clock, stringResource(R.string.ag_timers), stringResource(R.string.ag_timers_sub, timers.size, rules.size)) { onGo("agent/$agentId/timers") }
+                NavRow(PIcons.dashboard, stringResource(R.string.dash_profile_row), stringResource(R.string.dash_profile_sub),
+                    value = app.umbra.agent.ui.dashboards.dashboardCount(agentId).takeIf { it > 0 }?.toString()) { onGo("agent/$agentId/dashboards") }
                 NavRow(PIcons.zap, stringResource(R.string.proactive_title), stringResource(R.string.proactive_profile_body)) { onGo("agent/$agentId/proactivity") }
                 NavRow(PIcons.arrowUp, stringResource(R.string.ag_telegram), bot?.let { stringResource(R.string.ag_telegram_linked, it) } ?: stringResource(R.string.ag_telegram_not)) { onGo("agent/$agentId/telegram") }
                 NavRow(PIcons.gauge, stringResource(R.string.ag_model_effort), modelName(p.model) + " · " + effortText(p.effort)) { picker = true }
@@ -200,20 +205,55 @@ fun AgentProfileScreen(agentId: String, onBack: () -> Unit, onGo: (String) -> Un
     )
 }
 
-/** SOUL.md as text: who the agent is and its rules. The agent reads it at every wake. */
+/**
+ * SOUL.md as text: who the agent is and its rules. The agent reads it at every wake. What the agent suggests changing
+ * waits at the top for the user (it never edits SOUL.md itself); accepting adds the text under its section.
+ */
 @Composable
 fun SoulScreen(agentId: String, onBack: () -> Unit) {
     val container = LocalContext.current.container
     val p = agent(agentId) ?: return Gone(onBack)
+    val store = container.agents.store
+    var version by remember { mutableIntStateOf(0) }
     var text by remember(agentId) { mutableStateOf<String?>(null) }
-    LaunchedEffect(agentId) { text = container.agents.store.soul(agentId) }
+    var stored by remember(agentId) { mutableStateOf<String?>(null) }
+    var proposals by remember(agentId) { mutableStateOf(emptyList<SoulProposal>()) }
+    LaunchedEffect(agentId, version) {
+        val soul = store.soul(agentId)
+        stored = soul; text = soul
+        proposals = runCatching { store.soulProposals(agentId).filter { it.state == "pending" }.asReversed() }.getOrDefault(emptyList())
+    }
     var saved by remember { mutableStateOf(false) }
+    // Unsaved edits would be lost when a suggestion is added to the file: they are saved first.
+    val dirty = text != null && text != stored
     PorcelainPage(stringResource(R.string.ag_soul_of, p.name), onBack) {
         Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(stringResource(R.string.ag_soul_body), fontSize = 13.sp, lineHeight = 19.sp, color = P.sub)
+            proposals.forEach { proposal ->
+                SoulProposalCard(proposal, p.name, onAccept = {
+                    if (dirty) text?.let { store.setSoul(agentId, it) }
+                    store.resolveSoulProposal(agentId, proposal.id, true); saved = false; version++
+                }, onDecline = { store.resolveSoulProposal(agentId, proposal.id, false); version++ })
+            }
             text?.let { t -> PField(t, { text = it; saved = false }, minLines = 10) }
             if (saved) Callout(stringResource(R.string.ag_saved), Tone.Good)
-            PButton(stringResource(R.string.action_save), { text?.let { container.agents.store.setSoul(agentId, it) }; saved = true }, Modifier.fillMaxWidth(), enabled = text != null)
+            PButton(stringResource(R.string.action_save), { text?.let { store.setSoul(agentId, it); stored = it.trim() + "\n" }; saved = true }, Modifier.fillMaxWidth(), enabled = text != null)
+        }
+    }
+}
+
+/** A change the agent suggests for its own SOUL.md: where it goes, the words, why, and the user's two answers. */
+@Composable
+private fun SoulProposalCard(proposal: SoulProposal, agentName: String, onAccept: () -> Unit, onDecline: () -> Unit) {
+    val shape = RoundedCornerShape(20.dp)
+    Column(Modifier.fillMaxWidth().inkSurface(shape, CardStyle.Ceramic).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(stringResource(R.string.soul_proposal_from, agentName).uppercase(), color = P.amber, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = .8.sp)
+        Text(stringResource(R.string.soul_proposal_adds, proposal.section), color = P.ink, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        Text(proposal.text, Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(P.highlight).padding(12.dp), color = P.ink, fontSize = 14.sp, lineHeight = 20.sp)
+        Text(stringResource(R.string.soul_proposal_why, proposal.why), color = P.sub, fontSize = 13.sp, lineHeight = 19.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PButton(stringResource(R.string.soul_proposal_accept), onAccept, Modifier.weight(1f), icon = PIcons.check)
+            PButton(stringResource(R.string.soul_proposal_decline), onDecline, style = ButtonStyle.Ghost)
         }
     }
 }
@@ -251,7 +291,7 @@ fun MemoryScreen(agentId: String, onBack: () -> Unit) {
             PField(query, { query = it }, placeholder = stringResource(R.string.ag_memory_search), singleLine = true)
             if (shown.isEmpty()) Text(stringResource(if (entries.isEmpty()) R.string.ag_memory_empty else R.string.ag_memory_none), fontSize = 14.sp, color = P.muted, modifier = Modifier.padding(8.dp))
             else RowGroup {
-                shown.forEach { e -> MemoryRow(e, onEdit = { editing = e }, onDelete = { memory.removeAt(e.index); version++ }) }
+                shown.forEach { e -> MemoryRow(e, onEdit = { editing = e }, onDelete = { memory.remove(e.id, e.text); version++ }) }
             }
             @OptIn(ExperimentalLayoutApi::class)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -271,7 +311,7 @@ fun MemoryScreen(agentId: String, onBack: () -> Unit) {
             confirmButton = {
                 PButton(stringResource(R.string.action_save), {
                     val e = editing
-                    if (e != null) memory.edit(e.text, text) else if (text.isNotBlank()) memory.add(text, you)
+                    if (e != null) memory.edit(e.id, text) else if (text.isNotBlank()) memory.add(text, you)
                     adding = false; editing = null; version++
                 }, enabled = text.isNotBlank())
             },
@@ -306,7 +346,12 @@ private fun MemoryRow(e: Memory.Entry, onEdit: () -> Unit, onDelete: () -> Unit)
     Row(Modifier.fillMaxWidth().clickable(onClick = onEdit).padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(e.text, fontSize = 15.sp, color = P.ink, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            Text("$date · ${e.source}", fontSize = 12.sp, color = P.sub)
+            // Who it is about and how often it held, so a person can tell a passing remark from something it knows well.
+            val you = stringResource(R.string.ag_memory_about_you)
+            val about = e.about.joinToString(", ") { if (it.equals("me", true)) you else it }
+            Text(listOfNotNull("$date · ${e.source}", about.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.ag_memory_about, it) },
+                e.hits.takeIf { it > 1 }?.let { androidx.compose.ui.res.pluralStringResource(R.plurals.ag_memory_confirmed, it, it) }).joinToString(" · "),
+                fontSize = 12.sp, color = P.sub, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         Box {
             PIconButton(PIcons.more, stringResource(R.string.ag_more), { menu = true }, size = 36.dp, tint = P.sub)

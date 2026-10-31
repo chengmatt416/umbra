@@ -15,6 +15,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
+internal class TelegramApiException(val status: Int) : IllegalStateException("Telegram request was rejected (HTTP $status)")
+
 /** Telegram owns file paths; they never select a host, query, or a path outside the bot's download URL. */
 internal class TelegramApi(
     client: OkHttpClient,
@@ -31,9 +33,18 @@ internal class TelegramApi(
         http.newCall(request).execute().use { response ->
             val bytes = response.body.byteStream().use { readBounded(it, response.body.contentLength(), MAX_JSON_BYTES) }
             val parsed = runCatching { UmbraJson.parseToJsonElement(bytes.decodeToString()).jsonObject }.getOrNull()
-            check(response.isSuccessful && parsed?.get("ok")?.jsonPrimitive?.booleanOrNull == true) { "Telegram could not complete $method (HTTP ${response.code})" }
-            parsed["result"] ?: JsonObject(emptyMap())
+            if (!response.isSuccessful || parsed?.get("ok")?.jsonPrimitive?.booleanOrNull != true) throw TelegramApiException(response.code)
+            parsed?.get("result") ?: JsonObject(emptyMap())
         }
+    }
+
+    /** A malformed entity must not hide an otherwise useful answer; transport failures must not duplicate it. */
+    suspend fun callHtml(method: String, body: JsonObject): JsonElement = try {
+        call(method, body)
+    } catch (e: TelegramApiException) {
+        if (e.status != 400) throw e
+        val html = body["text"]?.jsonPrimitive?.contentOrNull ?: throw e
+        call(method, JsonObject(body - "parse_mode" + ("text" to JsonPrimitive(telegramPlain(html)))))
     }
 
     suspend fun download(fileId: String): ByteArray = withContext(Dispatchers.IO) {

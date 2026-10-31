@@ -19,6 +19,7 @@
     <string name="r_menu_nodes">Nodes</string>
     <string name="r_menu_safety">Safety</string>
     <string name="r_menu_developer">Developer</string>
+    <string name="r_menu_skills">Skills</string>
 
     <!-- home -->
     <string name="r_home_title">Tasks</string>

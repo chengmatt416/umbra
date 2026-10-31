@@ -32,6 +32,8 @@ import kotlinx.serialization.json.put
  */
 class DebugControl(private val container: AppContainer) : ControlHandler {
     private val handoffFixtures = container.context.getSharedPreferences("debug-handoff-fixtures", 0)
+    /** The `:laya` process the laya.probe.* commands drive. */
+    @Volatile private var layaProbe: app.umbra.agent.data.laya.LayaProcess? = null
     override suspend fun handle(command: String, args: JsonObject): JsonElement = when (command) {
         "status" -> status()
         "test.watchers.create" -> {
@@ -329,24 +331,45 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             val conflict = app.umbra.agent.agents.proactive.OpportunityCard("demo-conflict", id, app.umbra.agent.agents.proactive.OpportunityCard.Kind.CONFLICT_ALERT,
                 t("Dentist at 14:00 overlaps the client call at 14:30", "14:00 牙醫與 14:30 客戶通話重疊"),
                 t("The clinic is 25 minutes from home. I drafted a reply to move the call to 16:00.", "診所離家 25 分鐘。我擬好了把通話改到 16:00 的回覆。"),
-                listOf("calendar", "whatsapp"), .9, .9,
+                listOf("calendar:demo-dentist", "calendar:demo-acme", "whatsapp:acme"), .9, .9,
                 app.umbra.agent.agents.proactive.PreparedNextStep(t("Review the reschedule draft", "檢視改期草稿"), "send_message_draft", "{\"to\":\"Acme · WhatsApp\",\"text\":\"${t("Could we move our call to 16:00 today? Something came up at 14:00.", "今天的通話可以改到 16:00 嗎？我 14:00 臨時有事。")}\"}",
-                    listOf("16:00", "17:30")), createdAtMs = now - 20 * 60_000)
+                    listOf("16:00", "17:30")), createdAtMs = now - 20 * 60_000,
+                explain = app.umbra.agent.agents.proactive.CardExplanation(
+                    why = t("Your dentist is at 14:00 on Ren'ai Rd, 25 minutes from home, so you can't make the 14:30 call with Acme.", "你 14:00 在仁愛路看牙醫，離家 25 分鐘，趕不上 14:30 和 Acme 的通話。"),
+                    steps = listOf(t("Ask Acme on WhatsApp to move the call to 16:00", "在 WhatsApp 請 Acme 把通話改到 16:00"), t("Update your calendar once they agree", "對方同意後更新你的行事曆")),
+                    needs = t("Check the wording of the message, or pick 17:30 instead.", "看一下訊息的措辭，或改選 17:30。"),
+                    ifIgnored = t("Both stay on your calendar and you'll be late for the call.", "兩個行程都會保留，你會晚到這通電話。"),
+                    sources = listOf(t("Calendar · Dentist, today 14:00", "行事曆 · 牙醫，今天 14:00"), t("Calendar · Client call, today 14:30", "行事曆 · 客戶通話，今天 14:30"))))
             val follow = app.umbra.agent.agents.proactive.OpportunityCard("demo-follow", id, app.umbra.agent.agents.proactive.OpportunityCard.Kind.FOLLOW_UP,
                 t("Lena asked for the Q4 slides twice", "Lena 已經兩次要 Q4 簡報"),
-                t("Last asked yesterday at 18:12. The deck is in /workspace/q4. I can send it after you look.", "最後一次是昨天 18:12。簡報在 /workspace/q4，你看過後我可以傳給她。"),
-                listOf("telegram"), .6, .85, app.umbra.agent.agents.proactive.PreparedNextStep(t("Prepare the reply", "準備回覆"), "agent_turn", "{\"instruction\":\"Prepare a reply to Lena with the Q4 deck\"}"), createdAtMs = now - 2 * hour)
+                t("Last asked yesterday at 18:12. The deck is ready in your Q4 project. I can send it after you look.", "最後一次是昨天 18:12。簡報已在你的 Q4 專案裡，你看過後我可以傳給她。"),
+                listOf("telegram"), .6, .85, app.umbra.agent.agents.proactive.PreparedNextStep(t("Prepare the reply", "準備回覆"), "agent_turn", "{\"instruction\":\"Prepare a reply to Lena with the Q4 deck\"}"), createdAtMs = now - 2 * hour,
+                explain = app.umbra.agent.agents.proactive.CardExplanation(
+                    why = t("Lena asked for the Q4 slides yesterday and again this morning; she presents them on Friday.", "Lena 昨天和今天早上都在要 Q4 簡報，她星期五要報告。"),
+                    steps = listOf(t("Write a short reply to Lena with the Q4 deck attached", "寫一則附上 Q4 簡報的簡短回覆給 Lena"), t("Show you the reply before anything is sent", "傳送前先給你看回覆")),
+                    ifIgnored = t("Lena keeps waiting for the slides.", "Lena 會繼續等這份簡報。"),
+                    sources = listOf(t("Telegram · Lena, yesterday 18:12", "Telegram · Lena，昨天 18:12"))))
             val price = app.umbra.agent.agents.proactive.OpportunityCard("demo-price", id, app.umbra.agent.agents.proactive.OpportunityCard.Kind.PRICE_OR_MONITOR,
                 t("Ryokan in Higashiyama dropped to ¥23,800", "東山的旅館降到 ¥23,800"),
                 t("Your watcher matched at 07:55. Free cancellation until 3 days before.", "監測器在 07:55 觸發，入住前 3 天可免費取消。"),
-                listOf("watcher:ryokan"), .5, .8, app.umbra.agent.agents.proactive.PreparedNextStep(t("Add it to the Kyoto plan", "加入京都行程"), "agent_turn", "{\"instruction\":\"Add the Higashiyama ryokan to the Kyoto goal shortlist\"}"), createdAtMs = now - 3 * hour)
+                listOf("watcher:ryokan"), .5, .8, app.umbra.agent.agents.proactive.PreparedNextStep(t("Add it to the Kyoto plan", "加入京都行程"), "agent_turn", "{\"instruction\":\"Add the Higashiyama ryokan to the Kyoto goal shortlist\"}"), createdAtMs = now - 3 * hour,
+                explain = app.umbra.agent.agents.proactive.CardExplanation(
+                    why = t("The quiet ryokan in Higashiyama you were watching is now ¥23,800 a night, under your ¥25,000 limit.", "你在留意的東山安靜旅館降到每晚 ¥23,800，低於你設的 ¥25,000。"),
+                    steps = listOf(t("Add it to the Kyoto trip's shortlist", "把它加進京都行程的候選清單"), t("Compare it with the two places already there", "和清單上原有的兩間比較")),
+                    ifIgnored = t("The price may go back up; free cancellation ends 3 days before check-in.", "價格可能回漲；入住前 3 天就不能免費取消。"),
+                    sources = listOf(t("Watching “Ryokan under ¥25,000” · today 07:55", "留意「旅館低於 ¥25,000」· 今天 07:55"))))
             val refund = app.umbra.agent.agents.proactive.OpportunityCard("demo-refund", id, app.umbra.agent.agents.proactive.OpportunityCard.Kind.TASK_DISCOVERY,
                 t("Two Shopee orders look late", "兩筆蝦皮訂單似乎延遲"),
                 t("Both were due yesterday. I can check their delivery status and whether a refund is needed.", "兩筆都應在昨天送達。我可以檢查到貨狀態，以及是否需要申請退款。"),
                 listOf("notifications"), .55, .8,
                 app.umbra.agent.agents.proactive.PreparedNextStep(t("Check the orders", "檢查訂單"), "agent_turn",
                     "{\"task\":\"${t("Check the Shopee delivery status and whether a refund is needed", "檢查蝦皮到貨狀態及是否需申請退款")}\",\"order_ids\":[\"261015N0V335KM\",\"261016R2XU2G7H\"]}"),
-                createdAtMs = now - 40 * 60_000)
+                createdAtMs = now - 40 * 60_000,
+                explain = app.umbra.agent.agents.proactive.CardExplanation(
+                    why = t("Your phone case and the HDMI cable from Shopee were due yesterday and still show “in transit”.", "你在蝦皮買的手機殼和 HDMI 線應該昨天送到，但還顯示「運送中」。"),
+                    steps = listOf(t("Look up where both parcels are", "查詢兩個包裹的位置"), t("Tell you if either qualifies for a refund", "告訴你是否有哪一筆可以退款"), t("Prepare the refund request for you to send", "準備好退款申請讓你送出")),
+                    ifIgnored = t("Shopee's refund window for late orders closes in 5 days.", "蝦皮延遲訂單的退款期限 5 天後截止。"),
+                    sources = listOf(t("Shopee notifications · yesterday", "蝦皮通知 · 昨天"))))
             listOf(conflict, follow, price, refund).forEach { card ->
                 store.saveOpportunity(card)
                 store.stage(id, app.umbra.agent.agents.proactive.AttentionItem(card.id, card.title, card.summary, card.urgency, .8, card.confidence, "demo", card.createdAtMs,
@@ -356,7 +379,15 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
             store.saveBrief(id, app.umbra.agent.agents.proactive.DailyBrief("brief_${today}_morning", today, app.umbra.agent.agents.proactive.DailyBrief.Kind.MORNING,
                 t("A light day: one conflict to settle, and the Kyoto plan is nearly ready.", "今天不忙：有一個衝突要處理，京都行程快完成了。"),
                 scheduleHighlights = listOf(app.umbra.agent.agents.proactive.BriefItem("10:00", t("Stand-up · notes ready", "站立會議 · 筆記已備好")), app.umbra.agent.agents.proactive.BriefItem("14:00", t("Dentist · Ren'ai Rd", "牙醫 · 仁愛路")), app.umbra.agent.agents.proactive.BriefItem("14:30", t("Client call · Acme", "客戶通話 · Acme"))),
-                conflictsDetected = listOf(app.umbra.agent.agents.proactive.ConflictAlert("cf1", "hard_overlap", t("Dentist 14:00 and the client call 14:30 overlap; the clinic is 25 min from home.", "14:00 牙醫與 14:30 客戶通話重疊；診所離家 25 分鐘。"), listOf("calendar"))),
+                conflictsDetected = listOf(app.umbra.agent.agents.proactive.ConflictAlert("cf1", app.umbra.agent.agents.proactive.ConflictJudge.OVERLAP,
+                    t("Dentist (today 14:00–15:00, Personal) overlaps Client call (today 14:30–15:00, Work) by 30 minutes.", "「牙醫」（今天 14:00–15:00，個人）和「客戶通話」（今天 14:30–15:00，工作）重疊 30 分鐘。"), listOf("calendar:demo-dentist", "calendar:demo-acme"),
+                    listOf(app.umbra.agent.agents.proactive.PreparedNextStep(t("Ask for a fix", "請它提出解決辦法"), "agent_turn", "{\"instruction\":\"The user asked from their brief: suggest how to resolve the clash between the dentist at 14:00 and the client call at 14:30. Ask before sending anything or editing either event.\"}")),
+                    title = t("Dentist and Client call overlap", "「牙醫」和「客戶通話」時間重疊"),
+                    explain = app.umbra.agent.agents.proactive.CardExplanation(
+                        why = t("Dentist (today 14:00–15:00, Personal) overlaps Client call (today 14:30–15:00, Work) by 30 minutes.", "「牙醫」（今天 14:00–15:00，個人）和「客戶通話」（今天 14:30–15:00，工作）重疊 30 分鐘。"),
+                        steps = listOf(t("Compare both events and who is invited, and suggest which to move", "比較兩個行程與受邀的人，建議移動哪一個"), t("Draft the message or the calendar change", "草擬改時間的訊息或行事曆變更"), t("Show it to you first: nothing is sent or changed until you agree", "先給你看，你同意前不會傳送或修改任何行程")),
+                        ifIgnored = t("Both stay on your calendar as they are.", "兩個行程都維持原樣。"),
+                        sources = listOf(t("Calendar · Dentist · today 14:00–15:00", "行事曆 · 牙醫 · 今天 14:00–15:00"), t("Calendar · Client call · today 14:30–15:00", "行事曆 · 客戶通話 · 今天 14:30–15:00"))))),
                 tasks = app.umbra.agent.agents.proactive.BriefTasks.of(container.sessionStore.list(app.umbra.core.session.SessionFilter(limit = Int.MAX_VALUE)), id, now, sinceMs = Long.MIN_VALUE, conversationId = container.agents.store.get(id)?.sessionId),
                 attentionNeeded = listOf(conflict),
                 lowPriorityDigest = t("Package arrives tomorrow. Two newsletters saved for the weekend.", "包裹明天到。兩份電子報留到週末看。"), generatedAtMs = now - 2 * hour))
@@ -673,6 +704,30 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
                 }
             }
         }
+        // Laya's process lifecycle with a small model ({"path": a .tflite the app can read}): "open" starts a process and
+        // opens it on the CPU, keeping it (a second "open" without "stop" leaves the first one behind, as a lost process
+        // would be); "call" makes one binder call into it (freeze it first with `am freeze --sticky <pid>` to see what a
+        // phone that freezes background apps does); "stop" ends it.
+        "laya.probe.open" -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val process = app.umbra.agent.data.laya.LayaProcess.start(container.context)
+            layaProbe = process
+            val result = try { process.open(java.io.File(str(args, "path")), app.umbra.agent.data.laya.LayaBackend.CPU, false); "opened" }
+                catch (e: Exception) { e.message ?: e.javaClass.simpleName }
+            buildJsonObject { put("pid", process.pid); put("result", result) }
+        }
+        "laya.probe.call" -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val process = layaProbe ?: error("no probe process")
+            val result = try { "ok: " + process.accelerators().sorted().joinToString(",") }
+                catch (e: app.umbra.agent.data.laya.LayaProcessDied) { "died: ${e.reason.text} (paused=${e.reason.paused})" }
+                catch (e: Exception) { "failed: ${e.message}" }
+            buildJsonObject { put("pid", process.pid); put("result", result); put("alive", app.umbra.agent.data.laya.LayaProcess.alive(process.pid)) }
+        }
+        "laya.probe.stop" -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val process = layaProbe ?: error("no probe process")
+            process.stop()
+            layaProbe = null
+            buildJsonObject { put("pid", process.pid); put("alive", app.umbra.agent.data.laya.LayaProcess.alive(process.pid)) }
+        }
         // Opens a file that does not exist on each processor in a bare :laya process: the refusal must be about the
         // file, which shows the processor was read correctly (no model is loaded).
         "laya.open.probe" -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -724,6 +779,19 @@ class DebugControl(private val container: AppContainer) : ControlHandler {
         "workspace.create" -> {
             val ws = container.workspaces.create(str(args, "name"))
             buildJsonObject { put("id", ws.id); put("host_path", File(container.guest.layout.workspaces, "projects/${ws.id}").path) }
+        }
+        "test.tool.call" -> {
+            // One of a session's app tools (dashboards, cards, skills…), called the way omp calls it, so a tool and the
+            // screens it feeds can be checked without a model. With "agent", the agent's own tools are included.
+            val agentId = (args["agent"] as? JsonPrimitive)?.content
+            val host = container.toolHost(str(args, "session"), agentId, agentConversation = agentId != null)
+            val id = "debug-" + System.nanoTime()
+            val payload = host.handle(app.umbra.runtime.omp.HostToolCall(id, id, str(args, "name"), args["arguments"] as? JsonObject ?: JsonObject(emptyMap())),
+                app.umbra.runtime.omp.HostToolProgress { })
+            buildJsonObject {
+                put("error", payload.isError)
+                put("text", payload.content.filterIsInstance<app.umbra.runtime.omp.ContentBlock.Text>().joinToString("\n") { it.text })
+            }
         }
         "test.task.fixture" -> {
             val session = container.supervisor.create("Synthetic task controls verification", title = "Task controls QA")

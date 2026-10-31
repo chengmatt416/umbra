@@ -18,10 +18,73 @@ class ResourceGovernorTest {
 
     private class Script(var sample: ResourceSample) : ResourceSampler {
         var failNext = false
+        var calls = 0
         override suspend fun sample(): ResourceSample {
+            calls++
             if (failNext) { failNext = false; error("sensor unavailable") }
             return sample
         }
+    }
+
+    @Test
+    fun idleSamplingWakesImmediatelyWhenASessionStarts() = runTest {
+        val script = Script(good)
+        val g = ResourceGovernor(script, intervalMs = 1_000)
+        val loop = g.start(backgroundScope)
+        runCurrent()
+        assertEquals(1, script.calls)
+        advanceTimeBy(29_999)
+        runCurrent()
+        assertEquals(1, script.calls)
+        assertTrue(g.tryStartSession())
+        runCurrent()
+        assertEquals(2, script.calls)
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(3, script.calls)
+        g.endSession()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(4, script.calls)
+        advanceTimeBy(29_999)
+        runCurrent()
+        assertEquals(4, script.calls)
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(5, script.calls)
+        loop.cancel()
+    }
+
+    @Test
+    fun underPressureSamplingKeepsItsPaceAndRestsOnlyOnceNormal() = runTest {
+        val script = Script(low)
+        val g = ResourceGovernor(script, intervalMs = 1_000)
+        val loop = g.start(backgroundScope)
+        runCurrent()
+        assertEquals(1, script.calls)
+        val work = async { g.withAdmission(WorkClass.EXPENSIVE) { error("pressure should hold this work") } }
+        runCurrent()
+        // Short of power: work waits, and every interval a sample decides whether it may run.
+        repeat(2) { advanceTimeBy(1_000); runCurrent() }
+        assertEquals(3, script.calls)
+        work.cancel()
+        runCurrent()
+        // Nothing waits any more, but the pressure stays: the normal pace holds, since the next sample decides when a
+        // new task may start again.
+        repeat(2) { advanceTimeBy(1_000); runCurrent() }
+        assertEquals(5, script.calls)
+        // Pressure gone: once the decision is back to normal and nothing runs or waits, sampling rests.
+        script.sample = good
+        repeat(30) { if (g.decision.value.level != PressureLevel.NORMAL) { advanceTimeBy(1_000); runCurrent() } }
+        assertEquals(PressureLevel.NORMAL, g.decision.value.level)
+        val calls = script.calls
+        advanceTimeBy(29_999)
+        runCurrent()
+        assertEquals(calls, script.calls)
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(calls + 1, script.calls)
+        loop.cancel()
     }
 
     @Test
@@ -38,7 +101,7 @@ class ResourceGovernorTest {
     @Test
     fun theLoopKeepsRunningWhenTheSamplerFails() = runTest {
         val script = Script(low)
-        val g = ResourceGovernor(script, intervalMs = 1_000)
+        val g = ResourceGovernor(script, intervalMs = 1_000, idleIntervalMs = 1_000)
         val job = g.start(backgroundScope)
         runCurrent()
         assertEquals(PressureLevel.HIGH, g.decision.value.level)

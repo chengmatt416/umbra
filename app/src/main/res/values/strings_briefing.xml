@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Briefing page and every place an agent asks the user to decide (ui/agents/Decisions.kt): plain sentences, never ids or data. -->
+<resources>
+    <string name="briefing_decide_title">Needs your decision</string>
+    <string name="briefing_decide_note">Nothing is sent or changed until you confirm.</string>
+    <string name="briefing_all_clear_title">Nothing needs you right now</string>
+    <string name="briefing_all_clear_body">%1$s keeps watching and brings anything new to your next brief.</string>
+    <string name="briefing_today">Today’s brief</string>
+    <string name="briefing_latest">Latest brief</string>
+    <string name="briefing_handled">Recently handled</string>
+    <string name="briefing_conflicts_above">Waiting above for your decision (%1$d).</string>
+    <string name="briefing_status_next">Next brief at %1$s</string>
+    <string name="briefing_status_next_tomorrow">Next brief tomorrow at %1$s</string>
+    <string name="briefing_status_no_briefs">No briefs scheduled</string>
+    <string name="briefing_status_off">Proactive help is off</string>
+    <plurals name="briefing_waiting">
+        <item quantity="one">%d waiting for you</item>
+        <item quantity="other">%d waiting for you</item>
+    </plurals>
+
+    <string name="decision_if_confirm">If you confirm, %1$s will</string>
+    <string name="decision_if_ask">If you ask, %1$s will</string>
+    <string name="decision_needs">What it needs from you</string>
+    <string name="decision_if_ignored_line">If you do nothing: %1$s</string>
+    <string name="decision_based_on">Based on</string>
+    <string name="decision_not_now">Not now</string>
+    <string name="decision_fewer">Fewer like this</string>
+    <string name="decision_review">Review</string>
+    <string name="decision_due">Decide by %1$s</string>
+    <string name="decision_kind_maybe_clash">May clash</string>
+    <string name="decision_confirm_eyebrow">%1$s is waiting for your OK</string>
+    <string name="decision_message_label">The message (edit it if you like)</string>
+    <string name="decision_message_hint">When you confirm, it prepares exactly this message. You approve the final words once more before anything is sent.</string>
+    <string name="decision_note_label">Anything it should know? (optional)</string>
+    <string name="decision_note_hint">For example “keep it short” or “use my work email”</string>
+
+    <string name="decision_step_draft_to">Write the message to %1$s for you to check</string>
+    <string name="decision_step_draft">Write the message for you to check</string>
+    <string name="decision_step_send_after">Send it only after you approve the final words</string>
+    <string name="decision_step_coding">Start a coding session on this phone: %1$s</string>
+    <string name="decision_step_report">Tell you what happened when it’s done</string>
+    <string name="decision_step_goal">Create the goal “%1$s”</string>
+    <string name="decision_step_goal_steps">Plan it in %1$d steps; nothing starts on its own</string>
+    <string name="decision_step_skill">Run “%1$s” for you</string>
+    <string name="decision_safe_message">You’ll see the final message before anything is sent.</string>
+    <string name="decision_safe_coding">It runs on this phone, and you can stop it at any time.</string>
+    <string name="decision_safe_goal">A goal never acts on its own until you allow it.</string>
+    <string name="decision_safe_default">Nothing is sent or changed until you confirm.</string>
+    <string name="decision_safe_conflict">It only prepares a fix: nothing is sent or moved without your OK.</string>
+
+    <string name="source_calendar">Calendar</string>
+    <string name="source_email">Email</string>
+    <string name="source_watcher">Something it watches</string>
+    <string name="source_watcher_named">Watching “%1$s”</string>
+    <string name="source_notification">A notification</string>
+    <string name="source_web">A web page</string>
+    <string name="source_file">A file</string>
+    <string name="source_git">Git</string>
+    <string name="source_memory">What it remembers about you</string>
+    <string name="source_goal">One of your goals</string>
+    <string name="source_tasks">Your tasks</string>
+    <string name="source_contacts">Contacts</string>
+    <string name="source_sms">Text messages</string>
+    <string name="source_messages">Messages</string>
+    <string name="source_chat">%1$s chat</string>
+</resources>

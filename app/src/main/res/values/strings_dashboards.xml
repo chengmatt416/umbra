@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Live dashboards an agent keeps (2026-10-28) -->
+    <string name="dash_title">Dashboard</string>
+    <string name="dash_actions">Dashboard actions</string>
+    <string name="dash_live_now">Live · just updated</string>
+    <string name="dash_live_ago">Live · updated %1$s</string>
+    <string name="dash_paused">Paused</string>
+    <string name="dash_error">Needs attention</string>
+    <string name="dash_kept_by">kept by %1$s</string>
+    <string name="dash_refresh_now">Ask for a refresh now</string>
+    <string name="dash_refresh_message">Please refresh the dashboard “%1$s” (%2$s) now and tell me what changed.</string>
+    <string name="dash_asked">Asked %1$s to refresh it. New values appear here as they arrive.</string>
+    <string name="dash_pause">Pause</string>
+    <string name="dash_resume">Resume</string>
+    <string name="dash_stop_schedule">Stop the scheduled refresh</string>
+    <string name="dash_open_chat">Open %1$s’s chat</string>
+    <string name="dash_remove">Remove</string>
+    <string name="dash_remove_title">Remove “%1$s”?</string>
+    <string name="dash_remove_body">The dashboard and its scheduled refresh are deleted. The files and folders it watches are not touched.</string>
+    <string name="dash_no_tiles">%1$s has not added anything yet.</string>
+    <string name="dash_gone_title">Dashboard removed</string>
+    <string name="dash_gone_body">This dashboard no longer exists.</string>
+    <string name="dash_sources">Where the numbers come from</string>
+    <string name="dash_sources_body">Tiles linked to a file or folder update by themselves when it changes.</string>
+    <string name="dash_source_file">File</string>
+    <string name="dash_source_agent">The agent</string>
+    <string name="dash_source_tasks">Coding sessions</string>
+    <string name="dash_source_error">Could not read it: %1$s. The tiles keep their last values.</string>
+    <string name="dash_source_model">The agent updates these when it looks again.</string>
+    <string name="dash_source_tasks_live">Follows its coding sessions as they run.</string>
+    <string name="dash_source_watching">Watching for changes</string>
+    <string name="dash_source_watching_ago">Watching · last read %1$s</string>
+    <string name="dash_schedule">Refresh</string>
+    <string name="dash_schedule_none">No schedule</string>
+    <string name="dash_schedule_none_body">The agent updates it when you ask, or when a source changes.</string>
+    <string name="dash_schedule_cron">On a schedule (%1$s)</string>
+    <string name="dash_schedule_next">Next: %1$s</string>
+    <string name="dash_history">Recent changes · %1$d</string>
+    <string name="dash_hist_file">%1$s changed</string>
+    <string name="dash_hist_folder">Something changed in %1$s</string>
+    <string name="dash_hist_tasks">Its coding sessions moved on</string>
+    <string name="dash_hist_created">Dashboard started</string>
+    <string name="dash_hist_updated">Dashboard updated</string>
+    <string name="dash_hist_schedule">Refresh schedule changed</string>
+    <string name="dash_hist_unscheduled">Scheduled refresh stopped</string>
+    <string name="dash_list_title">Dashboards</string>
+    <string name="dash_list_empty_title">No dashboards yet</string>
+    <string name="dash_list_empty_body">Ask %1$s to keep an eye on something that changes, such as a budget, a nightly build or a folder of invoices, and it can start a live dashboard here.</string>
+    <plurals name="dash_tiles">
+        <item quantity="one">%1$d tile</item>
+        <item quantity="other">%1$d tiles</item>
+    </plurals>
+    <string name="dash_watches">watches %1$s</string>
+    <string name="dash_chat_eyebrow">Live dashboard</string>
+    <string name="dash_chat_removed">Removed</string>
+    <string name="dash_button">Dashboards · %1$d</string>
+    <string name="dash_profile_row">Dashboards</string>
+    <string name="dash_profile_sub">Live pages it keeps up to date</string>
+</resources>

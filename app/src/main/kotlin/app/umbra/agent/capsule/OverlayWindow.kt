@@ -77,10 +77,15 @@ internal class OverlayWindow(
         windowManager.addView(frame, params)
     }
 
-    /** Changes the window's layout (size, position, focusability) in place. */
+    /**
+     * Changes the window's layout (size, position, focusability) in place. A change that changes nothing is not sent:
+     * every update is a relayout in the window manager (and a "windows changed" event for accessibility services).
+     */
     fun update(change: (WindowManager.LayoutParams) -> Unit) {
         if (closed) return
+        val before = WindowManager.LayoutParams().apply { copyFrom(params) }
         change(params)
+        if (before.copyFrom(params) == 0) return
         runCatching { windowManager.updateViewLayout(frame, params) }
     }
 

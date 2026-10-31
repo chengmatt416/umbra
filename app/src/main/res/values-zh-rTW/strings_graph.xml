@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pack_graph">知識圖譜</string>
+    <string name="pack_graph_d">使用 graphify 建立程式碼與助理記憶的知識圖譜，在本機查詢，不產生 API 費用</string>
+</resources>

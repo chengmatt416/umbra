@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pack_graph">Knowledge graphs</string>
+    <string name="pack_graph_d">graphify for code and agent memory graphs, with local queries and no API cost</string>
+</resources>

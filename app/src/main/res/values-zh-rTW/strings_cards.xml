@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="card_copy">複製</string>
+    <string name="card_copied">已複製</string>
+    <string name="card_send">送出</string>
+    <string name="card_sent">已送出：%1$s</string>
+    <string name="card_done_of">已完成 %1$d / %2$d</string>
+    <string name="card_checklist_done">完成</string>
+    <string name="card_checklist_left">還沒</string>
+    <string name="card_days">天</string>
+    <string name="card_hours">小時</string>
+    <string name="card_minutes">分</string>
+    <string name="card_seconds">秒</string>
+    <string name="card_open_link_title">要開啟這個連結嗎？</string>
+    <string name="card_open_link_body">會在瀏覽器開啟 %1$s。</string>
+    <string name="card_open">開啟</string>
+    <string name="card_unknown">無法顯示這張卡片（%1$s）。</string>
+</resources>

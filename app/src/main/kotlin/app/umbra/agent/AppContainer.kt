@@ -74,6 +74,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onSubscription
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -276,6 +278,7 @@ class AppContainer(val context: Context) {
 
     /** The shared workspace tree, seen from the phone (host) and from Linux (`/workspace`). */
     val workspaceLayout = WorkspaceLayout(hostRoot = File(guest.layout.workspaces).toPath(), guestRoot = "/workspace", stagingRoot = "/data/local/tmp/umbra")
+    val graphs by lazy { app.umbra.agent.data.Graphs(this) }
 
     val backends: BackendRegistry = ShellDevice.backends(
         shell = shellUser,
@@ -378,14 +381,14 @@ class AppContainer(val context: Context) {
         UmbraToolHost(
             pipeline, sessionId, decisions, exclude = { it.startsWith("gui_") && !desktop },
             // Every session can talk to the others; an agent's conversation also gets its memory, timers and the rest.
-            extra = sessionTools.forSession(sessionId, allowSubagents = !assistant) + app.umbra.core.orchestrator.WaitTools(sessionStore, supervisor, sessionBus) { command, timeoutMs ->
+            extra = sessionTools.forSession(sessionId, allowSubagents = !assistant) + cardTools.forSession(sessionId) + app.umbra.core.orchestrator.WaitTools(sessionStore, supervisor, sessionBus) { command, timeoutMs ->
                 if (guest.state.value != GuestManager.State.Ready) null else {
                     val workspace = sessionStore.get(sessionId)?.workspaceId?.let { workspaces.get(it) }
                     val cwd = workspace?.let { workspaces.guestPath(it.id) } ?: "/home/agent"
                     guest.runtime.exec(listOf("bash", "-c", command), cwd = cwd, timeoutMs = timeoutMs).exitCode
                 }
             }.forSession(sessionId) + app.umbra.core.orchestrator.DeliverableTools(sessionStore, workspaces, environment).forSession(sessionId) + synthesizedTools.forSession(sessionId, profile?.id) + skillWorkflows.forSession(sessionId, profile?.id) + demonstrations.forSession(profile?.id) + credentialHandoff.tools(sessionId) + connectors.messages.tools(sessionId, profile?.id) + remoteNodeTools.forSession(sessionId) +
-                (profile?.takeIf { assistant }?.let { agentTools.forAgent(it.id, sessionId) + proactiveTools.forAgent(it.id, sessionId) + teams.forSession(it.id, sessionId) } ?: emptyList()),
+                (profile?.takeIf { assistant }?.let { agentTools.forAgent(it.id, sessionId) + skillInstallTools.forAgent(it.id, sessionId) + dashboardTools.forAgent(it.id, sessionId) + proactiveTools.forAgent(it.id, sessionId) + teams.forSession(it.id, sessionId) } ?: emptyList()),
         )
     }
 
@@ -405,6 +408,45 @@ class AppContainer(val context: Context) {
     /** The agents: profiles, their wake loop, their conversations (docs/design/agents-2026-10.md §6–§9). */
     val agents by lazy { app.umbra.agent.agents.AgentRuntime(this) }
     val agentTools by lazy { app.umbra.agent.agents.AgentTools(this) }
+    /** Agent skills from GitHub: search, what is installed where, and the agents' install tools (2026-10-28). */
+    val skillHub by lazy { app.umbra.agent.skills.SkillHub.forContainer(this) }
+    val installedSkills by lazy { app.umbra.agent.skills.InstalledSkills.forContainer(this, skillHub) }
+    val skillInstallTools by lazy { app.umbra.agent.skills.SkillInstallTools(this, skillHub, installedSkills) }
+    /** HTML artifacts to the user's own Cloudflare Pages account, from a preview's Publish chip (2026-10-28). */
+    val pagesPublisher by lazy { app.umbra.agent.publish.PagesPublisher(context.filesDir, secrets) }
+
+    /** Intelligent cards (2026-10-28): show_card and card_templates for every session, and what was ticked on them. */
+    val cardTools by lazy { app.umbra.agent.cards.CardTools() }
+    val cardStates by lazy { app.umbra.agent.cards.CardStates(context.filesDir) }
+
+    /** Live dashboards agents keep (2026-10-28): the pages, their file and folder watching, the agents' tools. */
+    private val ASK_GUIDE = "When you need the user's decision or a missing detail to continue, ask with the ask tool rather than guessing: " +
+        "2–5 short options when the choices are known (mark the recommended one), no options for a free-text answer. " +
+        "The question pops up on the user's phone and Telegram and the session waits, so ask only what you cannot decide yourself."
+    val dashboards by lazy { app.umbra.agent.dashboards.DashboardStore(File(context.filesDir, "agents")) { id -> agents.store.timers(id) } }
+    /** How many dashboard screens are open: the sources' fallback poll runs only while someone is looking. */
+    val dashboardViewers = kotlinx.coroutines.flow.MutableStateFlow(0)
+    val dashboardTools by lazy { app.umbra.agent.dashboards.DashboardTools(dashboards, agents.store, reschedule = { agents.reschedule() }) }
+    val dashboardSources by lazy {
+        app.umbra.agent.dashboards.DashboardSources(
+            dashboards,
+            toHost = { guest -> workspaceLayout.toHost(guest)?.toFile() },
+            visible = dashboardViewers.map { it > 0 }.distinctUntilChanged().stateIn(scope, kotlinx.coroutines.flow.SharingStarted.Eagerly, false),
+            sessions = { sessionStore.list(app.umbra.core.session.SessionFilter(limit = Int.MAX_VALUE)) },
+            sessionChanges = sessionStore.changes.map { },
+            // A watched file changed under tiles only the agent can fill: it looks again through its own timers, so
+            // quiet hours and its wake budget still hold. One pending look per dashboard; a newer change replaces it.
+            onAgentRefresh = { d, source, summary ->
+                val id = app.umbra.agent.dashboards.DashboardTools.changeTimerId(d.id)
+                val note = "Dashboard \"${d.title}\" (${d.id}): ${source.path ?: source.kind.name.lowercase()} changed. $summary Update the tiles that are not bound to it."
+                val now = System.currentTimeMillis()
+                agents.store.setTimers(d.agentId, agents.store.timers(d.agentId).filterNot { it.id == id } +
+                    app.umbra.agent.agents.AgentTimer(id, note.take(600), now, setBy = "dashboard", createdAtMs = now))
+                agents.reschedule()
+            },
+            onError = { android.util.Log.w("Dashboards", "sources", it) },
+        )
+    }
     val proactiveTools by lazy { app.umbra.agent.agents.proactive.ProactiveTools(this) }
     val personalContext by lazy { app.umbra.agent.agents.proactive.PersonalContext(this) }
     val skills by lazy { app.umbra.agent.agents.proactive.SkillStore(File(context.filesDir, "skills")) }
@@ -481,6 +523,44 @@ class AppContainer(val context: Context) {
     )
 
     private val logStreamRebound = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val logMonitorRequests = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+    private val logMonitorLock = kotlinx.coroutines.sync.Mutex()
+    private val logMonitorUntilMs = java.util.concurrent.atomic.AtomicLong(0)
+    // SessionStore reads suspend; the health loop uses the same observed activity without blocking a thread.
+    @Volatile
+    private var logMonitorSessionsActive = false
+
+    /** A stopped logcat is healthy between tasks; keep collecting briefly after work for delayed crash evidence. */
+    val logMonitorWanted: Boolean get() = logMonitorSessionsActive || android.os.SystemClock.elapsedRealtime() < logMonitorUntilMs.get()
+
+    /** Diagnostics can borrow the same grace period without leaving a logcat running all day. */
+    suspend fun ensureLogMonitor() {
+        logMonitorUntilMs.updateAndGet { maxOf(it, android.os.SystemClock.elapsedRealtime() + 3 * 60_000) }
+        logMonitorRequests.trySend(Unit)
+        startLogMonitor()
+    }
+
+    /** Session changes drive collection; there is no polling timer while no session needs the log. */
+    private suspend fun watchLogMonitor() = kotlinx.coroutines.coroutineScope {
+        launch {
+            sessionStore.changes.onSubscription {
+                logMonitorSessionsActive = sessionStore.list().any { it.state.isActive }
+                logMonitorRequests.trySend(Unit)
+            }
+                .filter { it !is app.umbra.core.session.StoreChange.EventAppended }
+                .map { sessionStore.list().any { it.state.isActive } }.distinctUntilChanged().collect { active ->
+                    if (logMonitorSessionsActive && !active) logMonitorUntilMs.updateAndGet { maxOf(it, android.os.SystemClock.elapsedRealtime() + 3 * 60_000) }
+                    logMonitorSessionsActive = active
+                    logMonitorRequests.trySend(Unit)
+                }
+        }
+        while (true) {
+            if (logMonitorWanted) startLogMonitor() else logMonitor.stop()
+            val remaining = logMonitorUntilMs.get() - android.os.SystemClock.elapsedRealtime()
+            if (logMonitorSessionsActive || remaining <= 0) logMonitorRequests.receive()
+            else kotlinx.coroutines.withTimeoutOrNull(remaining) { logMonitorRequests.receive() }
+        }
+    }
 
     /**
      * Starts the log stream once root or the helper can run it. A `logcat` the app starts itself is a process of the
@@ -488,10 +568,14 @@ class AppContainer(val context: Context) {
      * give them a few seconds. With neither (no Linux environment, so no agent), the app's own shell does it.
      */
     suspend fun startLogMonitor() {
-        kotlinx.coroutines.withTimeoutOrNull(10_000) {
-            while (!(runCatching { rootShell.isAvailable() }.getOrDefault(false) || runCatching { helper.client.isUp() }.getOrDefault(false))) kotlinx.coroutines.delay(500)
-        }
-        logMonitor.start()
+        logMonitorLock.lock()
+        try {
+            if (!logMonitorWanted || logMonitor.isRunning) return
+            kotlinx.coroutines.withTimeoutOrNull(10_000) {
+                while (!(runCatching { rootShell.isAvailable() }.getOrDefault(false) || runCatching { helper.client.isUp() }.getOrDefault(false))) kotlinx.coroutines.delay(500)
+            }
+            if (logMonitorWanted) logMonitor.start()
+        } finally { logMonitorLock.unlock() }
     }
 
     /** Makes the Linux environment ready for an agent: mounted, secured, its scripts current, no log stream running as the app. */
@@ -507,7 +591,7 @@ class AppContainer(val context: Context) {
      * starts, the log stream is started again so it runs as the shell user or root, which are other uids.
      */
     private fun rebindLogStream() {
-        if (logStreamRebound.compareAndSet(false, true)) logMonitor.restart()
+        if (logStreamRebound.compareAndSet(false, true) && logMonitor.isRunning) logMonitor.restart()
     }
 
     /** omp's state directory for a profile, written by the app directly (for probes outside a session). */
@@ -596,9 +680,12 @@ class AppContainer(val context: Context) {
                 val files = sessionFiles.prompt(s)
                 val profile = if (s.kind != app.umbra.core.session.SessionKind.AGENT) null
                 else s.agentId?.let { id -> agents.store.get(id) }?.let { p ->
-                    app.umbra.agent.agents.AgentPrompt.of(p, agents.store.soul(p.id), agents.store.memory(p.id).contextual(s.request) + agents.store.teamMemory().contextual(s.request), agents.intervalMs(p)?.let { (it / 60_000).toInt() })
+                    app.umbra.agent.agents.AgentPrompt.of(p, agents.store.soul(p.id), agents.store.memory(p.id), agents.store.teamMemory(), agents.store.notes(p.id, 2), s.request, agents.intervalMs(p)?.let { (it / 60_000).toInt() })
                 }
-                listOfNotNull(profile, files).joinToString("\n\n").ifBlank { null }
+                val knowledge = graphs.prompt(s)
+                // How to answer with cards, and how to make an HTML artifact that publishes in one tap.
+                val output = app.umbra.agent.cards.CardTools.GUIDE + "\n" + app.umbra.agent.publish.PagesPublisher.ARTIFACT_GUIDE + "\n" + ASK_GUIDE
+                listOfNotNull(profile, files, knowledge, output).joinToString("\n\n").ifBlank { null }
             },
         ),
         scope = scope,
@@ -626,7 +713,7 @@ class AppContainer(val context: Context) {
     val capabilities = capabilityDetector(this)
 
     /** Watches what the agent depends on and repairs it while a task needs it (spec §30). */
-    val health = HealthSupervisor(subsystems(this) { sessionStore.list().any { it.state.isActive } }, gate = services, owner = "health-supervisor")
+    val health = HealthSupervisor(subsystems(this) { sessionStore.list().any { it.state.isActive } }, gate = services, owner = "health-supervisor", busy = { logMonitorSessionsActive })
 
     /** Starts the background machinery. Called once when the process starts, off the main thread. */
     /** Terminals on tmux in the Linux guest (spec §6.1). */
@@ -687,6 +774,8 @@ class AppContainer(val context: Context) {
                 runCatching { terminals.reconcile() }
             }
             governor.start(scope)
+            graphs.start()
+            dashboardSources.start(scope)
             supervisor.start()
             skillWorkflows.start()
             credentialHandoff.start()
@@ -704,7 +793,7 @@ class AppContainer(val context: Context) {
             // Keep the opted-in model warm between tasks (see LayaSidecar.keepUp for how often it looks).
             launch { laya.keepUp() }
             launch { keepHelperUp() }
-            launch { startLogMonitor() }
+            launch { watchLogMonitor() }
             health.start(scope)
             serviceMonitor.start(scope)
             updater.start()

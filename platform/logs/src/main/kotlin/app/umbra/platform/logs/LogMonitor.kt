@@ -9,12 +9,15 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 sealed interface MonitorEvent {
     /** A crash, ANR or native crash appeared ([isNew]) or gained detail. */
@@ -70,6 +73,8 @@ class LogMonitor(
     private val config: LogMonitorConfig = LogMonitorConfig(),
 ) {
     private val lock = Any()
+    // A new stream waits for cancellation to close the previous logcat, even across rapid stop/start calls.
+    private val streamLock = Mutex()
     private val recent = ArrayDeque<LogEvent>()
     private val notable = ArrayDeque<LogEvent>()
     private val reports = LinkedHashMap<Int, CrashReport>()
@@ -77,6 +82,7 @@ class LogMonitor(
     private val pidPackages = ConcurrentHashMap<Int, String>()
     private val watches = ConcurrentHashMap<String, Pair<LogFilterMatcher, LogFilter>>()
     private val flow = MutableSharedFlow<MonitorEvent>(extraBufferCapacity = 256)
+    @Volatile
     private var job: Job? = null
 
     @Volatile
@@ -94,14 +100,14 @@ class LogMonitor(
     fun start() {
         synchronized(lock) {
             if (job?.isActive == true) return
-            job = scope.launch { collectForever() }
+            job = scope.launch { streamLock.withLock { collectForever() } }
         }
     }
 
+    /** Pauses collection to save battery; buffered evidence still belongs to the sessions that collected it. */
     fun stop() {
         synchronized(lock) {
             job?.cancel()
-            job = null
         }
     }
 
@@ -112,13 +118,13 @@ class LogMonitor(
     fun restart() {
         synchronized(lock) {
             job?.cancel()
-            job = scope.launch { collectForever() }
+            job = scope.launch { streamLock.withLock { collectForever() } }
         }
     }
 
     private suspend fun collectForever() {
         var delayMs = config.restartDelayMs
-        while (scope.isActive) {
+        while (currentCoroutineContext().isActive) {
             try {
                 backend.stream(config.filter).collect { event ->
                     delayMs = config.restartDelayMs

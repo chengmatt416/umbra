@@ -30,13 +30,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.umbra.agent.R
 import app.umbra.agent.agents.proactive.BriefItem
+import app.umbra.agent.agents.proactive.ConflictAlert
 import app.umbra.agent.agents.proactive.BriefTask
 import app.umbra.agent.agents.proactive.DailyBrief
 import app.umbra.agent.agents.proactive.OpportunityCard
 import app.umbra.agent.agents.proactive.PreparedNextStep
 import app.umbra.agent.ui.porcelain.*
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 
 /*
  * The proactive cards (spec §4.2, §5.2): a suggestion and a daily brief each have their own designed card, used the
@@ -49,7 +48,7 @@ private val SUN = IconSpec(listOf(
     "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" to false,
 ))
 
-private fun kindIcon(kind: OpportunityCard.Kind) = when (kind) {
+internal fun kindIcon(kind: OpportunityCard.Kind) = when (kind) {
     OpportunityCard.Kind.CONFLICT_ALERT -> PIcons.alert
     OpportunityCard.Kind.FOLLOW_UP -> PIcons.message
     OpportunityCard.Kind.TASK_DISCOVERY -> PIcons.checks
@@ -58,79 +57,18 @@ private fun kindIcon(kind: OpportunityCard.Kind) = when (kind) {
 }
 
 @Composable
-private fun kindLabel(kind: OpportunityCard.Kind) = stringResource(when (kind) {
+internal fun kindLabel(kind: OpportunityCard.Kind) = stringResource(when (kind) {
     OpportunityCard.Kind.TASK_DISCOVERY -> R.string.opp_kind_task; OpportunityCard.Kind.CONFLICT_ALERT -> R.string.opp_kind_conflict
     OpportunityCard.Kind.FOLLOW_UP -> R.string.opp_kind_follow_up; OpportunityCard.Kind.PRICE_OR_MONITOR -> R.string.opp_kind_monitor
     OpportunityCard.Kind.GOAL_SUGGESTION -> R.string.opp_kind_goal
 })
 
-/** Evidence references ("calendar", "whatsapp:chat_42", "watcher:ryokan") as small labelled chips. */
-private fun evidenceIcon(ref: String) = when (ref.substringBefore(':').lowercase()) {
-    "calendar" -> PIcons.clock
-    "email", "gmail" -> PIcons.message
-    "watcher" -> PIcons.eye
-    "notif", "notification", "notifications" -> PIcons.bell
-    "web", "http", "https" -> PIcons.globe
-    "file", "files", "drive_files", "workspace" -> PIcons.file
-    "git", "github" -> PIcons.git
-    else -> PIcons.message
-}
-
-@Composable
-private fun Chip(text: String, icon: IconSpec? = null, tone: Color = P.sub, filled: Boolean = false, onClick: (() -> Unit)? = null) {
-    Row(
-        Modifier.clip(CircleShape).then(if (filled) Modifier.background(tone.copy(alpha = .12f)) else Modifier.border(1.dp, P.line2, CircleShape))
-            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        icon?.let { PIcon(it, size = 12.dp, tint = tone) }
-        Text(text, color = tone, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-    }
-}
-
 @Composable
 private fun relative(at: Long): String = DateUtils.getRelativeTimeSpanString(at, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE).toString()
 
-/** What the prepared next step will do, previewed in its own shape: a message bubble, an instruction, a goal. */
-@Composable
-internal fun PreparedPreview(step: PreparedNextStep) {
-    val payload = runCatching { app.umbra.core.model.UmbraJson.parseToJsonElement(step.payloadJson) as? JsonObject }.getOrNull()
-    fun field(vararg names: String) = names.firstNotNullOfOrNull { (payload?.get(it) as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
-    val shape = RoundedCornerShape(14.dp)
-    Column(Modifier.fillMaxWidth().clip(shape).background(P.highlight).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionLabel(stringResource(R.string.card_prepared))
-        when (step.actionType) {
-            "send_message_draft" -> {
-                field("to", "recipient", "chat")?.let { Text(stringResource(R.string.card_to, it), color = P.sub, fontSize = 12.sp) }
-                field("text")?.let { text ->
-                    // The draft as it would be sent: an ink bubble, like the user's own messages.
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-                        Text(text, Modifier.padding(start = 28.dp).clip(RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp)).background(P.ink).padding(horizontal = 12.dp, vertical = 8.dp),
-                            color = inkOnPrimary, fontSize = 14.sp, lineHeight = 20.sp)
-                    }
-                }
-            }
-            else -> {
-                val main = listOf("instruction", "task", "text", "title").firstOrNull { (payload?.get(it) as? JsonPrimitive)?.isString == true }
-                Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PIcon(when (step.actionType) { "start_coding" -> PIcons.code; "create_goal" -> PIcons.pin; "run_skill" -> PIcons.zap; else -> PIcons.bot }, size = 16.dp, tint = P.ink)
-                    Text(main?.let { field(it) } ?: step.label, color = P.ink, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 6, overflow = TextOverflow.Ellipsis)
-                }
-                // The other details as readable fields (order numbers, dates, recipients), never as JSON.
-                payload?.filterKeys { it != main }?.entries?.take(8)?.forEach { (key, value) -> PreparedField(key, value) }
-            }
-        }
-        if (step.secondaryOptions.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(stringResource(R.string.card_or), color = P.sub, fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterVertically))
-            step.secondaryOptions.forEach { Chip(it) }
-        }
-    }
-}
-
 /**
- * One suggestion. [compact] (Home) keeps the head, title and actions; the full card adds the summary, the prepared
- * step's preview, the evidence and the expiry.
+ * One suggestion in a list (Home, recently handled): its kind and age, the question, one line of why, and its actions.
+ * Deciding happens on the full [DecisionCard] (Briefing) or in the [ConfirmSheet] a tap opens.
  */
 @Composable
 internal fun SuggestionCard(
@@ -158,47 +96,18 @@ internal fun SuggestionCard(
         }
         Text(card.title, color = P.ink, fontSize = if (compact) 16.sp else 18.sp, lineHeight = if (compact) 22.sp else 24.sp, fontWeight = FontWeight.Medium,
             maxLines = if (compact) 2 else 4, overflow = TextOverflow.Ellipsis)
-        if (!compact) {
-            Text(card.summary, color = P.sub, fontSize = 14.sp, lineHeight = 20.sp)
-            if (pending) PreparedPreview(card.preparedAction)
-            if (card.evidenceRefs.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                card.evidenceRefs.take(6).forEach { ref -> Chip(ref.substringBefore('#').replace('_', ' '), evidenceIcon(ref)) }
-            }
-            card.expiresAtMs?.takeIf { pending && it > System.currentTimeMillis() }?.let { Text(stringResource(R.string.card_expires, relative(it)), color = P.muted, fontSize = 12.sp) }
-            card.error?.let { Text(it, color = P.danger, fontSize = 13.sp) }
-        }
+        // Why it matters, in the agent's words (never the prepared step's data).
+        val why = (card.explain?.why?.takeIf { it.isNotBlank() } ?: card.summary).trim()
+        if (why.isNotEmpty()) Text(why, color = P.sub, fontSize = 14.sp, lineHeight = 20.sp, maxLines = if (compact) 2 else 6, overflow = TextOverflow.Ellipsis)
+        if (!compact) card.error?.let { Text(it, color = P.danger, fontSize = 13.sp) }
         if (pending) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PButton(card.preparedAction.label, onReview, Modifier.weight(1f, fill = false), tiny = compact, icon = if (compact) null else PIcons.arrowRight)
-            PButton(stringResource(R.string.proactive_dismiss), onDismiss, tiny = compact, style = ButtonStyle.Ghost)
+            PButton(stringResource(R.string.decision_review), onReview, Modifier.weight(1f, fill = false), tiny = compact, icon = if (compact) null else PIcons.arrowRight)
+            PButton(stringResource(R.string.decision_not_now), onDismiss, tiny = compact, style = ButtonStyle.Ghost)
         }
         if (pending && !compact && onLess != null) Text(stringResource(R.string.proactive_less), Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button, onClick = onLess).padding(vertical = 4.dp),
             color = P.sub, fontSize = 13.sp)
         onOpenResult?.let { PButton(stringResource(R.string.proactive_open_result), it, style = ButtonStyle.Alt, tiny = true) }
     }
-}
-
-/** One detail of a prepared step: a readable label and its value; lists become chips, nested objects a short line. */
-@Composable
-private fun PreparedField(key: String, value: kotlinx.serialization.json.JsonElement) {
-    val label = key.replace('_', ' ').replaceFirstChar { it.uppercase() }
-    @OptIn(ExperimentalLayoutApi::class)
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, color = P.sub, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-        when (value) {
-            is kotlinx.serialization.json.JsonArray -> FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                value.take(12).forEach { item -> Chip(plain(item)) }
-                if (value.size > 12) Chip("+${value.size - 12}")
-            }
-            else -> Text(plain(value), color = P.ink, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}
-
-private fun plain(value: kotlinx.serialization.json.JsonElement): String = when (value) {
-    is JsonPrimitive -> value.content
-    is kotlinx.serialization.json.JsonArray -> value.joinToString(", ") { plain(it) }
-    is JsonObject -> value.entries.joinToString(" · ") { (k, v) -> "${k.replace('_', ' ')}: ${plain(v)}" }
-    else -> value.toString()
 }
 
 private val TIME = Regex("""^\d{1,2}:\d{2}$""")
@@ -254,11 +163,12 @@ internal fun BriefHead(brief: DailyBrief, agentName: String?, modifier: Modifier
 
 /** The whole brief keeps session states visible alongside the day's decisions. */
 @Composable
-internal fun BriefCard(brief: DailyBrief, agentName: String? = null, onSuggestion: (OpportunityCard) -> Unit, onOpenSession: (String) -> Unit, modifier: Modifier = Modifier) {
+internal fun BriefCard(brief: DailyBrief, agentName: String? = null, onSuggestion: (OpportunityCard) -> Unit, onOpenSession: (String) -> Unit, modifier: Modifier = Modifier,
+    onConflict: ((ConflictAlert) -> Unit)? = null) {
     val shape = RoundedCornerShape(24.dp)
     Column(modifier.fillMaxWidth().inkSurface(shape, CardStyle.Ceramic)) {
         BriefHead(brief, agentName)
-        BriefBody(brief, onSuggestion, onOpenSession, unroll = false)
+        BriefBody(brief, agentName, onSuggestion, onOpenSession, onConflict, conflictsAbove = false, unroll = false)
     }
 }
 
@@ -272,6 +182,10 @@ internal fun ExpandableBrief(
     brief: DailyBrief, agentName: String?, expanded: Boolean, onExpandedChange: (Boolean) -> Unit,
     onSuggestion: (OpportunityCard) -> Unit, onOpenSession: (String) -> Unit, modifier: Modifier = Modifier,
     footer: (@Composable () -> Unit)? = null,
+    /** Asks the agent to resolve a conflict; null shows conflicts without the action. */
+    onConflict: ((ConflictAlert) -> Unit)? = null,
+    /** The page already shows this brief's conflicts as decisions above it: here they are only counted. */
+    conflictsAbove: Boolean = false,
 ) {
     val shape = RoundedCornerShape(24.dp)
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -307,7 +221,7 @@ internal fun ExpandableBrief(
                 androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)),
         ) {
             Column {
-                BriefBody(brief, onSuggestion, onOpenSession, unroll = true)
+                BriefBody(brief, agentName, onSuggestion, onOpenSession, onConflict, conflictsAbove, unroll = true)
                 footer?.let { Box(Modifier.padding(start = 18.dp, end = 18.dp, bottom = 16.dp)) { it() } }
             }
         }
@@ -336,7 +250,8 @@ private fun Modifier.unrollIn(index: Int, on: Boolean): Modifier = if (!on) this
 
 /** The brief's sections below the head. */
 @Composable
-private fun BriefBody(brief: DailyBrief, onSuggestion: (OpportunityCard) -> Unit, onOpenSession: (String) -> Unit, unroll: Boolean) {
+private fun BriefBody(brief: DailyBrief, agentName: String?, onSuggestion: (OpportunityCard) -> Unit, onOpenSession: (String) -> Unit,
+    onConflict: ((ConflictAlert) -> Unit)?, conflictsAbove: Boolean, unroll: Boolean) {
     var section = 0
     Column(Modifier.padding(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (brief.scheduleHighlights.isNotEmpty()) Column(Modifier.unrollIn(section++, unroll), verticalArrangement = Arrangement.spacedBy(0.dp)) {
@@ -346,17 +261,9 @@ private fun BriefBody(brief: DailyBrief, onSuggestion: (OpportunityCard) -> Unit
         }
         if (brief.conflictsDetected.isNotEmpty()) Column(Modifier.unrollIn(section++, unroll), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionLabel(stringResource(R.string.proactive_brief_conflicts), P.amber)
-            brief.conflictsDetected.forEach { conflict ->
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(P.amber.copy(alpha = .1f)).border(1.dp, P.amber.copy(alpha = .35f), RoundedCornerShape(14.dp)).padding(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PIcon(PIcons.alert, size = 16.dp, tint = P.amber)
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(conflict.description, color = P.ink, fontSize = 14.sp, lineHeight = 20.sp)
-                        if (conflict.resolutionOptions.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            conflict.resolutionOptions.forEach { Chip(it.label, PIcons.arrowRight, P.amber, filled = true) }
-                        }
-                    }
-                }
+            if (conflictsAbove) Text(stringResource(R.string.briefing_conflicts_above, brief.conflictsDetected.size), color = P.sub, fontSize = 13.sp, lineHeight = 19.sp)
+            else brief.conflictsDetected.forEach { conflict ->
+                ConflictDecision(conflict, agentName ?: stringResource(R.string.ag_default_name), onConflict?.let { ask -> { ask(conflict) } })
             }
         }
         if (brief.attentionNeeded.isNotEmpty()) Column(Modifier.unrollIn(section++, unroll), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -365,7 +272,12 @@ private fun BriefBody(brief: DailyBrief, onSuggestion: (OpportunityCard) -> Unit
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(P.highlight).clickable(role = Role.Button) { onSuggestion(card) }.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     PIcon(kindIcon(card.kind), size = 16.dp, tint = if (card.kind == OpportunityCard.Kind.CONFLICT_ALERT) P.amber else P.ink)
-                    Text(card.title, Modifier.weight(1f), color = P.ink, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(card.title, color = P.ink, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        (card.explain?.why?.takeIf { it.isNotBlank() } ?: card.summary).takeIf { it.isNotBlank() }?.let {
+                            Text(it, color = P.sub, fontSize = 12.sp, lineHeight = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                     PIcon(PIcons.arrowRight, size = 14.dp, tint = P.sub)
                 }
             }

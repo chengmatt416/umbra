@@ -149,6 +149,8 @@ data class Session(
     val latestUserIntent: String? = null,
     val connectorScope: List<String>? = null,
     val approvalTtlMs: Long? = null,
+    /** Null loads every discovered skill; an empty list disables skills for this session. */
+    val skills: List<String>? = null,
 )
 
 @Serializable

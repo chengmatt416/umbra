@@ -14,6 +14,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.flow
@@ -33,6 +36,7 @@ class LogMonitorTest {
         val bus = MutableSharedFlow<LogEvent>(extraBufferCapacity = 1024)
         val streamsOpened = AtomicInteger()
         var failNext = false
+        var closeDelayMs = 0L
 
         override suspend fun isAvailable() = true
 
@@ -44,7 +48,8 @@ class LogMonitorTest {
                 failNext = false
                 throw java.io.IOException("logcat died")
             }
-            bus.collect { emit(it) }
+            try { bus.collect { emit(it) } }
+            finally { if (closeDelayMs > 0) withContext(NonCancellable) { delay(closeDelayMs) } }
         }
 
         override suspend fun clear() {}
@@ -215,6 +220,39 @@ class LogMonitorTest {
         h.backend.bus.emit(ev(1_000_000, "E", "T", "after the restart"))
         runCurrent()
         assertEquals(1, h.monitor.query(LogFilter(), 10).size, "events still flow once")
+        h.monitor.stop()
+    }
+
+    @Test
+    fun stoppingAndStartingKeepsEvidenceAndWaitsForTheOldStreamToClose() = runTest {
+        val h = harness()
+        h.backend.closeDelayMs = 100
+        h.monitor.start()
+        runCurrent()
+        h.backend.bus.emit(ev(1_000_000, "E", "AndroidRuntime", "FATAL EXCEPTION: main", pid = 4321))
+        h.backend.bus.emit(ev(1_000_001, "E", "AndroidRuntime", "Process: com.example.crashy, PID: 4321", pid = 4321))
+        runCurrent()
+        val recent = h.monitor.query(LogFilter(), 10)
+        val summary = h.monitor.summary()
+        h.monitor.stop()
+        h.monitor.stop()
+        assertFalse(h.monitor.isRunning)
+        assertEquals(recent, h.monitor.query(LogFilter(), 10))
+        assertEquals(summary, h.monitor.summary())
+        h.monitor.start()
+        runCurrent()
+        h.monitor.restart()
+        h.monitor.stop()
+        h.monitor.start()
+        runCurrent()
+        assertEquals(1, h.backend.streamsOpened.get(), "cancellation must finish before another logcat opens")
+        advanceTimeBy(100)
+        runCurrent()
+        assertEquals(2, h.backend.streamsOpened.get())
+        assertEquals(1, h.backend.bus.subscriptionCount.value)
+        assertEquals(recent, h.monitor.query(LogFilter(), 10))
+        assertEquals(summary, h.monitor.summary())
+        h.backend.closeDelayMs = 0
         h.monitor.stop()
     }
 

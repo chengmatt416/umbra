@@ -94,4 +94,17 @@ object PIcons {
     val drop = IconSpec(listOf("M12 2.8c3.6 4.2 6.5 7.9 6.5 11.4a6.5 6.5 0 0 1 -13 0c0 -3.5 2.9 -7.2 6.5 -11.4z" to true, "M9.2 14.6a2.9 2.9 0 0 0 2.6 2.7" to false))
     val trash = IconSpec(listOf("M4 7h16M9 7V4.5h6V7" to false, "m6.5 7 1 12.6a1.5 1.5 0 0 0 1.5 1.4h6a1.5 1.5 0 0 0 1.5 -1.4L17.5 7" to false, "M10 11v6m4-6v6" to false))
     val chevronRight = IconSpec(listOf("m9 6 6 6-6 6" to false))
+
+    // Added with skills, dashboards and publishing (2026-10-28), same grid and stroke.
+    /** A puzzle piece: a skill a session can take on. */
+    val puzzle = IconSpec(listOf("M4 8a2 2 0 0 1 2-2h3a2 2 0 0 1 4 0h3a2 2 0 0 1 2 2v3a2 2 0 0 1 0 4v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" to false))
+    /** Four tiles of unequal height: a live dashboard. */
+    val dashboard = IconSpec(listOf(
+        "M4 3h5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" to false,
+        "M15 3h5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" to false,
+        "M15 12h5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z" to false,
+        "M4 16h5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1z" to false,
+    ))
+    val share = IconSpec(listOf("M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7" to false, "M16 6l-4-4-4 4M12 2v13" to false))
+    val star = IconSpec(listOf("M12 2.8l2.8 5.8 6.3.9-4.6 4.4 1.1 6.3-5.6-3-5.6 3 1.1-6.3-4.6-4.4 6.3-.9z" to false))
 }

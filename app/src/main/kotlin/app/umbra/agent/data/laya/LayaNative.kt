@@ -51,9 +51,12 @@ class LayaNative(private val context: Context, private val http: OkHttpClient) {
     private val mutableProgress = MutableStateFlow<Progress?>(null)
     val progress: StateFlow<Progress?> = mutableProgress.asStateFlow()
 
-    /** What answered the last load, and why the better accelerators did not. [died] completes if its process dies. */
+    /**
+     * What answered the last load, and why the better accelerators did not. [died] completes if its process dies; [key]
+     * is the candidate's ([LayaPlan.key]), how a crash while it answers refuses exactly that path.
+     */
     data class Loaded(val engine: LayaNativeEngine, val backend: LayaBackend, val file: String, val checkMs: Long, val skipped: List<String>,
-        val died: Deferred<LayaExit>, val process: LayaProcess? = null)
+        val died: Deferred<LayaExit>, val process: LayaProcess? = null, val key: String = "${backend.key}:$file")
 
     /**
      * What Settings shows for one processor, kept across starts: whether LiteRT reports it on this phone, whether Laya
@@ -79,12 +82,19 @@ class LayaNative(private val context: Context, private val http: OkHttpClient) {
     class NeedsDownload(val bytes: Long) : IOException("Laya's files are not downloaded")
 
     /** True when some file this phone could run is already here and verified. */
-    fun downloaded(): Boolean = manifest.files.any { verified(it) }
+    fun downloaded(): Boolean = manifest.files.any { it.backend != "aux" && verified(it) }
 
-    /** Bytes still to download for the best file this phone can use. Sizes only (Settings asks while it draws). */
+    /** Bytes still to download for the best file this phone can use (and its token table). Sizes only (Settings asks while it draws). */
     fun bytesToDownload(): Long = plan(available = setOf(LayaBackend.NPU, LayaBackend.GPU)).firstOrNull()?.file?.let { f ->
-        if (File(dir, f.name).length() == f.bytes) 0L else f.bytes - (File(dir, f.name + ".part").takeIf { it.isFile }?.length() ?: 0L)
+        listOfNotNull(f, table(f)).sumOf { g ->
+            if (File(dir, g.name).length() == g.bytes) 0L else g.bytes - (File(dir, g.name + ".part").takeIf { it.isFile }?.length() ?: 0L)
+        }
     } ?: 0L
+
+    /** The token table an "embeds" file reads its rows from (Hexagon v68), or null for every other file. */
+    private fun table(f: LayaFile): LayaFile? = f.embeddings?.let { name ->
+        manifest.files.firstOrNull { it.name == name } ?: throw IOException("Laya's manifest lacks $name")
+    }
 
     /**
      * Loads the best backend that both opens and reproduces the reference logits, downloading its file when [download]
@@ -105,57 +115,79 @@ class LayaNative(private val context: Context, private val http: OkHttpClient) {
         // What LiteRT can use here, asked in Laya's own process: loading its native libraries is the first thing that
         // can take a process down on an odd phone.
         val available = accelerators()
-        val candidates = plan(available)
+        // The GPU at fp32 holds twice the weights: only where that leaves the phone room.
+        val candidates = plan(available, roomy = memory.totalMem >= ROOMY_MEMORY)
         val skipped = ArrayList<String>()
         LayaBackend.entries.filter { b -> candidates.none { it.backend == b } }.forEach { b -> note(b, Outcome.UNAVAILABLE, unavailableWhy(b, available)) }
         for (candidate in candidates) {
-            // On the CPU the runtime unpacks the fp16 weights (about 2.5 GB while loading, measured on a 4 GB emulator
-            // where the low-memory killer ended the app): too much for a phone with less memory.
-            if (candidate.backend == LayaBackend.CPU && memory.totalMem < MIN_CPU_MEMORY) {
-                val why = "needs ${MIN_CPU_MEMORY / (1L shl 30)} GB of memory"
+            // On the CPU the runtime unpacks the fp16 weights to fp32: 3.6 GB at its peak in memory (measured with
+            // LiteRT 2.3.0), too much for a phone with less than 6 GB. With a weight cache it writes them to a file once
+            // and maps it: 0.65 GB at the peak, the rest memory the phone may page out.
+            val cache = if (candidate.backend == LayaBackend.CPU) cpuCache() else null
+            if (candidate.backend == LayaBackend.CPU && cache == null && memory.totalMem < MIN_CPU_MEMORY) {
+                val why = "needs ${MIN_CPU_MEMORY / (1L shl 30)} GB of memory, or ${(CPU_CACHE_BYTES + SPACE_MARGIN) / (1L shl 20)} MB free storage"
                 skipped += "cpu: $why"
                 note(LayaBackend.CPU, Outcome.SKIPPED, why)
                 continue
             }
             val file = File(dir, candidate.file.name)
-            if (!verified(candidate.file)) {
+            val table = table(candidate.file)
+            val missing = listOfNotNull(candidate.file, table).filter { !verified(it) }
+            if (missing.isNotEmpty()) {
                 if (!download) {
                     // A better file that is not here yet waits for the next download; one that is here may answer now.
-                    if (candidates.any { it !== candidate && verified(it.file) }) {
+                    if (candidates.any { it !== candidate && verified(it.file) && table(it.file)?.let(::verified) != false }) {
                         skipped += "${candidate.backend.key}: not downloaded"
                         note(candidate.backend, Outcome.SKIPPED, "not downloaded")
                         continue
                     }
-                    throw NeedsDownload(candidate.file.bytes)
+                    throw NeedsDownload(missing.sumOf { it.bytes })
                 }
-                fetch(candidate.file)
+                // A file that cannot be fetched now (no network, a download that no longer matches) skips this
+                // processor for this start only; the next one, down to the CPU, still gets its turn.
+                val failed = try { missing.forEach { fetch(it) }; null }
+                    catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (e: Exception) { e }
+                if (failed != null) {
+                    Log.w(TAG, "laya ${candidate.backend.key} download failed", failed)
+                    val why = "download failed: " + (failed.message?.lineSequence()?.firstOrNull()?.take(120) ?: failed.javaClass.simpleName)
+                    skipped += "${candidate.backend.key}: $why"
+                    note(candidate.backend, Outcome.SKIPPED, why)
+                    continue
+                }
             }
-            // Written before the load and cleared after it, synchronously: if the app dies in between, the next load
-            // refuses this backend (above).
-            prefs.edit().putString(KEY_LOADING, LayaPlan.key(candidate)).commit()
-            var process: LayaProcess? = null
             try {
-                process = LayaProcess.start(context)
-                process.open(file, candidate.backend, candidate.onDevice)
-                val graph = process.graph(candidate.backend)
-                val checkMs = check(graph, candidate.backend)
-                prefs.edit().remove(KEY_LOADING).putString(KEY_LAST, LayaPlan.key(candidate)).commit()
-                note(candidate.backend, Outcome.PASSED, "${checkMs} ms per check")
-                return@withContext Loaded(LayaNativeEngine(encoding, graph), candidate.backend, candidate.file.name, checkMs, skipped, process.died, process)
+                val loaded = try {
+                    open(candidate, file, cache, skipped, table)
+                } catch (e: Exception) {
+                    if (cache == null || e is kotlinx.coroutines.CancellationException || (e is LayaProcessDied && e.reason.paused)) throw e
+                    // The weight cache itself may be what failed (a phone's storage, a runtime that cannot map it): it
+                    // is not used again until Retry, and a phone with the memory for it tries once more without.
+                    Log.w(TAG, "laya cpu with a weight cache refused", e)
+                    prefs.edit().putBoolean(KEY_NO_CPU_CACHE, true).remove(KEY_CPU_CACHE_OK).commit()
+                    cache.delete()
+                    if (memory.totalMem < MIN_CPU_MEMORY) throw e
+                    open(candidate, file, null, skipped, table)
+                }
+                if (cache != null && loaded.backend == LayaBackend.CPU) prefs.edit().putString(KEY_CPU_CACHE_OK, cache.length().toString()).apply()
+                return@withContext loaded
             } catch (e: kotlinx.coroutines.CancellationException) {
-                process?.stop()
-                prefs.edit().remove(KEY_LOADING).commit()
                 throw e
             } catch (e: Exception) {
-                process?.stop()
-                prefs.edit().remove(KEY_LOADING).commit()
                 Log.w(TAG, "laya ${candidate.backend.key} refused", e)
+                // The phone froze Laya's process: nothing is wrong with the processor, and the next one would be frozen
+                // the same way. This start ends here and Laya tries again later.
+                if (e is LayaProcessDied && e.reason.paused) {
+                    throw IOException("The phone paused Laya's process while it loaded (it freezes apps in the background); Laya tries again later", e)
+                }
                 val compileDied = candidate.onDevice && e is LayaProcessDied
                 val why = if (compileDied) "compiling for this chip's NPU ended Laya's process (${(e as LayaProcessDied).reason.text})"
                     else e.message?.lineSequence()?.firstOrNull()?.take(160) ?: e.javaClass.simpleName
                 skipped += "${candidate.backend.key}: $why"
                 // The same compile of the same file dies the same way after an app update too: it waits for Retry.
                 if (compileDied) prefs.edit().putStringSet(KEY_COMPILE_DIED, prefs.getStringSet(KEY_COMPILE_DIED, emptySet()).orEmpty() + "${LayaPlan.key(candidate)}@${candidate.file.sha256}").apply()
+                // Programs a failed GPU load left in its cache are not reused by the GPU's next path.
+                if (candidate.backend == LayaBackend.GPU) gpuCache().deleteRecursively()
                 // Android ending the process for memory is not the accelerator's fault, but it would happen again on
                 // the next start just the same: every failure refuses the accelerator; the CPU always stays.
                 if (candidate.backend != LayaBackend.CPU) refuse(LayaPlan.key(candidate), why)
@@ -166,11 +198,58 @@ class LayaNative(private val context: Context, private val http: OkHttpClient) {
     }
 
     /**
+     * Starts a fresh process for [candidate], opens [file] in it and checks it; the process is ended when any of that
+     * fails. [cache]: the CPU's weight cache file, or null.
+     */
+    private fun open(candidate: LayaCandidate, file: File, cache: File?, skipped: List<String>, table: LayaFile?): Loaded {
+        // Written before the load and cleared after it, synchronously: if the app dies in between, the next load
+        // refuses this backend (see [load]).
+        prefs.edit().putString(KEY_LOADING, LayaPlan.key(candidate)).commit()
+        var process: LayaProcess? = null
+        try {
+            process = LayaProcess.start(context)
+            process.open(file, candidate.backend, candidate.onDevice, cache,
+                gpu = candidate.gpu, gpuCache = gpuCache().takeIf { candidate.backend == LayaBackend.GPU },
+                cacheKey = "${candidate.file.sha256.take(16)}-${candidate.gpu.name.lowercase()}",
+                embeddings = table?.let { File(dir, it.name) }, hidden = table?.shape?.getOrNull(1) ?: 0)
+            val graph = process.graph(candidate.backend).let { g ->
+                candidate.file.buckets?.let { PaddedGraph(g, it, encoding.config.pad) } ?: g
+            }
+            val checkMs = check(graph, candidate.backend)
+            prefs.edit().remove(KEY_LOADING).putString(KEY_LAST, LayaPlan.key(candidate)).commit()
+            note(candidate.backend, Outcome.PASSED, "${checkMs} ms per check")
+            return Loaded(LayaNativeEngine(encoding, graph), candidate.backend, candidate.file.name, checkMs, skipped.toList(), process.died, process,
+                LayaPlan.key(candidate))
+        } catch (e: Throwable) {
+            process?.stop()
+            prefs.edit().remove(KEY_LOADING).commit()
+            throw e
+        }
+    }
+
+    /**
+     * Where the CPU keeps the weights it repacks (see [load]), or null when it may not: the cache failed before (until
+     * Retry), or the phone lacks the room for it. A cache left half written by a process that ended is built again.
+     */
+    private fun cpuCache(): File? {
+        if (prefs.getBoolean(KEY_NO_CPU_CACHE, false)) return null
+        val folder = File(context.cacheDir, "laya")
+        val file = File(folder, "${manifest.revision.take(12)}-cpu.xnn")
+        folder.listFiles().orEmpty().filter { it != file }.forEach { it.deleteRecursively() }
+        if (file.exists() && prefs.getString(KEY_CPU_CACHE_OK, null) != file.length().toString()) file.delete()
+        if (!file.exists()) {
+            folder.mkdirs()
+            if (folder.usableSpace < CPU_CACHE_BYTES + SPACE_MARGIN) return null
+        }
+        return file
+    }
+
+    /**
      * Laya's process died while it answered (see [Loaded.died]). A crash refuses that accelerator, so the next start uses
      * the next one; Android ending it for memory does not.
      */
     fun died(loaded: Loaded, exit: LayaExit) {
-        val key = "${loaded.backend.key}:${loaded.file}"
+        val key = loaded.key
         when {
             exit.crashed && loaded.backend != LayaBackend.CPU -> refuse(key, "stopped while answering: ${exit.text}")
             else -> note(loaded.backend, Outcome.FAILED, "stopped while answering: ${exit.text}")
@@ -184,14 +263,17 @@ class LayaNative(private val context: Context, private val http: OkHttpClient) {
     fun processors(inUse: String?): List<Processor> {
         val available = prefs.getStringSet(KEY_AVAILABLE, null)?.mapNotNull { k -> LayaBackend.entries.firstOrNull { it.key == k } }?.toSet()
         val refused = refused()
-        val plan = runCatching { plan(available ?: LayaBackend.entries.toSet(), honourRefusals = false) }.getOrDefault(emptyList())
+        val plan = runCatching { plan(available ?: LayaBackend.entries.toSet(), honourRefusals = false, roomy = true) }.getOrDefault(emptyList())
         return LayaBackend.entries.map { b ->
             val saved = prefs.getString("$KEY_STATUS${b.key}", null)?.split('|', limit = 2)
             val outcome = saved?.getOrNull(0)?.let { o -> Outcome.entries.firstOrNull { it.name == o } }
             val detail = saved?.getOrNull(1)
+            // The GPU has several paths (OpenCL, OpenGL ES, fp32): it is refused only when every one it has here is.
+            val paths = plan.filter { it.backend == b }.map { LayaPlan.key(it) }
+            val allRefused = if (paths.isEmpty()) refused.any { it.startsWith("${b.key}:") } else paths.all { it in refused }
             when {
                 inUse == b.key -> Processor(b, Processor.Status.IN_USE, detail)
-                refused.any { it.startsWith("${b.key}:") } -> Processor(b, Processor.Status.REFUSED, detail ?: "failed its check")
+                allRefused -> Processor(b, Processor.Status.REFUSED, detail ?: "failed its check")
                 available != null && b !in available -> Processor(b, Processor.Status.UNAVAILABLE, unavailableWhy(b, available))
                 plan.none { it.backend == b } -> Processor(b, Processor.Status.UNAVAILABLE, unavailableWhy(b, available ?: LayaBackend.entries.toSet()))
                 outcome == Outcome.UNAVAILABLE -> Processor(b, Processor.Status.UNAVAILABLE, detail)
@@ -209,7 +291,7 @@ class LayaNative(private val context: Context, private val http: OkHttpClient) {
 
     /** Forgets refused accelerators and their status, so the next start tries them all again (the files stay). */
     fun resetProcessors() {
-        prefs.edit().remove(refusedKey()).remove(KEY_COMPILE_DIED).apply {
+        prefs.edit().remove(refusedKey()).remove(KEY_COMPILE_DIED).remove(KEY_NO_CPU_CACHE).apply {
             LayaBackend.entries.forEach { remove("$KEY_STATUS${it.key}") }
         }.apply()
     }
@@ -243,11 +325,16 @@ class LayaNative(private val context: Context, private val http: OkHttpClient) {
     /** Deletes the downloaded files and forgets refused accelerators. */
     fun clear() {
         File(context.filesDir, "laya").deleteRecursively()
+        File(context.cacheDir, "laya").deleteRecursively()
+        gpuCache().deleteRecursively()
         prefs.edit().clear().apply()
     }
 
-    private fun plan(available: Set<LayaBackend>, honourRefusals: Boolean = true) =
-        LayaPlan.candidates(manifest, Build.SOC_MANUFACTURER, Build.SOC_MODEL, available, if (honourRefusals) refused() else emptySet())
+    /** Where the GPU keeps the programs it compiled for Laya's file (LiteRT's program cache), apart from the CPU's cache. */
+    private fun gpuCache() = File(context.cacheDir, "laya-gpu")
+
+    private fun plan(available: Set<LayaBackend>, honourRefusals: Boolean = true, roomy: Boolean = false) =
+        LayaPlan.candidates(manifest, Build.SOC_MANUFACTURER, Build.SOC_MODEL, available, if (honourRefusals) refused() else emptySet(), roomy)
 
     private fun refused(): Set<String> = prefs.getStringSet(refusedKey(), emptySet()).orEmpty() +
         prefs.getStringSet(KEY_COMPILE_DIED, emptySet()).orEmpty().mapNotNull { entry ->
@@ -310,7 +397,7 @@ class LayaNative(private val context: Context, private val http: OkHttpClient) {
         mutableProgress.value = Progress(f.name, have, f.bytes)
         try {
             if (have < f.bytes) {
-                val request = Request.Builder().url(manifest.base + f.name).apply { if (have > 0) header("Range", "bytes=$have-") }.build()
+                val request = Request.Builder().url(f.source(manifest)).apply { if (have > 0) header("Range", "bytes=$have-") }.build()
                 http.newCall(request).execute().use { r ->
                     when {
                         r.code == 206 && have > 0 -> Unit
@@ -366,9 +453,17 @@ class LayaNative(private val context: Context, private val http: OkHttpClient) {
         const val KEY_STATUS = "status-"
         /** On-device NPU compiles that ended Laya's process, per file: not retried after an update, only on Retry. */
         const val KEY_COMPILE_DIED = "compile-died"
+        /** The CPU's weight cache failed: not used again until Retry. */
+        const val KEY_NO_CPU_CACHE = "cpu-cache-off"
+        /** The size of the CPU's weight cache when a load with it last passed its check (a different size: half written). */
+        const val KEY_CPU_CACHE_OK = "cpu-cache-ok"
         /** The fp16 model takes about 1–2 GB while it runs; below this the low-memory killer ends the app instead. */
         const val MIN_TOTAL_MEMORY = 3L shl 30
         const val MIN_CPU_MEMORY = 6L shl 30
+        /** The GPU's fp32 path (twice the weights in GPU memory) is tried only on phones with this much. */
+        const val ROOMY_MEMORY = 8L shl 30
+        /** The CPU's weight cache for the fp16 file: 1,478,713,960 bytes with LiteRT 2.3.0. */
+        const val CPU_CACHE_BYTES = 1500L shl 20
         const val SPACE_MARGIN = 200L shl 20
     }
 }

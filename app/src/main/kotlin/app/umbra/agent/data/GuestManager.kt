@@ -170,6 +170,7 @@ class GuestManager(
         Pack("java", "Java 21", "JDK for Gradle and Kotlin", "/usr/lib/jvm/java-21-openjdk-arm64/bin/java", 310),
         Pack("android", "Android app builds", "Java 21, aapt2, d8, apksigner and the Android 14 SDK platform, to build and sign apps", "/usr/local/bin/d8", 820),
         Pack("node", "Node.js", "Node.js and npm", "/usr/bin/node", 220),
+        Pack("graph", context.getString(app.umbra.agent.R.string.pack_graph), context.getString(app.umbra.agent.R.string.pack_graph_d), "/opt/graphify/bin/graphify", 200),
         Pack("gui", "Desktop apps", "A virtual screen so the agent can run and operate Linux desktop programs", "/usr/bin/Xvfb", 420),
         Pack("browser", "Web browser", "Chromium for headless page automation and visual browsing on the Linux desktop", "/usr/bin/chromium", 650),
     )

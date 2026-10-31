@@ -95,6 +95,10 @@ fun SettingsScreen(onBack: () -> Unit, onGo: (Dest) -> Unit, onRoute: (String) -
                 NavRow(PIcons.zap, stringResource(R.string.proactive_agents_title), stringResource(R.string.proactive_agents_sub),
                     value = "L${defaults.level}" + (defaults.morningMinute?.let { " · " + app.umbra.agent.ui.agents.minuteText(it) } ?: "")) { onRoute("proactive-agents") }
                 NavRow(PIcons.message, stringResource(R.string.ag_message_apps), stringResource(R.string.ag_message_apps_sub)) { onGo(Dest.Messages) }
+                val publishing = remember { container.pagesPublisher }
+                val publishRevision by publishing.revision.collectAsStateWithLifecycle()
+                NavRow(PIcons.globe, stringResource(R.string.pub_settings_row), stringResource(R.string.pub_settings_row_sub),
+                    value = stringResource(if (remember(publishRevision) { publishing.connected() }) R.string.pub_settings_row_on else R.string.pub_settings_row_off)) { onRoute("publishing") }
                 NavRow(PIcons.bell, stringResource(R.string.ag_notification_reader), stringResource(R.string.ag_notification_reader_sub)) { onGo(Dest.Notifications) }
                 val layaOn = prefs.layaWanted && laya != LayaSidecar.State.NOT_INSTALLED && laya != LayaSidecar.State.NEEDS_LINUX
                 val layaBackend by container.laya.backend.collectAsStateWithLifecycle()

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Questions agents and sessions ask while they work (2026-10-31) -->
+    <string name="qa_asks">%1$s asks</string>
+    <string name="qa_asks_anon">A question for you</string>
+    <string name="qa_your_answer">Your answer</string>
+    <string name="qa_own_answer">Or type your own answer</string>
+    <string name="q_suggested_badge">Suggested</string>
+    <string name="qa_later">Later</string>
+    <string name="qa_later_hint">It stays in the chat and the Inbox until you answer.</string>
+    <string name="qa_reply">Reply</string>
+    <string name="qa_answer">Answer</string>
+    <string name="qa_answered">Answered</string>
+</resources>

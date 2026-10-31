@@ -186,12 +186,16 @@ class Demonstrations(private val container: AppContainer) {
         container.skills.propose(skill, instructions)
     }
     private suspend fun keyframe(id: String, index: Int, guard: OutboundDlpGuard): String? { return try {
+        // Only a capture needs content events; keeping them enabled between frames costs battery in every app.
+        val watch = UmbraAccessibilityService.watchContentChanges()
         val generation = UmbraAccessibilityService.lastEventAtMs.get()
-        val capture = container.capsule.screen.capture()
+        val capture = try { container.capsule.screen.capture() } catch (e: Throwable) { watch.close(); throw e }
         try {
-            val tree = capture.tree ?: return null
-            if (tree.windows.isEmpty() || tree.windows.any { it.truncated } || tree.windows.flatMap { it.nodes }.any { it.isEditable || it.isPassword || guard.matches(it.label.orEmpty()).isNotEmpty() }) return null
-            if (UmbraAccessibilityService.lastEventAtMs.get() != generation) return null
+            try {
+                val tree = capture.tree ?: return null
+                if (tree.windows.isEmpty() || tree.windows.any { it.truncated } || tree.windows.flatMap { it.nodes }.any { it.isEditable || it.isPassword || guard.matches(it.label.orEmpty()).isNotEmpty() }) return null
+                if (UmbraAccessibilityService.lastEventAtMs.get() != generation) return null
+            } finally { watch.close() }
             val scale = minOf(1f, 720f / maxOf(capture.image.width, capture.image.height))
             val bitmap = Bitmap.createScaledBitmap(capture.image, (capture.image.width * scale).toInt().coerceAtLeast(1), (capture.image.height * scale).toInt().coerceAtLeast(1), true)
             val file = File(dir(id), "frame-$index.jpg")

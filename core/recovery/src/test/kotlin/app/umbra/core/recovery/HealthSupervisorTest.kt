@@ -68,6 +68,39 @@ class HealthSupervisorTest {
     private fun List<RecoveryEvent>.names() = map { it::class.simpleName }
 
     @Test
+    fun idleProbesSlowDownAndBusyProbesKeepTheUsualInterval() = runTest {
+        var busy = false
+        var probes = 0
+        val sub = object : Subsystem {
+            override val id = "logs"
+            override suspend fun probe(): Health { probes++; return Health.Healthy }
+            override suspend fun restart() = RestartResult.Restarted
+        }
+        val sup = HealthSupervisor(listOf(sub), clock = Clock { currentTime }, busy = { busy })
+        val job = sup.start(backgroundScope)
+        runCurrent()
+        assertEquals(1, probes)
+        advanceTimeBy(59_999)
+        runCurrent()
+        assertEquals(1, probes)
+        busy = true
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(2, probes)
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(3, probes)
+        busy = false
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(4, probes)
+        advanceTimeBy(59_999)
+        runCurrent()
+        assertEquals(4, probes)
+        job.cancel()
+    }
+
+    @Test
     fun aHealthySubsystemProducesNoEventsAndNoRestarts() = runTest {
         val a = Fake("shizuku")
         val sup = supervisor(a)

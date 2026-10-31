@@ -42,7 +42,9 @@ import kotlinx.coroutines.Deferred
  * binder die, refuses that processor and goes on with the built-in rules or the next processor.
  *
  * One model per process, used only from one thread (LiteRT's GPU backends may bind their context to the thread that
- * created them). The service is not exported and answers only its own uid.
+ * created them). The service is not exported and answers only its own uid. The app starts a fresh process for every
+ * model ([LayaProcess.start] ends any `:laya` process it does not own first); should one still reach a process that
+ * holds a model, opening replaces that model instead of refusing.
  */
 class LayaService : Service() {
     private val binder = object : Binder() {
@@ -52,7 +54,7 @@ class LayaService : Service() {
             data.enforceInterface(LayaProtocol.DESCRIPTOR)
             try {
                 when (code) {
-                    LayaProtocol.PID -> { reply?.writeInt(0); reply?.writeInt(Process.myPid()) }
+                    LayaProtocol.PID -> { reply?.writeInt(0); reply?.writeInt(Process.myPid()); reply?.writeInt(if (graph != null) 1 else 0) }
                     LayaProtocol.ACCELERATORS -> {
                         val names = environment.getAvailableAccelerators().mapNotNull {
                             when (it) { Accelerator.NPU -> "npu"; Accelerator.GPU -> "gpu"; Accelerator.CPU -> "cpu"; else -> null }
@@ -65,9 +67,16 @@ class LayaService : Service() {
                         val key = data.readString()
                         val backend = LayaBackend.entries.firstOrNull { it.key == key } ?: error("unknown processor $key")
                         val onDevice = data.readInt() != 0
+                        val weightCache = data.readString()
+                        val gpu = data.readString()?.let { name -> GpuPath.entries.firstOrNull { it.name == name } } ?: GpuPath.AUTO
+                        val gpuCache = data.readString()
+                        val cacheKey = data.readString()
+                        val table = data.readString()?.let { EmbeddingTable(File(it), data.readInt()) }
                         synchronized(this@LayaService) {
-                            check(graph == null) { "a model is already open in this process" }
-                            graph = Graph.open(File(path), backend, onDevice, environment)
+                            // Two models in one process would not fit in memory: the one left over goes first.
+                            graph?.let { Log.w(TAG, "a model was still open; closing it for the ${backend.key}"); it.close() }
+                            graph = null
+                            graph = Graph.open(File(path), backend, onDevice, environment, weightCache?.let(::File), gpu, gpuCache?.let(::File), cacheKey, table)
                         }
                         reply?.writeInt(0)
                     }
@@ -119,15 +128,43 @@ class LayaService : Service() {
         return false
     }
 
+    /**
+     * The token table of an "embeds" file (Hexagon v68): fp16 rows of [hidden] values, mapped, not read into memory.
+     * The graph of such a file starts at the embeddings, so the row lookup the NPU cannot do happens here.
+     */
+    private class EmbeddingTable(file: File, val hidden: Int) {
+        init { require(hidden > 0) { "the token table's row width is missing" } }
+
+        private val rows: java.nio.ShortBuffer = java.io.RandomAccessFile(file, "r").use { f ->
+            f.channel.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, f.length()).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+        }
+        private val vocabulary = rows.capacity() / hidden
+
+        init { require(rows.capacity() % hidden == 0) { "the token table is not [vocabulary, $hidden]" } }
+
+        // The table holds IEEE half-float bits read as shorts; Half.toFloat is the conversion lint wants, not a widening.
+        @android.annotation.SuppressLint("HalfFloat")
+        fun embed(ids: IntArray): FloatArray {
+            val out = FloatArray(ids.size * hidden)
+            for (i in ids.indices) {
+                val id = ids[i]
+                require(id in 0 until vocabulary) { "token $id is outside the table" }
+                val from = id * hidden
+                for (j in 0 until hidden) out[i * hidden + j] = android.util.Half.toFloat(rows.get(from + j))
+            }
+            return out
+        }
+    }
+
     /** One CompiledModel and its buffers per sequence bucket, used only from [thread]. */
-    private class Graph private constructor(private val thread: ExecutorService) {
+    private class Graph private constructor(private val thread: ExecutorService, private val table: EmbeddingTable?) {
         private lateinit var model: CompiledModel
         private val io = HashMap<Int, Pair<List<TensorBuffer>, List<TensorBuffer>>>()
 
         fun run(length: Int, inputIds: IntArray, keyMask: FloatArray, markers: FloatArray, qtype: FloatArray): FloatArray = on {
             val signature = "l$length"
             val (ins, outs) = io.getOrPut(length) { model.createInputBuffers(signature) to model.createOutputBuffers(signature) }
-            ins[0].writeInt(inputIds)
+            if (table != null) ins[0].writeFloat(table.embed(inputIds)) else ins[0].writeInt(inputIds)
             ins[1].writeFloat(keyMask)
             ins[2].writeFloat(markers)
             ins[3].writeFloat(qtype)
@@ -150,25 +187,50 @@ class LayaService : Service() {
             catch (e: ExecutionException) { throw e.cause ?: e }
 
         companion object {
-            fun open(file: File, backend: LayaBackend, onDevice: Boolean, env: Environment): Graph {
-                val graph = Graph(Executors.newSingleThreadExecutor { Thread(it, "laya-${backend.key}") })
+            /**
+             * [gpu]: how the GPU runs it; [gpuCache], [cacheKey]: where the GPU keeps the programs it compiled for this
+             * file, so a later start loads them instead of compiling every kernel again (seconds of GPU and CPU at full
+             * clock on each start). [table]: the token table of an "embeds" file.
+             */
+            fun open(file: File, backend: LayaBackend, onDevice: Boolean, env: Environment, weightCache: File?, gpu: GpuPath = GpuPath.AUTO,
+                gpuCache: File? = null, cacheKey: String? = null, table: EmbeddingTable? = null): Graph {
+                val graph = Graph(Executors.newSingleThreadExecutor { Thread(it, "laya-${backend.key}") }, table)
                 try {
                     graph.on {
                         val options = when (backend) {
                             // Compiling on the phone, the NPU must take the whole graph: allowing the CPU too would let
                             // a failed compile run everything on the CPU while it is called the NPU.
-                            LayaBackend.NPU -> if (onDevice) CompiledModel.Options(Accelerator.NPU)
+                            LayaBackend.NPU -> (if (onDevice) CompiledModel.Options(Accelerator.NPU)
                             // A file compiled ahead of time only runs where its NPU code runs; ops left out of it stay
                             // on the CPU inside the same model.
-                            else CompiledModel.Options(Accelerator.NPU, Accelerator.CPU)
+                            else CompiledModel.Options(Accelerator.NPU, Accelerator.CPU)).apply {
+                                // Laya answers a few short questions now and then, not a stream: Hexagon's balanced clocks
+                                // instead of the burst vote, which holds the DSP at its top frequency while the model is open.
+                                if (LayaPlan.vendor(android.os.Build.SOC_MANUFACTURER, android.os.Build.SOC_MODEL) == "qualcomm") {
+                                    qualcommOptions = CompiledModel.QualcommOptions(htpPerformanceMode = CompiledModel.QualcommOptions.HtpPerformanceMode.BALANCED)
+                                }
+                            }
                             // fp16, like the NPU: on Apple's GPU it moved logits by at most 0.19 (a decision flipped only
                             // where two options were 0.01 apart) at 0.13 s for 256 tokens and 0.8 s for 1024; fp32 was
                             // exact but took 8.7 s for 1024, slower than the CPU (runtime-build/laya/convert.py verify).
+                            // OPENGL and FP32 are the next tries on a GPU whose first path failed (see [GpuPath]).
                             LayaBackend.GPU -> CompiledModel.Options(Accelerator.GPU, Accelerator.CPU).apply {
-                                gpuOptions = CompiledModel.GpuOptions(precision = CompiledModel.GpuOptions.Precision.FP16)
+                                gpuOptions = CompiledModel.GpuOptions(
+                                    precision = if (gpu == GpuPath.FP32) CompiledModel.GpuOptions.Precision.FP32 else CompiledModel.GpuOptions.Precision.FP16,
+                                    backend = if (gpu == GpuPath.OPENGL) CompiledModel.GpuOptions.Backend.OPENGL else null,
+                                    serializationDir = gpuCache?.apply { mkdirs() }?.path,
+                                    modelCacheKey = cacheKey?.takeIf { gpuCache != null },
+                                    serializeProgramCache = gpuCache != null,
+                                    // Below the app's own drawing: the screen stays smooth while Laya decides something.
+                                    priority = CompiledModel.GpuOptions.Priority.LOW,
+                                )
                             }
+                            // With a weight cache, XNNPACK writes the weights it repacks (fp16 unpacked to fp32, about
+                            // 1.7 GB) to a file once and maps it: memory the phone can page out under pressure, instead of
+                            // 1.7 GB the low-memory killer counts against the process on every start.
                             LayaBackend.CPU -> CompiledModel.Options(Accelerator.CPU).apply {
-                                cpuOptions = CompiledModel.CpuOptions(numThreads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
+                                cpuOptions = CompiledModel.CpuOptions(numThreads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
+                                    xnnPackWeightCachePath = weightCache?.apply { parentFile?.mkdirs() }?.path)
                             }
                         }
                         graph.model = CompiledModel.create(file.path, options, env)
@@ -203,8 +265,12 @@ internal object LayaProtocol {
 /** Laya's process ended under a call or while it was loaded; [reason] says how, as Android recorded it. */
 class LayaProcessDied(val reason: LayaExit) : IOException("Laya's process stopped (${reason.text})")
 
-/** How Laya's process ended: a crash in a driver or the runtime, or Android ending it to free memory. */
-data class LayaExit(val crashed: Boolean, val lowMemory: Boolean, val text: String)
+/**
+ * How Laya's process ended: a crash in a driver or the runtime, or Android ending it to free memory. [paused]: it did
+ * not end by itself; the phone froze it in the background (calls into a frozen process fail as if it had died) and the
+ * app ended it, which says nothing about the processor.
+ */
+data class LayaExit(val crashed: Boolean, val lowMemory: Boolean, val text: String, val paused: Boolean = false)
 
 /**
  * The app's side of one `:laya` process: binds it, calls it with a timeout, and reports when it dies. A process is
@@ -218,26 +284,35 @@ class LayaProcess private constructor(
 ) {
     private val stopped = AtomicBoolean(false)
     private val dead = CompletableDeferred<LayaExit>()
+    /** Set when the app ended a process that only looked dead (see [call]): its own exit record would say "killed". */
+    @Volatile private var lost: LayaExit? = null
 
     /** Completes when the process dies on its own (not when [stop] ends it). */
     val died: Deferred<LayaExit> get() = dead
 
     private val death = IBinder.DeathRecipient {
-        if (!stopped.get()) calls.execute { dead.complete(exitReason(context, pid)) }
+        if (!stopped.get()) calls.execute { dead.complete(lost ?: exitReason(context, pid)) }
     }
 
     init {
-        binder.linkToDeath(death, 0)
+        owned.add(pid)
+        try { binder.linkToDeath(death, 0) } catch (e: RemoteException) { owned.remove(pid); throw e }
     }
 
     fun accelerators(): Set<String> = call(binder, LayaProtocol.ACCELERATORS, CALL_MS) { }.let { r ->
         try { r.createStringArrayList().orEmpty().toSet() } finally { r.recycle() }
     }
 
-    /** Opens the model; NPU compiles on the phone take long the first time (LiteRT caches the result). */
-    fun open(file: File, backend: LayaBackend, onDevice: Boolean) {
+    /**
+     * Opens the model; NPU compiles on the phone take long the first time (LiteRT caches the result). [weightCache]: a
+     * file for the CPU's repacked weights (see [LayaService]; a file, not a folder), or null to keep them in memory.
+     */
+    fun open(file: File, backend: LayaBackend, onDevice: Boolean, weightCache: File? = null, gpu: GpuPath = GpuPath.AUTO,
+        gpuCache: File? = null, cacheKey: String? = null, embeddings: File? = null, hidden: Int = 0) {
         call(binder, LayaProtocol.OPEN, if (backend == LayaBackend.NPU) NPU_OPEN_MS else OPEN_MS) {
-            writeString(file.path); writeString(backend.key); writeInt(if (onDevice) 1 else 0)
+            writeString(file.path); writeString(backend.key); writeInt(if (onDevice) 1 else 0); writeString(weightCache?.path)
+            writeString(gpu.name); writeString(gpuCache?.path); writeString(cacheKey)
+            writeString(embeddings?.path); if (embeddings != null) writeInt(hidden)
         }.recycle()
     }
 
@@ -265,14 +340,14 @@ class LayaProcess private constructor(
     fun stop() {
         if (!stopped.compareAndSet(false, true)) return
         runCatching { binder.unlinkToDeath(death, 0) }
+        owned.remove(pid)
         val onMain = Looper.myLooper() == Looper.getMainLooper()
         val unbound = CountDownLatch(1)
         main.post { runCatching { context.unbindService(connection) }; unbound.countDown() }
+        // On the main thread the service's own unbind ends it, and the next [start] ends whatever is left of it.
         if (onMain) return
         unbound.await(2, TimeUnit.SECONDS)
-        if (alive(pid)) runCatching { Process.killProcess(pid) }
-        val deadline = System.nanoTime() + 3_000_000_000L
-        while (alive(pid) && System.nanoTime() < deadline) Thread.sleep(20)
+        end(pid)
     }
 
     /**
@@ -280,10 +355,16 @@ class LayaProcess private constructor(
      * [timeoutMs] instead of blocking Laya forever. The reply is positioned after its status; the caller recycles it.
      */
     private fun call(binder: IBinder, code: Int, timeoutMs: Long, write: Parcel.() -> Unit): Parcel {
-        val reply = transact(binder, code, timeoutMs, write) { if (alive(pid)) Process.killProcess(pid) }
+        val reply = transact(binder, code, timeoutMs, write) { end(pid) }
         if (reply == null) {
-            stopped.set(true)
-            throw LayaProcessDied(exitReason(context, pid))
+            // The binder says the process is gone. A process that still lives was frozen by the phone (some freeze
+            // background processes hard, and a call into a frozen process fails just like one into a dead one) or ran
+            // out of binder buffer: it still holds the model, and the next process bound would be this very one ("a
+            // model is already open"). It is ended for real; [stop] still unbinds it.
+            val exit = if (alive(pid)) {
+                LayaExit(crashed = false, lowMemory = false, text = "the phone paused it in the background", paused = true).also { lost = it; end(pid) }
+            } else exitReason(context, pid)
+            throw LayaProcessDied(exit)
         }
         return reply
     }
@@ -295,11 +376,59 @@ class LayaProcess private constructor(
         private const val NPU_OPEN_MS = 12 * 60_000L
         private const val RUN_MS = 60_000L
 
+        private const val TAG = "LayaProcess"
+        /** A process that is killed unmaps 810 MB and the accelerator's memory: some phones take seconds for that. */
+        private const val END_MS = 10_000L
+        private const val START_TRIES = 3
+
         private val main = Handler(Looper.getMainLooper())
         private val calls: ExecutorService = Executors.newCachedThreadPool { Thread(it, "laya-call").apply { isDaemon = true } }
+        /** Pids of the `:laya` processes a [LayaProcess] in this app holds and has not stopped. */
+        private val owned: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
-        /** Starts a fresh `:laya` process and connects to it. Blocks: call it off the main thread. */
+        private class Stale(pid: Int) : IOException("Laya's process $pid still held a model")
+
+        /**
+         * Starts a fresh `:laya` process and connects to it. Blocks: call it off the main thread.
+         *
+         * Fresh means no model in it: binding while an earlier `:laya` process still lives (one that was stopped but is
+         * still dying, or one the app lost track of) would connect to that process again. So any `:laya` process no
+         * [LayaProcess] holds is ended first, and a process that answers with a model already open is ended and
+         * replaced.
+         */
         fun start(context: Context, timeoutMs: Long = 30_000): LayaProcess {
+            var failure: IOException? = null
+            repeat(START_TRIES) {
+                endLeftovers(context)
+                try {
+                    return connect(context, timeoutMs)
+                } catch (e: IOException) {
+                    Log.w(TAG, "starting Laya's process, try ${it + 1}: ${e.message}")
+                    failure = e
+                }
+            }
+            throw failure ?: IOException("Laya's process did not start")
+        }
+
+        /** Ends every `:laya` process of this app that no [LayaProcess] holds, and waits until each is gone. */
+        private fun endLeftovers(context: Context) {
+            val name = context.packageName + ":laya"
+            val running = runCatching { context.getSystemService(ActivityManager::class.java).runningAppProcesses.orEmpty() }.getOrDefault(emptyList())
+            running.filter { it.processName == name && it.pid !in owned }.forEach {
+                Log.w(TAG, "ending Laya's leftover process ${it.pid}")
+                end(it.pid)
+            }
+        }
+
+        /** Kills [pid] (one of this app's processes) if it lives and waits up to [END_MS] until it is gone. */
+        private fun end(pid: Int) {
+            if (!alive(pid)) return
+            runCatching { Process.killProcess(pid) }
+            val deadline = System.nanoTime() + END_MS * 1_000_000
+            while (alive(pid) && System.nanoTime() < deadline) Thread.sleep(20)
+        }
+
+        private fun connect(context: Context, timeoutMs: Long): LayaProcess {
             val ready = CountDownLatch(1)
             var bound: IBinder? = null
             val connection = object : ServiceConnection {
@@ -319,9 +448,14 @@ class LayaProcess private constructor(
             ready.await(timeoutMs, TimeUnit.MILLISECONDS)
             val service = bound
             if (service == null) { unbind(); throw IOException("Laya's process did not start") }
-            val reply = transact(service, LayaProtocol.PID, CALL_MS, {}) {}
+            val reply = try { transact(service, LayaProtocol.PID, CALL_MS, {}) {} } catch (e: IOException) { unbind(); throw e }
             if (reply == null) { unbind(); throw IOException("Laya's process stopped as it started") }
-            val pid = try { reply.readInt() } finally { reply.recycle() }
+            val (pid, holding) = try { reply.readInt() to (reply.dataAvail() >= 4 && reply.readInt() != 0) } finally { reply.recycle() }
+            if (holding) {
+                unbind()
+                end(pid)
+                throw Stale(pid)
+            }
             return try { LayaProcess(context, service, connection, pid) } catch (e: Exception) { unbind(); throw e }
         }
 
@@ -358,7 +492,13 @@ class LayaProcess private constructor(
             }
         }
 
-        private fun alive(pid: Int): Boolean = pid > 0 && File("/proc/$pid").exists()
+        /**
+         * Whether [pid] (one of this app's processes) still lives. Not `/proc/<pid>`: every process of the app is made
+         * non-dumpable (UmbraApp), and Android's `/proc` hides a non-dumpable process from the others, so that test
+         * said "gone" at once and nothing was ever killed. Signal 0 checks without sending; another uid's process
+         * that took the number answers EPERM.
+         */
+        fun alive(pid: Int): Boolean = pid > 0 && try { Os.kill(pid, 0); true } catch (_: android.system.ErrnoException) { false }
 
         /**
          * Why [pid] ended, from Android's record of the app's process exits. The record is written a moment after the
@@ -384,6 +524,9 @@ class LayaProcess private constructor(
                 ApplicationExitInfo.REASON_SIGNALED -> LayaExit(info.status != OsConstants.SIGKILL, info.status == OsConstants.SIGKILL,
                     if (info.status == OsConstants.SIGKILL) "Android ended it (signal 9)$detail" else "signal ${info.status}$detail")
                 ApplicationExitInfo.REASON_ANR -> LayaExit(true, false, "it stopped responding")
+                // Android 14+ ends a frozen process that is called ("Sync transaction while frozen"): the app was in the
+                // background, which says nothing about the processor.
+                ApplicationExitInfo.REASON_FREEZER -> LayaExit(false, false, "the phone paused it in the background$detail", paused = true)
                 ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> LayaExit(false, true, "Android ended it for using too much$detail")
                 // Some phones' own memory managers end a process without telling Android why.
                 ApplicationExitInfo.REASON_UNKNOWN, ApplicationExitInfo.REASON_OTHER -> LayaExit(false, false, "the phone ended it without a reason$detail")

@@ -15,13 +15,18 @@ import app.umbra.platform.privileged.ServerShell
 import app.umbra.platform.api.ShellIdentity
 import app.umbra.runtime.linux.LinuxMode
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * A shared service Umbra runs or depends on (architecture spec §9). [singleton] says why it may not be replicated
@@ -62,12 +67,18 @@ class ServiceMonitor(private val c: AppContainer) {
         for (s in catalogState.value) runCatching { c.services.recordHealth(s.id, probe(s.id)) }
     }
 
-    /** Probes in the background every [intervalMs]; screens ask for [refresh] more often while they are shown. */
-    fun start(scope: CoroutineScope, intervalMs: Long = 60_000) = scope.launch {
+    /** Guest probes spawn processes, so leave them mostly asleep until a screen or a session needs fresh health. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun start(scope: CoroutineScope, intervalMs: Long = 60_000, idleIntervalMs: Long = 15 * 60_000) = scope.launch {
         declareAll()
         while (true) {
             runCatching { refresh() }
-            delay(intervalMs)
+            if (c.ui.appVisible.value || c.sessionStore.list().any { it.state.isActive }) delay(intervalMs)
+            else withTimeoutOrNull(idleIntervalMs) {
+                merge(c.ui.appVisible.map { Unit }, c.sessionStore.changes.map { Unit }).first {
+                    c.ui.appVisible.value || c.sessionStore.list().any { it.state.isActive }
+                }
+            }
         }
     }
 

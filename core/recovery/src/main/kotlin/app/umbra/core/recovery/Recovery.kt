@@ -45,6 +45,8 @@ data class RecoveryPolicy(
     val jitterRatio: Double = 0.2,
     val probeTimeoutMs: Long = 10_000,
     val restartTimeoutMs: Long = 30_000,
+    /** Idle probes need not wake the phone as often as probes supporting a live task. */
+    val idleProbeIntervalMs: Long = 60_000,
 )
 
 enum class CircuitState { CLOSED, OPEN, HALF_OPEN }

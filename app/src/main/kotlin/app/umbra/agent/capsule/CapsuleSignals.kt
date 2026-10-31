@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import app.umbra.agent.AppContainer
 import kotlinx.coroutines.CoroutineScope
@@ -26,20 +27,37 @@ class CapsuleSignals(private val context: Context, private val container: AppCon
     val revision = mutableRevision.asStateFlow()
     private var job: Job? = null
     private var registered = false
+    private var pending = false
+    private val power = context.getSystemService(PowerManager::class.java)
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action != ACTION || !registered) return
-            if (container.settings.value.overlayEnabled) container.capsule.start() else container.capsule.stop()
-            mutableRevision.value++
+            synchronized(this@CapsuleSignals) {
+                if (!registered) return
+                when (intent.action) {
+                    Intent.ACTION_SCREEN_OFF -> pending = true
+                    Intent.ACTION_SCREEN_ON -> if (pending) request()
+                    ACTION -> {
+                        if (!power.isInteractive) { pending = true; return }
+                        if (container.settings.value.overlayEnabled) container.capsule.start() else container.capsule.stop()
+                        mutableRevision.value++
+                    }
+                    else -> Unit
+                }
+            }
         }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     fun start(scope: CoroutineScope) {
         if (job?.isActive == true) return
-        ContextCompat.registerReceiver(context, receiver, IntentFilter(ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
-        registered = true
+        synchronized(this) {
+            ContextCompat.registerReceiver(context, receiver, IntentFilter(ACTION).apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+            }, ContextCompat.RECEIVER_NOT_EXPORTED)
+            registered = true
+        }
         job = scope.launch {
             container.settings.flow.map { it.overlayEnabled }.distinctUntilChanged().collectLatest { enabled ->
                 if (!enabled) { request(); return@collectLatest }
@@ -65,21 +83,28 @@ class CapsuleSignals(private val context: Context, private val container: AppCon
                     app.umbra.platform.android.UmbraAccessibilityService.connected.map { Unit },
                 ).conflate().collect {
                     request()
-                    delay(75) // Coalesce bursts of timeline and streaming events; no timer while idle.
+                    delay(200) // Streaming updates share a broadcast; the sleeping screen needs none.
                 }
             }
         }
     }
 
-    fun request() {
-        if (registered) context.sendBroadcast(Intent(ACTION).setPackage(context.packageName))
+    /** Keep one invalidation while the screen sleeps, rather than waking the overlay for every streamed token. */
+    fun request() = synchronized(this) {
+        if (!registered) return@synchronized
+        if (!power.isInteractive) { pending = true; return@synchronized }
+        pending = false
+        context.sendBroadcast(Intent(ACTION).setPackage(context.packageName))
     }
 
     fun stop() {
         job?.cancel()
         job = null
-        if (registered) context.unregisterReceiver(receiver)
-        registered = false
+        synchronized(this) {
+            if (registered) context.unregisterReceiver(receiver)
+            registered = false
+            pending = false
+        }
     }
 
     internal fun <T> read(source: StateFlow<T>) = content { source.value }

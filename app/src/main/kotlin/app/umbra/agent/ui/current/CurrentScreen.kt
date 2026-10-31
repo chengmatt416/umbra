@@ -223,6 +223,9 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
     var usageLimitOpen by remember(id) { mutableStateOf(false) }
     if (usageLimitOpen) UsageLimitDialog(session.usageLimit, session.id,
         onSave = { container.supervisor.setUsageLimit(id, it) }, onDismiss = { usageLimitOpen = false })
+    var skillsOpen by remember(id) { mutableStateOf(false) }
+    if (skillsOpen) app.umbra.agent.ui.skills.SkillPickerSheet(session.workspaceId, session.skills, existing = true, onDismiss = { skillsOpen = false },
+        onSave = { chosen -> scope.launch { container.sessionStore.update(id) { it.copy(skills = chosen) } } })
 
     if (directory) SessionsDirectorySheet(current = id, onOpenSession = onOpenSession, onDismiss = { directory = false })
     if (effortSheet) {
@@ -262,6 +265,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
     }
     val mine = approvals.filter { it.sessionId == id }
     val myQuestions = questions.filter { it.sessionId == id }
+    app.umbra.agent.ui.questions.ShowsQuestions(id)
     val busy = session.state == SessionState.RUNNING || session.state == SessionState.WAITING_APPROVAL
     val project = session.projectId?.let { container.projects[it] }
 
@@ -312,6 +316,7 @@ private fun SessionView(session: app.umbra.core.session.Session, context: Contex
                         if (session.state == SessionState.PAUSED) MenuItem(stringResource(R.string.cur_menu_resume)) { menu = false; scope.launch { runCatching { container.supervisor.resume(id) }.onFailure { error = it.message } } }
                         if (!session.state.isTerminal) MenuItem(stringResource(R.string.cur_menu_stop), stringResource(R.string.cur_menu_stop_detail)) { menu = false; scope.launch { container.supervisor.stop(id) } }
                         MenuItem(stringResource(R.string.ai_usage_limit)) { menu = false; usageLimitOpen = true }
+                        MenuItem(stringResource(R.string.skills_menu)) { menu = false; skillsOpen = true }
                         MenuItem(stringResource(R.string.cur_menu_run_again)) { menu = false; scope.launch { runCatching { container.supervisor.duplicate(id) }.onSuccess { onOpenSession(it.id) }.onFailure { error = it.message } } }
                         androidx.compose.material3.HorizontalDivider(color = P.line2)
                         MenuItem(stringResource(R.string.cur_menu_delete), danger = true) { menu = false; confirmDelete = true }
@@ -476,6 +481,9 @@ private fun ChatList(
             forkFrom = { user -> branchAt(ops, user, conversation, fork = true, onComposer) },
         )
     }
+    // Answers on a session's cards go to it as the user's messages.
+    val cardHost = remember(session.id) { app.umbra.agent.cards.CardHost(session.id) { text -> context.container.supervisor.send(session.id, text, whileRunning = app.umbra.runtime.omp.StreamingBehavior.FOLLOW_UP) } }
+    androidx.compose.runtime.CompositionLocalProvider(app.umbra.agent.cards.LocalCardHost provides cardHost) {
     LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(18.dp, 10.dp, 18.dp, 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (items.isEmpty()) item(key = "empty") {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(top = 40.dp)) {
@@ -524,6 +532,7 @@ private fun ChatList(
         items(approvals, key = { it.id }) { r -> androidx.compose.foundation.layout.Box(inkItem(placement = false)) { ApprovalPanel(r, null, onDecision = { container.approvals.resolve(r.id, it) }) } }
         items(questions, key = { it.request.id }) { q -> androidx.compose.foundation.layout.Box(inkItem(placement = false)) { QuestionPanel(q, null, onAnswer = { container.questions.answer(q.request.id, it) }) } }
         if (session.state == SessionState.FAILED) item(key = "failed") { Callout(session.lastError ?: stringResource(R.string.cur_failed), Tone.Danger) }
+    }
     }
 }
 

@@ -2,6 +2,8 @@ package app.umbra.platform.android
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import java.util.concurrent.atomic.AtomicLong
@@ -17,15 +19,33 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 class UmbraAccessibilityService : AccessibilityService() {
     private val inputMethodPackages by lazy { getSystemService(android.view.inputmethod.InputMethodManager::class.java).inputMethodList.map { it.packageName }.toSet() }
-    override fun onServiceConnected() {
-        instance = this
-        _connected.value = true
-        updateInteractionEvents()
+    private val handler = Handler(Looper.getMainLooper())
+    private var windowsPending = false
+    private val updateWindows = Runnable {
+        windowsPending = false
+        val current = windows
+        publishTopOverlays(current)
+        val pkg = current.firstOrNull { it.displayId == 0 && it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive }?.root?.packageName?.toString()
+        if (pkg != null && pkg != mainPackage.value) {
+            mainPackage.value?.let { leftPackages[it] = System.currentTimeMillis() }
+            mainPackage.value = pkg
+        }
     }
 
-    private fun updateInteractionEvents() {
-        val info = serviceInfo ?: return
-        info.eventTypes = if (interactionListeners.isEmpty()) info.eventTypes and TEACH_EVENTS.inv() else info.eventTypes or TEACH_EVENTS
+    override fun onServiceConnected() {
+        synchronized(eventLock) {
+            instance = this
+            updateInteractionEvents()
+        }
+        _connected.value = true
+    }
+
+    /** Content changes wake the process in every app, so only teaching and captures subscribe to what they need. */
+    private fun updateInteractionEvents() = synchronized(eventLock) {
+        val info = serviceInfo ?: return@synchronized
+        val base = info.eventTypes and (TEACH_EVENTS or AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED).inv()
+        info.eventTypes = base or (if (interactionListeners.isEmpty()) 0 else TEACH_EVENTS) or
+            (if (contentWatchers == 0) 0 else AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
         serviceInfo = info
     }
 
@@ -42,12 +62,11 @@ class UmbraAccessibilityService : AccessibilityService() {
             if (interactionListeners.isNotEmpty()) publishInteraction(event)
             lastEventAtMs.set(System.currentTimeMillis())
             if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) lastTextInputAtMs.set(System.currentTimeMillis())
-            if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) publishTopOverlays()
             if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-                val pkg = windows.firstOrNull { it.displayId == 0 && it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive }?.root?.packageName?.toString()
-                if (pkg != null && pkg != mainPackage.value) {
-                    mainPackage.value?.let { leftPackages[it] = System.currentTimeMillis() }
-                    mainPackage.value = pkg
+                // Window bursts share one tree read; each root is an IPC that need not wake the phone repeatedly.
+                if (!windowsPending) {
+                    windowsPending = true
+                    handler.postDelayed(updateWindows, 120)
                 }
             }
         }
@@ -60,10 +79,10 @@ class UmbraAccessibilityService : AccessibilityService() {
      * the camera). Only their app and bounds are kept, never their content; Umbra's own windows, System UI and the
      * system itself are left out. The Capsule uses this to stay out of their way.
      */
-    private fun publishTopOverlays() {
+    private fun publishTopOverlays(current: List<AccessibilityWindowInfo>) {
         runCatching {
             val limit = resources.displayMetrics.heightPixels / 3
-            val found = windows.mapNotNull { w ->
+            val found = current.mapNotNull { w ->
                 if (w.displayId != 0) return@mapNotNull null
                 if (w.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && w.type != AccessibilityWindowInfo.TYPE_SYSTEM) return@mapNotNull null
                 if (w.title?.toString() == UmbraOverlay.WINDOW_TITLE) return@mapNotNull null
@@ -108,25 +127,56 @@ class UmbraAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         interruptTeaching()
-        if (instance === this) instance = null
+        handler.removeCallbacks(updateWindows)
+        windowsPending = false
+        synchronized(eventLock) { if (instance === this) instance = null }
         _connected.value = false
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         interruptTeaching()
-        if (instance === this) instance = null
+        handler.removeCallbacks(updateWindows)
+        windowsPending = false
+        synchronized(eventLock) { if (instance === this) instance = null }
         _connected.value = false
         super.onDestroy()
     }
 
     companion object {
+        private val eventLock = Any()
+        private var contentWatchers = 0
         private val interactionListeners = java.util.concurrent.CopyOnWriteArrayList<(AccessibilityInteraction) -> Unit>()
         private const val TEACH_EVENTS = AccessibilityEvent.TYPE_VIEW_CLICKED or AccessibilityEvent.TYPE_VIEW_LONG_CLICKED or AccessibilityEvent.TYPE_VIEW_SCROLLED
-        fun observeInteractions(listener: (AccessibilityInteraction) -> Unit): AutoCloseable {
+        fun observeInteractions(listener: (AccessibilityInteraction) -> Unit): AutoCloseable = synchronized(eventLock) {
             interactionListeners += listener
             instance?.updateInteractionEvents()
-            return AutoCloseable { interactionListeners -= listener; instance?.updateInteractionEvents() }
+            var closed = false
+            AutoCloseable {
+                synchronized(eventLock) {
+                    if (!closed) {
+                        closed = true
+                        interactionListeners -= listener
+                        instance?.updateInteractionEvents()
+                    }
+                }
+            }
+        }
+
+        /** Captures watch UI generations briefly, rather than paying for content events all day. */
+        fun watchContentChanges(): AutoCloseable = synchronized(eventLock) {
+            contentWatchers++
+            instance?.updateInteractionEvents()
+            var closed = false
+            AutoCloseable {
+                synchronized(eventLock) {
+                    if (!closed) {
+                        closed = true
+                        contentWatchers--
+                        instance?.updateInteractionEvents()
+                    }
+                }
+            }
         }
         @Volatile
         var instance: UmbraAccessibilityService? = null

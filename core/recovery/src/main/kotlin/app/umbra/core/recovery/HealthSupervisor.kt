@@ -34,6 +34,8 @@ class HealthSupervisor(
     private val gate: RecoveryGate = RecoveryGate.OPEN,
     /** Who this supervisor is, as the recovery owner it registers with [gate]. */
     private val owner: String = "health-supervisor",
+    /** Frequent probes cost battery when no session needs recovery. */
+    private val busy: () -> Boolean = { true },
 ) {
     private val byId: Map<String, Subsystem> = subsystems.associateBy { it.id }
     private val locks: Map<String, Mutex> = subsystems.associate { it.id to Mutex() }
@@ -58,7 +60,7 @@ class HealthSupervisor(
             launch {
                 while (isActive) {
                     step(sub)
-                    delay(policy.probeIntervalMs)
+                    delay(if (busy()) policy.probeIntervalMs else policy.idleProbeIntervalMs)
                 }
             }
         }

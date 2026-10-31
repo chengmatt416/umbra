@@ -6,9 +6,11 @@
 # Licence: QTI "AI Stack License" -- the libraries may be distributed only in object code and as incorporated in an
 # application, never on their own. So they go into the APK and nowhere else: not into git, not onto R2.
 #
-# Only the HTP backend for Hexagon v73-v81 (Snapdragon 8 Gen 2 and later) is staged: Laya's NPU graph is fp16, which
-# older HTPs do not run. libQnnHtpPrepare.so (85 MB) lets LiteRT compile Laya for the NPU on the phone itself when no
-# file compiled ahead of time exists for its SoC; the result is cached, so a phone compiles once.
+# The HTP backend for Hexagon v68, v69 and v73-v81 is staged (Snapdragon 888 / 780G / 778G, 8 Gen 1 / 7 Gen 1 and
+# 8 Gen 2 / 7 Gen 3 onwards): Laya compiles ahead of time for those (.github/workflows/laya-npu.yml; v68 runs the
+# "embeds" layout, without the fp16 Gather and GELU it refuses). Older Hexagons have no HTP: those phones use the GPU.
+# libQnnHtpPrepare.so (85 MB) lets LiteRT compile Laya for the NPU on the phone itself when no file compiled ahead of
+# time exists for its SoC; the result is cached, so a phone compiles once.
 set -euo pipefail
 
 VERSION=2.50.0.260828
@@ -32,9 +34,9 @@ unzip -q -o "$ZIP" \
   "$P/LICENSE.pdf" "$P/QNN_NOTICE.txt" \
   "$P/lib/aarch64-android/libQnnHtp.so" "$P/lib/aarch64-android/libQnnSystem.so" \
   "$P/lib/aarch64-android/libQnnHtpPrepare.so" \
-  "$P/lib/aarch64-android/libQnnHtpV73Stub.so" "$P/lib/aarch64-android/libQnnHtpV75Stub.so" \
+  "$P/lib/aarch64-android/libQnnHtpV68Stub.so" "$P/lib/aarch64-android/libQnnHtpV69Stub.so" "$P/lib/aarch64-android/libQnnHtpV73Stub.so" "$P/lib/aarch64-android/libQnnHtpV75Stub.so" \
   "$P/lib/aarch64-android/libQnnHtpV79Stub.so" "$P/lib/aarch64-android/libQnnHtpV81Stub.so" \
-  "$P/lib/hexagon-v73/unsigned/libQnnHtpV73Skel.so" "$P/lib/hexagon-v75/unsigned/libQnnHtpV75Skel.so" \
+  "$P/lib/hexagon-v68/unsigned/libQnnHtpV68Skel.so" "$P/lib/hexagon-v69/unsigned/libQnnHtpV69Skel.so" "$P/lib/hexagon-v73/unsigned/libQnnHtpV73Skel.so" "$P/lib/hexagon-v75/unsigned/libQnnHtpV75Skel.so" \
   "$P/lib/hexagon-v79/unsigned/libQnnHtpV79Skel.so" "$P/lib/hexagon-v81/unsigned/libQnnHtpV81Skel.so" \
   -d "$TMP"
 

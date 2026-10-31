@@ -264,6 +264,8 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
     var browser by remember { mutableStateOf("auto") }
     var usageLimit by remember { mutableStateOf<AiUsageLimit?>(null) }
     var usageLimitOpen by remember { mutableStateOf(false) }
+    var skills by remember { mutableStateOf<List<String>?>(null) }
+    var skillsOpen by remember { mutableStateOf(false) }
     var reportTo by remember { mutableStateOf<String?>(null) }
     var text by remember { mutableStateOf("") }
     var projectMenu by remember { mutableStateOf(false) }
@@ -298,7 +300,10 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
                 ModelChip(modelName(model), mono = model != null) { picker = true }
                 EffortChip(effortText(effort)) { effortPicker = true }
             }
-            UsageLimitSetting(usageLimit) { usageLimitOpen = true }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                UsageLimitSetting(usageLimit) { usageLimitOpen = true }
+                PButton(app.umbra.agent.ui.skills.skillsChipText(skills), { skillsOpen = true }, style = app.umbra.agent.ui.porcelain.ButtonStyle.Ghost, tiny = true, icon = PIcons.puzzle)
+            }
             app.umbra.agent.ui.current.SessionFileButton(
                 preparedSession, compact = false,
                 onReference = { text = listOf(text, it).filter(String::isNotBlank).joinToString("\n") }, onError = { error = it },
@@ -341,11 +346,11 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
                                     val prepared = preparedSession
                                     val id = if (prepared == null) container.supervisor.submit(
                                         words, title = AgentSupervisor.titleOf(words), model = model ?: choice?.model, projectId = project,
-                                        effort = effort ?: choice?.effort, spec = SessionSpec(agentId = reportTo, browser = browser, usageLimit = usageLimit),
+                                        effort = effort ?: choice?.effort, spec = SessionSpec(agentId = reportTo, browser = browser, usageLimit = usageLimit, skills = skills),
                                     ).id else {
                                         check(container.sessionStore.update(prepared) {
                                             it.copy(request = words, title = AgentSupervisor.titleOf(words), model = model ?: choice?.model,
-                                                projectId = project, effort = effort ?: choice?.effort, agentId = reportTo, browser = browser, usageLimit = usageLimit)
+                                                projectId = project, effort = effort ?: choice?.effort, agentId = reportTo, browser = browser, usageLimit = usageLimit, skills = skills)
                                         } != null)
                                         container.supervisor.send(prepared, words)
                                         prepared
@@ -367,6 +372,8 @@ fun NewCodingSheet(onDismiss: () -> Unit, onStarted: (String) -> Unit, onAccount
     }
     if (usageLimitOpen) app.umbra.agent.ui.current.UsageLimitDialog(usageLimit, sessionId = null,
         onSave = { usageLimit = it }, onDismiss = { usageLimitOpen = false })
+    // A new session works in its own folder, so it sees the skills installed for every project.
+    if (skillsOpen) app.umbra.agent.ui.skills.SkillPickerSheet(projectId = null, current = skills, existing = false, onDismiss = { skillsOpen = false }, onSave = { skills = it })
     if (picker) ModelPicker(onDismiss = { picker = false }, onConnect = { picker = false; onAccounts() }, picked = model, onPick = { model = it })
     if (effortPicker) EffortPicker(
         current = effort, supported = container.modelDirectory.model(model)?.efforts.orEmpty(), modelName = model?.modelId, modelIsAuto = model == null,

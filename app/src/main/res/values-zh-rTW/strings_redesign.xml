@@ -16,6 +16,7 @@
     <string name="r_menu_nodes">節點</string>
     <string name="r_menu_safety">安全</string>
     <string name="r_menu_developer">開發者</string>
+    <string name="r_menu_skills">技能</string>
 
     <string name="r_home_title">任務</string>
     <string name="r_home_empty">想讓手機幫你做什麼？</string>

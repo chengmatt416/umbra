@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Publishing HTML artifacts to Cloudflare Pages (2026-10-28) -->
+    <string name="pub_publish">Publish</string>
+    <string name="pub_update">Publish update</string>
+    <string name="pub_live">Live</string>
+    <string name="pub_working">Publishing · %1$d%%</string>
+    <string name="pub_stage_scanning">Gathering the page and its files…</string>
+    <string name="pub_stage_hashing">Preparing files · %1$d of %2$d</string>
+    <string name="pub_stage_project">Setting up the site on Cloudflare…</string>
+    <string name="pub_stage_uploading">Uploading · %1$d of %2$d</string>
+    <string name="pub_stage_nothing_new">Nothing new to upload</string>
+    <string name="pub_stage_deploying">Going live…</string>
+    <string name="pub_stage_done">Live</string>
+    <string name="pub_failed">Not published: %1$s</string>
+    <string name="pub_retry">Try again</string>
+    <string name="pub_live_eyebrow">Live on the web</string>
+    <string name="pub_anyone">Anyone with the link can open it.</string>
+    <string name="pub_share">Share</string>
+    <string name="pub_copy">Copy</string>
+    <string name="pub_copied">Link copied</string>
+    <string name="pub_open">Open</string>
+    <string name="pub_changed">The page changed since it was published. Publish the update to the same link.</string>
+    <string name="pub_takedown">Take down</string>
+    <string name="pub_takedown_hint">Taking it down deletes the site from your Cloudflare account.</string>
+    <string name="pub_takedown_title">Take this site down?</string>
+    <string name="pub_takedown_body">%1$s stops working for everyone. Publishing again later gives the page a new link.</string>
+    <plurals name="pub_files">
+        <item quantity="one">%1$d file</item>
+        <item quantity="other">%1$d files</item>
+    </plurals>
+    <string name="pub_connect_title">Publish with Cloudflare Pages</string>
+    <string name="pub_connect_body">Your page goes to your own Cloudflare account and is served free on pages.dev. Umbra needs your account ID and an API token that may edit Pages. You do this once.</string>
+    <string name="pub_connect_step1">In Cloudflare, open My Profile → API Tokens and create a custom token.</string>
+    <string name="pub_connect_open_tokens">Open API Tokens</string>
+    <string name="pub_connect_step2">Give it one permission: Account · Cloudflare Pages · Edit. Create it and copy the token.</string>
+    <string name="pub_connect_step3">Copy your Account ID: it is on the account’s home page under Account details, 32 letters and digits.</string>
+    <string name="pub_account_id">Account ID</string>
+    <string name="pub_api_token">API token</string>
+    <string name="pub_connect">Connect Cloudflare</string>
+    <string name="pub_connect_and_publish">Connect and publish</string>
+    <string name="pub_connecting">Checking with Cloudflare…</string>
+    <string name="pub_connect_privacy">The token stays in Umbra’s encrypted store on this phone and is sent only to api.cloudflare.com.</string>
+    <string name="pub_settings_title">Publishing</string>
+    <string name="pub_settings_body">HTML pages and apps your agents make can go live on the web: open one and tap Publish in its preview.</string>
+    <string name="pub_cloudflare">Cloudflare Pages</string>
+    <string name="pub_connected">Connected</string>
+    <string name="pub_connected_sub">Sites go to this account, on pages.dev.</string>
+    <string name="pub_connect_sub">Needed once, the first time you publish.</string>
+    <string name="pub_disconnect">Disconnect</string>
+    <string name="pub_disconnect_title">Disconnect Cloudflare?</string>
+    <string name="pub_disconnect_body">Published sites stay online. To update or take them down later, connect the same account again.</string>
+    <string name="pub_sites">Published sites · %1$d</string>
+    <string name="pub_settings_row">Publishing</string>
+    <string name="pub_settings_row_on">Cloudflare</string>
+    <string name="pub_settings_row_off">Not connected</string>
+    <string name="pub_settings_row_sub">Put HTML pages online in one tap</string>
+</resources>

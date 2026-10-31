@@ -114,9 +114,9 @@ internal class SelectionWebView(context: Context) : WebView(context) {
 /** Render only supplied content: neither scripts nor CSS can fetch local files or the network. */
 @Suppress("SetJavaScriptEnabled")
 @Composable
-internal fun LocalHtml(html: String, javaScript: Boolean, modifier: Modifier, onAsk: (String) -> Unit) {
+internal fun LocalHtml(html: String, javaScript: Boolean, modifier: Modifier, base: java.io.File? = null, onAsk: (String) -> Unit) {
     val ask by rememberUpdatedState(onAsk)
-    key(html, javaScript) {
+    key(html, javaScript, base) {
         AndroidView(modifier = modifier, factory = { context ->
             SelectionWebView(context).apply {
                 settings.javaScriptEnabled = javaScript
@@ -128,12 +128,43 @@ internal fun LocalHtml(html: String, javaScript: Boolean, modifier: Modifier, on
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = true
                     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-                        if (request.url.scheme == "data") null else WebResourceResponse("text/plain", "UTF-8", java.io.ByteArrayInputStream(byteArrayOf()))
+                        if (request.url.scheme == "data") null
+                        else base?.let { folder -> localAsset(folder, request) } ?: WebResourceResponse("text/plain", "UTF-8", java.io.ByteArrayInputStream(byteArrayOf()))
                 }
                 this.onAsk = { ask(it) }
-                val csp = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src ${if (javaScript) "'unsafe-inline'" else "'none'"}; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"
-                loadDataWithBaseURL("https://umbra.invalid/", "<meta http-equiv=\"Content-Security-Policy\" content=\"$csp\">$html", "text/html", "UTF-8", null)
+                // With [base], the page's own files (its stylesheet, images, fonts, scripts when allowed) load from its
+                // folder through the page's made-up origin, so the preview looks as it will once published; nothing
+                // reaches the network either way.
+                val own = if (base != null) " $PREVIEW_ORIGIN" else ""
+                val csp = "default-src 'none'; img-src data:$own; style-src 'unsafe-inline'$own; font-src data:$own; media-src$own${if (own.isEmpty()) " 'none'" else ""}; " +
+                    "script-src ${if (javaScript) "'unsafe-inline'$own" else "'none'"}; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"
+                loadDataWithBaseURL("$PREVIEW_ORIGIN/", "<meta http-equiv=\"Content-Security-Policy\" content=\"$csp\">$html", "text/html", "UTF-8", null)
             }
         }, onRelease = { it.stopLoading(); it.destroy() })
     }
+}
+
+private const val PREVIEW_ORIGIN = "https://umbra.invalid"
+
+/**
+ * A file the previewed page asks for by relative path, from the page's own folder or below: a GET on the preview's
+ * origin, decoded, inside [folder] after resolving links, a regular file of at most 25 MiB. Anything else is refused
+ * (null lets the caller answer with nothing).
+ */
+private fun localAsset(folder: java.io.File, request: WebResourceRequest): WebResourceResponse? {
+    val url = request.url
+    if (request.method != "GET" || url.scheme != "https" || url.host != "umbra.invalid" || url.port != -1) return null
+    val path = url.path?.removePrefix("/")?.takeIf { it.isNotEmpty() } ?: return null
+    if (path.split('/').any { it.isEmpty() || it == "." || it == ".." } || '\\' in path || '\u0000' in path) return null
+    return runCatching {
+        val root = folder.canonicalFile
+        val file = java.io.File(root, path).canonicalFile
+        if (!file.toPath().startsWith(root.toPath()) || !file.isFile || file.length() > 25L * 1024 * 1024) return null
+        val ext = file.extension.lowercase()
+        val mime = when (ext) {
+            "css" -> "text/css"; "js", "mjs" -> "text/javascript"; "svg" -> "image/svg+xml"; "json" -> "application/json"; "wasm" -> "application/wasm"
+            else -> android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+        }
+        WebResourceResponse(mime, if (mime.startsWith("text/") || mime.endsWith("json") || mime.endsWith("xml")) "UTF-8" else null, java.io.FileInputStream(file))
+    }.getOrNull()
 }

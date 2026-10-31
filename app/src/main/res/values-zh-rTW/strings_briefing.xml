@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="briefing_decide_title">需要你決定</string>
+    <string name="briefing_decide_note">在你確認之前，不會送出或更改任何東西。</string>
+    <string name="briefing_all_clear_title">目前沒有需要你處理的事</string>
+    <string name="briefing_all_clear_body">%1$s 會繼續留意，有新的事會放進下一份簡報。</string>
+    <string name="briefing_today">今天的簡報</string>
+    <string name="briefing_latest">最近一份簡報</string>
+    <string name="briefing_handled">最近處理過的</string>
+    <string name="briefing_conflicts_above">在上方等你決定（%1$d）。</string>
+    <string name="briefing_status_next">下一份簡報 %1$s</string>
+    <string name="briefing_status_next_tomorrow">下一份簡報：明天 %1$s</string>
+    <string name="briefing_status_no_briefs">沒有排定簡報</string>
+    <string name="briefing_status_off">主動協助已關閉</string>
+    <plurals name="briefing_waiting">
+        <item quantity="other">%d 件等你處理</item>
+    </plurals>
+
+    <string name="decision_if_confirm">你確認後，%1$s 會</string>
+    <string name="decision_if_ask">請它處理後，%1$s 會</string>
+    <string name="decision_needs">需要你提供</string>
+    <string name="decision_if_ignored_line">如果不處理：%1$s</string>
+    <string name="decision_based_on">依據</string>
+    <string name="decision_not_now">先不要</string>
+    <string name="decision_fewer">少一點這類建議</string>
+    <string name="decision_review">查看</string>
+    <string name="decision_due">請在 %1$s 前決定</string>
+    <string name="decision_kind_maybe_clash">可能撞期</string>
+    <string name="decision_confirm_eyebrow">%1$s 在等你同意</string>
+    <string name="decision_message_label">訊息內容（可以直接修改）</string>
+    <string name="decision_message_hint">確認後，它會照這段文字準備訊息；真正送出前，你還會再核准一次最終內容。</string>
+    <string name="decision_note_label">有什麼要它知道的嗎？（選填）</string>
+    <string name="decision_note_hint">例如「簡短一點」或「用我的工作信箱」</string>
+
+    <string name="decision_step_draft_to">擬好給 %1$s 的訊息，讓你檢查</string>
+    <string name="decision_step_draft">擬好訊息，讓你檢查</string>
+    <string name="decision_step_send_after">等你核准最終內容後才會傳送</string>
+    <string name="decision_step_coding">在這支手機上開始程式工作：%1$s</string>
+    <string name="decision_step_report">完成後告訴你結果</string>
+    <string name="decision_step_goal">建立目標「%1$s」</string>
+    <string name="decision_step_goal_steps">規劃成 %1$d 個步驟；不會自己開始執行</string>
+    <string name="decision_step_skill">幫你執行「%1$s」</string>
+    <string name="decision_safe_message">送出前你會先看到最終訊息。</string>
+    <string name="decision_safe_coding">在這支手機上執行，隨時都能停止。</string>
+    <string name="decision_safe_goal">在你允許之前，目標不會自己行動。</string>
+    <string name="decision_safe_default">在你確認之前，不會送出或更改任何東西。</string>
+    <string name="decision_safe_conflict">它只會準備解決辦法：沒有你的同意，不會傳送訊息或移動行程。</string>
+
+    <string name="source_calendar">行事曆</string>
+    <string name="source_email">電子郵件</string>
+    <string name="source_watcher">它在留意的項目</string>
+    <string name="source_watcher_named">留意「%1$s」</string>
+    <string name="source_notification">一則通知</string>
+    <string name="source_web">一個網頁</string>
+    <string name="source_file">一個檔案</string>
+    <string name="source_git">Git</string>
+    <string name="source_memory">它記得的關於你的事</string>
+    <string name="source_goal">你的一個目標</string>
+    <string name="source_tasks">你的待辦事項</string>
+    <string name="source_contacts">聯絡人</string>
+    <string name="source_sms">簡訊</string>
+    <string name="source_messages">訊息</string>
+    <string name="source_chat">%1$s 對話</string>
+</resources>

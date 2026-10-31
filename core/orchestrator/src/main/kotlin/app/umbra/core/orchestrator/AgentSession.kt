@@ -464,6 +464,7 @@ class AgentSession internal constructor(
             addAll(listOf("-e", "${files.ompPath.trimEnd('/')}/umbra-context-$sessionId.ts"))
             if (discovery || initial.connectorScope?.let { "coding" !in it } == true) addAll(listOf("--no-tools", "--no-skills", "--no-rules"))
             else if (session.kind == app.umbra.core.session.SessionKind.AGENT) addAll(listOf("--tools", "read,ask,todo"))
+            addAll(skillArguments(session.skills, this))
             if (deps.usage != null) addAll(listOf("-e", "${files.ompPath.trimEnd('/')}/umbra-usage-$sessionId.ts"))
             addAll(listOf("-e", "${files.ompPath.trimEnd('/')}/umbra-dlp-$sessionId.ts"))
             // The session's own effort (chosen for it, or by Auto) wins over the user's default.
@@ -1045,6 +1046,13 @@ class AgentSession internal constructor(
     }
 
     companion object {
+        internal fun skillArguments(skills: List<String>?, existing: List<String> = emptyList()): List<String> {
+            if (skills == null || "--no-skills" in existing) return emptyList()
+            if (skills.isEmpty()) return listOf("--no-skills")
+            require(skills.all { it.matches(Regex("[\\p{L}\\p{N}][\\p{L}\\p{N}._-]{0,99}")) }) { "Invalid skill name" }
+            return listOf("--skills", skills.distinct().joinToString(","))
+        }
+
         private const val SENDING = "(sending)"
         private const val PROCESS_POLL_MS = 10_000L
     }

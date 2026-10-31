@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Intelligent cards and live dashboards (cards/CardUi.kt, ui/dashboards). -->
+<resources>
+    <string name="card_copy">Copy</string>
+    <string name="card_copied">Copied</string>
+    <string name="card_send">Send</string>
+    <string name="card_sent">Sent: %1$s</string>
+    <string name="card_done_of">%1$d of %2$d done</string>
+    <string name="card_checklist_done">Done</string>
+    <string name="card_checklist_left">Not yet</string>
+    <string name="card_days">days</string>
+    <string name="card_hours">hours</string>
+    <string name="card_minutes">min</string>
+    <string name="card_seconds">sec</string>
+    <string name="card_open_link_title">Open this link?</string>
+    <string name="card_open_link_body">It opens %1$s in your browser.</string>
+    <string name="card_open">Open</string>
+    <string name="card_unknown">This card could not be shown (%1$s).</string>
+</resources>

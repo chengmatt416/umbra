@@ -150,6 +150,7 @@ enum class Dest(val route: String, @param:StringRes val title: Int, val icon: Ic
     Models("models", R.string.dest_models, PIcons.spark, R.string.r_dev_system),
     Diagnostics("diagnostics", R.string.dest_diagnostics, PIcons.info, R.string.r_dev_system),
     Reference("reference", R.string.dest_reference, PIcons.book, R.string.r_dev_system),
+    Cards("cards", R.string.dest_cards, PIcons.grid, R.string.r_dev_system),
     Settings("settings", R.string.dest_settings, PIcons.settings),
     MoreSettings("more_settings", R.string.r_set_more, PIcons.sliders),
     Appearance("appearance", R.string.dest_appearance, PIcons.drop),
@@ -220,6 +221,8 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
         }
     }
     if (stopAll) app.umbra.agent.ui.emergency.StopAllConfirm(onDismiss = { stopAll = false })
+    // A question an agent or session asks pops up over any page (not during onboarding).
+    if (!onboarding) app.umbra.agent.ui.questions.QuestionPopupHost()
 
     val selectScreen: () -> Unit = {
         if (!android.provider.Settings.canDrawOverlays(context) && !app.umbra.platform.android.UmbraAccessibilityService.connected.value) {
@@ -237,9 +240,12 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
     val nodesLabel = stringResource(R.string.r_menu_nodes)
     val safetyLabel = stringResource(R.string.r_menu_safety)
     val developerLabel = stringResource(R.string.r_menu_developer)
+    val skillsLabel = stringResource(R.string.r_menu_skills)
+    val openSkills: () -> Unit = { nav.navigate("skills") { launchSingleTop = true } }
     val entries = when (prefs.uiMode) {
         app.umbra.agent.data.UiMode.SIMPLE -> listOf(
             MenuEntry(PIcons.target, select, selectScreen),
+            MenuEntry(PIcons.puzzle, skillsLabel, openSkills),
             MenuEntry(PIcons.key, accountsLabel) { go(Dest.Accounts) },
             MenuEntry(PIcons.cloud, nodesLabel) { go(Dest.Nodes) },
             MenuEntry(PIcons.settings, settingsLabel) { go(Dest.Settings) },
@@ -247,6 +253,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
         app.umbra.agent.data.UiMode.POWER -> listOf(
             MenuEntry(PIcons.target, select, selectScreen),
             MenuEntry(PIcons.grid, workspacesLabel) { go(Dest.Workspaces) },
+            MenuEntry(PIcons.puzzle, skillsLabel, openSkills),
             MenuEntry(PIcons.monitor, screensLabel) { go(Dest.Screens) },
             MenuEntry(PIcons.cloud, nodesLabel) { go(Dest.Nodes) },
             MenuEntry(PIcons.shield, safetyLabel) { go(Dest.Safety) },
@@ -255,6 +262,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
         app.umbra.agent.data.UiMode.DEV -> listOf(
             MenuEntry(PIcons.target, select, selectScreen),
             MenuEntry(PIcons.grid, workspacesLabel) { go(Dest.Workspaces) },
+            MenuEntry(PIcons.puzzle, skillsLabel, openSkills),
             MenuEntry(PIcons.monitor, screensLabel) { go(Dest.Screens) },
             MenuEntry(PIcons.cloud, nodesLabel) { go(Dest.Nodes) },
             MenuEntry(PIcons.code, developerLabel) { go(Dest.Developer) },
@@ -324,7 +332,9 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 composable("agent/{id}") { e ->
                     val id = e.arguments?.getString("id").orEmpty()
                     app.umbra.agent.ui.agents.AgentChatScreen(id, onBack = back, onProfile = { nav.navigate("agent/$id/profile") }, onOpenSession = ::openSessionNow,
-                        onProactive = { tab -> nav.navigate("agent/$id/briefing?focus=" + (if (tab == 1) "suggestions" else "brief")) { launchSingleTop = true } })
+                        onProactive = { tab -> nav.navigate("agent/$id/briefing?focus=" + (if (tab == 1) "suggestions" else "brief")) { launchSingleTop = true } },
+                        onDashboards = { nav.navigate("agent/$id/dashboards") { launchSingleTop = true } },
+                        onDashboard = { nav.navigate("dashboard/$it") { launchSingleTop = true } })
                 }
                 composable("agent/{id}/profile") { e ->
                     app.umbra.agent.ui.agents.AgentProfileScreen(
@@ -342,6 +352,18 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                     val id = e.arguments?.getString("id").orEmpty()
                     app.umbra.agent.ui.agents.BriefingScreen(id, onBack = back, onOpenSession = ::openSessionNow,
                         onSettings = { nav.navigate("agent/$id/proactivity") { launchSingleTop = true } }, focus = e.arguments?.getString("focus") ?: "brief")
+                }
+                composable("agent/{id}/dashboards") { e ->
+                    app.umbra.agent.ui.dashboards.DashboardsScreen(e.arguments?.getString("id").orEmpty(), onBack = back, onOpen = { nav.navigate("dashboard/$it") })
+                }
+                composable("dashboard/{id}") { e ->
+                    app.umbra.agent.ui.dashboards.DashboardScreen(e.arguments?.getString("id").orEmpty(), onBack = back, onOpenAgent = { nav.navigate("agent/$it") { launchSingleTop = true } })
+                }
+                composable("publishing") { app.umbra.agent.ui.files.PublishingScreen(onBack = back) }
+                composable("skills") { app.umbra.agent.ui.skills.SkillsScreen(onBack = back, onOpenRepo = { repo -> nav.navigate("skills/repo/" + repo) }) }
+                composable("skills/repo/{owner}/{name}") { e ->
+                    app.umbra.agent.ui.skills.SkillRepoScreen(e.arguments?.getString("owner").orEmpty() + "/" + e.arguments?.getString("name").orEmpty(), onBack = back,
+                        onOpenAgent = { nav.navigate("agent/$it") { launchSingleTop = true } })
                 }
                 composable("capsule-position") { app.umbra.agent.ui.settings.CapsulePositionScreen(onBack = back) }
                 composable("laya") { app.umbra.agent.ui.settings.LayaScreen(onBack = back) }
@@ -397,6 +419,7 @@ fun PorcelainApp(openSession: String?, openPage: String? = null, onOpened: () ->
                 composable(Dest.Diagnostics.route) { DiagnosticsScreen(onBack = back) }
                 composable(Dest.Appearance.route) { app.umbra.agent.ui.AppearanceScreen(onBack = back) }
                 composable(Dest.Reference.route) { app.umbra.agent.ui.reference.ReferenceScreen(onBack = back) }
+                composable(Dest.Cards.route) { app.umbra.agent.cards.CardGalleryScreen(onBack = back) }
                 composable(Dest.Settings.route) { app.umbra.agent.ui.settings.SettingsScreen(onBack = back, onGo = ::go, onRoute = { nav.navigate(it) }) }
                 composable(Dest.MoreSettings.route) { app.umbra.agent.ui.MoreSettingsScreen(onBack = back, onGo = ::go) }
             }

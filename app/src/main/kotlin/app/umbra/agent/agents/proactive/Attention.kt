@@ -45,32 +45,99 @@ object ConflictDetector {
         return result.distinctBy { it.key }
     }
 
-    fun weekdayMismatches(events: List<CalendarItem>, now: Long): List<ConflictAlert> =
+    fun weekdayMismatches(events: List<CalendarItem>, now: Long, words: ConflictWords = ConflictWords()): List<ConflictAlert> =
         events.filter { it.endMs > now && it.startMs < now + 7 * 86_400_000L }.mapNotNull { a ->
-            if (a.declaredWeekday != null && Instant.ofEpochMilli(a.startMs).atZone(ZoneId.systemDefault()).dayOfWeek.value != a.declaredWeekday)
-                ConflictAlert("${a.source}:${a.id}:weekday", "commitment_mismatch", "The date and stated weekday for ${a.title} disagree.", listOf("${a.source}:${a.id}"))
-            else null
+            val declared = a.declaredWeekday ?: return@mapNotNull null
+            if (Instant.ofEpochMilli(a.startMs).atZone(words.zone).dayOfWeek.value == declared) return@mapNotNull null
+            val explain = words.weekday(a, declared)
+            ConflictAlert("${a.source}:${a.id}:weekday", "commitment_mismatch", explain.why, listOf("${a.source}:${a.id}"),
+                title = words.weekdayTitle(a), explain = explain)
         }
 
     /**
      * The alerts from judged pairs: a conflict is one, the same event twice or two that fit together are not. A pair
      * nothing could judge (Laya off, no model to ask) is shown as a possible conflict, saying it may be one event.
      */
-    fun alerts(readings: List<ConflictReading>): List<ConflictAlert> = readings.mapNotNull { r ->
+    fun alerts(readings: List<ConflictReading>, words: ConflictWords = ConflictWords()): List<ConflictAlert> = readings.mapNotNull { r ->
         val (a, b, kind) = r.candidate
-        val text = when (r.verdict) {
-            ConflictVerdict.CONFLICT -> if (kind == ConflictJudge.TRAVEL) "Only ${(b.startMs - a.endMs) / 60_000} minutes between ${a.title} and ${b.title}; travel needs ${a.travelMinutes} minutes."
-                else "${a.title} overlaps ${b.title}."
-            null -> "${a.title} overlaps ${b.title}; it may be the same event on two calendars (not checked: Laya is off and no model answered)."
-            else -> return@mapNotNull null
-        } + (r.why?.let { " ($it)" }.orEmpty())
+        if (r.verdict != null && r.verdict != ConflictVerdict.CONFLICT) return@mapNotNull null
+        val explain = words.pair(a, b, kind, checked = r.verdict != null, judged = r.why)
         val severity = if (r.verdict == null) ConflictJudge.POSSIBLE else kind
         val payload = kotlinx.serialization.json.buildJsonObject {
-            put("instruction", kotlinx.serialization.json.JsonPrimitive("Prepare a rescheduling draft for ${a.title} or ${b.title}. Ask before sending or editing either event."))
+            put("instruction", kotlinx.serialization.json.JsonPrimitive("The user asked from their brief: prepare a way to resolve the clash between \"${a.title}\" (${words.span(a)}) and " +
+                "\"${b.title}\" (${words.span(b)}). Suggest which one to move and draft the message or the calendar change. Ask before sending anything or editing either event."))
         }.toString()
-        ConflictAlert("${a.source}:${a.id}:${b.source}:${b.id}:$kind", severity, text,
-            listOf("${a.source}:${a.id}", "${b.source}:${b.id}"), if (r.verdict == ConflictVerdict.CONFLICT) listOf(PreparedNextStep("Prepare rescheduling draft", "agent_turn", payload)) else emptyList())
+        ConflictAlert("${a.source}:${a.id}:${b.source}:${b.id}:$kind", severity, explain.why,
+            listOf("${a.source}:${a.id}", "${b.source}:${b.id}"), listOf(PreparedNextStep(words.fixLabel(), "agent_turn", payload)),
+            title = words.pairTitle(a, b, kind, checked = r.verdict != null), explain = explain)
     }.distinctBy { it.id }
+}
+
+/**
+ * What the brief says about a calendar clash, as a person would (spec §5.2, revised 2026-10-28): the events' names, days
+ * and times, their calendars, by how much they collide, and what happens next, in the phone's language (Traditional
+ * Chinese or English, like [BriefHeadline]). Never ids.
+ */
+class ConflictWords(val zh: Boolean = java.util.Locale.getDefault().language == "zh", val zone: ZoneId = ZoneId.systemDefault()) {
+    private val day = java.time.format.DateTimeFormatter.ofPattern("EEE", if (zh) java.util.Locale.TRADITIONAL_CHINESE else java.util.Locale.ENGLISH)
+    private val time = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+
+    private fun at(ms: Long) = Instant.ofEpochMilli(ms).atZone(zone)
+
+    /** "Thu 15:00–16:00" (週四 15:00–16:00); an all-day event is just its day. */
+    fun span(e: CalendarItem): String {
+        val start = at(e.startMs)
+        if (e.allDay) return day.format(start) + if (zh) " 整天" else " (all day)"
+        val end = at(e.endMs)
+        return "${day.format(start)} ${time.format(start)}–${time.format(end)}"
+    }
+
+    private fun place(e: CalendarItem): String = listOf(e.calendar.ifBlank { e.account }, e.location).filter { it.isNotBlank() }.joinToString(if (zh) "，" else ", ")
+
+    private fun described(e: CalendarItem) = if (zh) "「${e.title}」（${span(e)}${place(e).takeIf { it.isNotEmpty() }?.let { "，$it" }.orEmpty()}）"
+        else "${e.title} (${span(e)}${place(e).takeIf { it.isNotEmpty() }?.let { ", $it" }.orEmpty()})"
+
+    fun pairTitle(a: CalendarItem, b: CalendarItem, kind: String, checked: Boolean): String = when {
+        kind == ConflictJudge.TRAVEL -> if (zh) "「${a.title}」到「${b.title}」來不及趕到" else "Not enough time to get from ${a.title} to ${b.title}"
+        !checked -> if (zh) "「${a.title}」和「${b.title}」可能撞期" else "${a.title} and ${b.title} may clash"
+        else -> if (zh) "「${a.title}」和「${b.title}」時間重疊" else "${a.title} and ${b.title} overlap"
+    }
+
+    fun pair(a: CalendarItem, b: CalendarItem, kind: String, checked: Boolean, judged: String?): CardExplanation {
+        val minutes = ((minOf(a.endMs, b.endMs) - maxOf(a.startMs, b.startMs)) / 60_000).coerceAtLeast(0)
+        val why = when {
+            kind == ConflictJudge.TRAVEL -> {
+                val gap = ((b.startMs - a.endMs) / 60_000).coerceAtLeast(0)
+                if (zh) "${described(a)}結束後，只有 $gap 分鐘就要到${described(b)}，但路程大約需要 ${a.travelMinutes} 分鐘。"
+                else "${described(a)} ends only $gap minutes before ${described(b)} starts, and getting there takes about ${a.travelMinutes} minutes."
+            }
+            zh -> "${described(a)}和${described(b)}重疊 $minutes 分鐘。" + if (!checked) "這兩個也可能是同一場會議出現在兩個行事曆上：Laya 沒開、也沒有模型能確認。" else ""
+            else -> "${described(a)} overlaps ${described(b)} by $minutes minutes." + if (!checked) " They may be one meeting on two calendars: Laya is off and no model could check." else ""
+        }
+        return CardExplanation(
+            why = why + judged?.takeIf { checked && it.isNotBlank() }?.let { if (zh) "（判斷依據：$it）" else " ($it)" }.orEmpty(),
+            steps = if (zh) listOf("比較兩個行程與受邀的人，建議移動哪一個", "草擬改時間的訊息或行事曆變更", "先給你看，你同意前不會傳送或修改任何行程")
+                else listOf("Compare both events and who is invited, and suggest which to move", "Draft the message or the calendar change", "Show it to you first: nothing is sent or changed until you agree"),
+            needs = if (zh) "如果你已經知道要保留哪一個，可以在確認時告訴它。" else "If you already know which one to keep, say so when you confirm.",
+            ifIgnored = if (zh) "兩個行程都維持原樣。" else "Both stay on your calendar as they are.",
+            sources = listOf(a, b).map { e -> (if (zh) "行事曆 · " else "Calendar · ") + e.title + " · " + span(e) },
+        )
+    }
+
+    fun weekdayTitle(a: CalendarItem) = if (zh) "「${a.title}」的日期和星期對不上" else "The date and weekday of ${a.title} disagree"
+
+    fun weekday(a: CalendarItem, declared: Int): CardExplanation {
+        val said = java.time.DayOfWeek.of(declared).getDisplayName(java.time.format.TextStyle.FULL, if (zh) java.util.Locale.TRADITIONAL_CHINESE else java.util.Locale.ENGLISH)
+        return CardExplanation(
+            why = if (zh) "${described(a)}排在${day.format(at(a.startMs))}，但內容寫的是$said。其中一個可能寫錯了。"
+                else "${described(a)} is on ${day.format(at(a.startMs))}, but its text says $said. One of them is probably wrong.",
+            steps = if (zh) listOf("查看邀請或原始訊息，找出正確的日子", "告訴你哪個是對的，需要的話準備修正") else listOf("Check the invitation or the message it came from for the right day", "Tell you which is right and prepare the fix if one is needed"),
+            ifIgnored = if (zh) "行程維持原樣。" else "The event stays as it is.",
+            sources = listOf((if (zh) "行事曆 · " else "Calendar · ") + a.title + " · " + span(a)),
+        )
+    }
+
+    fun fixLabel() = if (zh) "請它提出解決辦法" else "Ask for a fix"
 }
 
 /** One sentence a person would say about the day, in the phone's language (Traditional Chinese or English). */
@@ -121,7 +188,8 @@ class DailyBriefEngine(private val store: ProactiveStore, private val zone: Zone
         val staged = store.attention(agentId).filter { it.createdAtMs in (prior + 1)..now }
         val actionable = store.opportunities(agentId).filter { it.state == OpportunityCard.State.PENDING && (it.expiresAtMs == null || it.expiresAtMs > now) }
             .sortedByDescending { .6 * it.urgency + .4 * it.confidence }.take(5)
-        val alerts = ConflictDetector.alerts(conflicts) + ConflictDetector.weekdayMismatches(schedule, now)
+        val words = ConflictWords(zone = zone)
+        val alerts = ConflictDetector.alerts(conflicts, words) + ConflictDetector.weekdayMismatches(schedule, now, words)
         // One meeting on two calendars is listed once.
         val copies = conflicts.filter { it.verdict == ConflictVerdict.SAME_EVENT }.map { "${it.candidate.b.source}:${it.candidate.b.id}" }.toSet()
         val today = schedule.filter { Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate() == date && "${it.source}:${it.id}" !in copies }.map { BriefItem(it.title, it.location) }

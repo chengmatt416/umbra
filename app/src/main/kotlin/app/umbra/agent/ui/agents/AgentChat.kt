@@ -34,9 +34,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -99,6 +101,10 @@ internal sealed interface Line {
     data class Note(override val key: String, override val at: Long, val text: String, val sessionRef: String? = null) : Line
     data class Report(override val key: String, override val at: Long, val who: String, val state: String, val title: String, val minutes: String, val body: String, val sessionRef: String? = null) : Line
     data class Peer(override val key: String, override val at: Long, val title: String, val body: String, val sessionRef: String? = null) : Line
+    /** A card the agent showed (an intelligent card), drawn in its own design. */
+    data class Card(override val key: String, override val at: Long, val call: app.umbra.core.orchestrator.Block.ToolCall, val pending: Boolean = false) : Line
+    /** A live dashboard the agent started, as a link to it. */
+    data class Dashboard(override val key: String, override val at: Long, val id: String, val title: String) : Line
     data class Day(override val key: String, override val at: Long, val day: LocalDate) : Line
 }
 
@@ -129,7 +135,12 @@ internal fun chatLines(state: ConversationState, toolNote: (String, Map<String, 
                             sessionReference(t))
                     }
                     bus != null -> out += Line.Peer(item.key, item.timestamp, bus.groupValues[0].trim().removePrefix("[").removeSuffix("]"), t.removeRange(bus.range).lines().filterNot { it.startsWith("(If an answer") }.joinToString("\n").trim(), bus.groupValues[4])
+                    t.startsWith("[Telegram] [Card · ") && "] " in t.removePrefix("[Telegram] ") -> t.removePrefix("[Telegram] ").let { c ->
+                        out += Line.Mine(item.key, item.timestamp, c.substringAfter("] "), "Telegram · " + c.substringBefore("] ").removePrefix("["))
+                    }
                     t.startsWith("[Telegram] ") -> out += Line.Mine(item.key, item.timestamp, t.removePrefix("[Telegram] "), "Telegram")
+                    // An answer given on a card: the answer, labelled with the card it came from (the agent still gets the prefix).
+                    t.startsWith("[Card · ") && "] " in t -> out += Line.Mine(item.key, item.timestamp, t.substringAfter("] "), t.substringBefore("] ").removePrefix("["))
                     t.startsWith("The conversation of the agent") -> Unit
                     else -> out += Line.Mine(item.key, item.timestamp, t, null)
                 }
@@ -144,6 +155,19 @@ internal fun chatLines(state: ConversationState, toolNote: (String, Map<String, 
                             out += Line.Theirs(item.key + "/" + out.size, item.timestamp, text)
                         }
                         is Block.ToolCall -> {
+                            if (b.name == app.umbra.agent.cards.CardCalls.SHOW) {
+                                // A refused card (over the limit, or bad data) is not drawn; the agent answers in text.
+                                if (state.tools[b.id]?.isError != true) { day(item.timestamp); out += Line.Card(item.key + "/" + b.id, item.timestamp, b, pending = state.tools[b.id] == null) }
+                                continue
+                            }
+                            if (b.name == "dashboard_create") {
+                                val created = state.tools[b.id]?.takeIf { !it.isError }?.result?.let { Regex("^Created ([A-Za-z0-9_-]+)\\.").find(it)?.groupValues?.get(1) }
+                                if (created != null) {
+                                    day(item.timestamp)
+                                    out += Line.Dashboard(item.key + "/" + b.id, item.timestamp, created, (b.arguments["title"] as? JsonPrimitive)?.contentOrNull.orEmpty())
+                                    continue
+                                }
+                            }
                             val args = b.arguments.mapValues { (it.value as? JsonPrimitive)?.contentOrNull.orEmpty() }
                             val result = state.tools[b.id]
                             val ref = when (b.name) {
@@ -198,7 +222,8 @@ internal fun rememberToolNote(): (String, Map<String, String>) -> String? {
  * with pictures at the bottom.
  */
 @Composable
-fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, onOpenSession: (String) -> Unit, onProactive: (Int) -> Unit) {
+fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, onOpenSession: (String) -> Unit, onProactive: (Int) -> Unit,
+    onDashboards: () -> Unit = {}, onDashboard: (String) -> Unit = {}) {
     val editPrefix = stringResource(R.string.ag_edit_prefix)
     val container = LocalContext.current.container
     val context = LocalContext.current
@@ -219,6 +244,14 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
         value = agentWork(agentId, sid, container.sessionStore.list(app.umbra.core.session.SessionFilter(limit = Int.MAX_VALUE)))
     }
     val approvals by container.approvals.pending.collectAsStateWithLifecycle()
+    // Questions this agent, or a session it started, is waiting on: shown in its chat to answer in place.
+    val allQuestions by container.questions.pending.collectAsStateWithLifecycle()
+    val questions by produceState(emptyList<app.umbra.core.orchestrator.QuestionBroker.Pending>(), allQuestions, agentId) {
+        value = allQuestions.filter { app.umbra.agent.ui.questions.agentOf(container, it.sessionId) == agentId }
+    }
+    val askers by produceState(emptyMap<String, String?>(), questions) {
+        value = questions.associate { it.sessionId to app.umbra.agent.ui.questions.askerOf(container, it.sessionId) }
+    }
     val mine = approvals.filter { it.sessionId == sid }
     val activity by container.agents.activity.collectAsStateWithLifecycle()
     val timers by rememberPolled(emptyList<app.umbra.agent.agents.AgentTimer>(), agentId, periodMs = 3_000) { container.agents.store.timers(agentId).sortedBy { it.nextMs } }
@@ -248,6 +281,13 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
         if (lines.isNotEmpty() && stick) list.scrollToEnd(animate = true)
         container.agents.markRead(agentId)
     }
+    // A new question for the user (an approval, or the agent's own question) is brought into view with its buttons,
+    // wherever the list was.
+    var approvalsSeen by remember(agentId) { mutableIntStateOf(0) }
+    LaunchedEffect(mine.size + questions.size) {
+        if (mine.size + questions.size > approvalsSeen) list.scrollToEnd(animate = true)
+        approvalsSeen = mine.size + questions.size
+    }
     androidx.activity.compose.BackHandler(onBack = onBack)
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->
@@ -259,7 +299,8 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
     val orbPaused = !ownWork && delegated?.state != SessionState.RUNNING
     val status = when {
         !p.running -> stringResource(R.string.ag_status_stopped)
-        session?.state == SessionState.WAITING_APPROVAL -> stringResource(R.string.ag_work_approval)
+        // omp waits the same way for a question as for an approval; the words say which one the user owes.
+        session?.state == SessionState.WAITING_APPROVAL -> stringResource(if (questions.any { it.sessionId == session?.id }) R.string.ag_work_answer else R.string.ag_work_approval)
         session?.state == SessionState.PAUSED -> stringResource(R.string.ag_work_paused)
         ownWork -> currentAgentWork(session, conversation, activity[agentId])
         delegated != null -> stringResource(R.string.ag_work_delegated, delegated!!.title)
@@ -288,6 +329,8 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             app.umbra.agent.ui.porcelain.PButton(stringResource(R.string.briefing_title), { onProactive(2) }, tiny = true, style = app.umbra.agent.ui.porcelain.ButtonStyle.Ghost, icon = PIcons.clock)
+            val dashboards = app.umbra.agent.ui.dashboards.dashboardCount(agentId)
+            if (dashboards > 0) app.umbra.agent.ui.porcelain.PButton(stringResource(R.string.dash_button, dashboards), onDashboards, tiny = true, style = app.umbra.agent.ui.porcelain.ButtonStyle.Ghost, icon = PIcons.dashboard)
         }
         if (work.isNotEmpty()) Column(Modifier.fillMaxWidth().heightIn(max = 180.dp).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -316,6 +359,9 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                 app.umbra.agent.ui.porcelain.PButton(stringResource(R.string.ag_start), { scope.launch { container.agents.setRunning(agentId, true) } }, tiny = true)
             }
         }
+        // Answers on the agent's cards go to it as the user's own messages.
+        val cardHost = remember(agentId) { app.umbra.agent.cards.CardHost(p.sessionId.orEmpty()) { text -> container.agents.talk(agentId, text) } }
+        CompositionLocalProvider(app.umbra.agent.cards.LocalCardHost provides cardHost) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (lines.isEmpty()) item(key = "intro") {
                 Column(Modifier.fillMaxWidth().padding(top = 40.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -331,6 +377,8 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                     }
                     is Line.Mine -> Bubble(line.text, line.at, mine = true, via = line.via)
                     is Line.Theirs -> Bubble(line.text, line.at, mine = false, via = null)
+                    is Line.Card -> app.umbra.agent.cards.ToolCallCard(line.call, Modifier.padding(end = 20.dp), pending = line.pending)
+                    is Line.Dashboard -> app.umbra.agent.ui.dashboards.DashboardChatLink(line.id, line.title, Modifier.padding(end = 48.dp), onOpen = onDashboard)
                     is Line.Peer -> PeerCard(line) { scope.launch { line.sessionRef?.let { container.sessionBus.resolve(it) }?.let { onOpenSession(it.id) } } }
                     is Line.Report -> ReportCard(line, onOpen = {
                         scope.launch {
@@ -341,8 +389,24 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
                 }
             } }
             items(sending, key = { "sending-" + it.first }) { (at, text) -> androidx.compose.foundation.layout.Box(inkItem(placement = false)) { Bubble(text, at, mine = true, via = null, pending = true) } }
+            items(questions, key = { "question-" + it.request.id }) { q -> androidx.compose.foundation.layout.Box(inkItem(placement = false)) {
+                app.umbra.agent.ui.questions.QuestionCard(q, askers[q.sessionId], onAnswer = { container.questions.answer(q.request.id, it) }, Modifier.padding(end = 20.dp))
+            } }
             items(mine, key = { "approval-" + it.id }) { request -> androidx.compose.foundation.layout.Box(inkItem(placement = false)) {
                 Column(Modifier.fillMaxWidth().padding(end = 48.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // A skill install the user did not pick on the Skills page: say what and where, offer Install or not.
+                    if (request.toolName == "skill_install") {
+                        val repo = request.details["repo"].orEmpty()
+                        val path = request.details["path"].orEmpty().takeIf { it != "." }
+                        val target = request.details["target"].orEmpty()
+                        val where = if (target == "global") stringResource(R.string.skills_msg_global_plain) else stringResource(R.string.skills_msg_project_plain, target)
+                        Bubble(stringResource(R.string.skills_approve_body, path?.substringAfterLast('/') ?: repo.substringAfter('/'), repo, where), request.createdAtMs, mine = false, via = null, accent = true)
+                        Row(Modifier.widthIn(max = 300.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            InlineButton(stringResource(R.string.skills_approve_yes), primary = true, Modifier.weight(1f)) { container.approvals.resolve(request.id, ApprovalDecision.Approved()) }
+                            InlineButton(stringResource(R.string.ag_dont), primary = false, Modifier.weight(1f)) { container.approvals.resolve(request.id, ApprovalDecision.Denied("not now, from the agent's chat")) }
+                        }
+                        return@Column
+                    }
                     Bubble(request.description, request.createdAtMs, mine = false, via = null, accent = true)
                     Row(Modifier.widthIn(max = 300.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         InlineButton(stringResource(R.string.ag_send), primary = true, Modifier.weight(1f)) { container.approvals.resolve(request.id, ApprovalDecision.Approved()) }
@@ -357,6 +421,7 @@ fun AgentChatScreen(agentId: String, onBack: () -> Unit, onProfile: () -> Unit, 
             if (working) item(key = "typing") {
                 ThinkingOrbActivity(status, orbState, Modifier.fillMaxWidth().padding(vertical = 8.dp), paused = orbPaused)
             }
+        }
         }
         error?.let { Box(Modifier.padding(horizontal = 16.dp)) { Callout(it, Tone.Danger) } }
         // The field: pictures, words, send.
@@ -526,9 +591,10 @@ internal fun agentStatus(p: AgentProfile, conversation: ConversationState): Agen
     val activities by container.agents.activity.collectAsStateWithLifecycle()
     val delegated by produceState<app.umbra.core.session.Session?>(null, p.id, changes) { value = activeDelegatedWork(p.id, container.sessionStore.list()) }
     val ownWork = session?.state == SessionState.RUNNING || activities[p.id] != null
+    val pendingQuestions by container.questions.pending.collectAsStateWithLifecycle()
     val label = when {
         !p.running -> stringResource(R.string.ag_status_stopped)
-        session?.state == SessionState.WAITING_APPROVAL -> stringResource(R.string.ag_work_approval)
+        session?.state == SessionState.WAITING_APPROVAL -> stringResource(if (pendingQuestions.any { it.sessionId == p.sessionId }) R.string.ag_work_answer else R.string.ag_work_approval)
         session?.state == SessionState.PAUSED -> stringResource(R.string.ag_work_paused)
         ownWork -> currentAgentWork(session, conversation, activities[p.id])
         delegated != null -> stringResource(R.string.ag_work_delegated, delegated!!.title)

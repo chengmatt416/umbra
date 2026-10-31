@@ -103,6 +103,10 @@ data class AgentState(
 @Serializable
 data class AgentPair(val a: String, val b: String, val fromId: String, val text: String, val atMs: Long)
 
+/** A suggested SOUL change waits for the user's decision; proposing it never changes the agent's instructions. */
+@Serializable
+data class SoulProposal(val id: String, val section: String, val text: String, val why: String, val atMs: Long, val state: String = "pending")
+
 object Templates {
     const val ASSISTANT = "assistant"
     const val INBOX = "inbox"
@@ -112,15 +116,31 @@ object Templates {
     val all = listOf(ASSISTANT, INBOX, WORK, BLANK)
 
     /** A first SOUL.md for a template; the user edits it freely. */
-    fun soul(template: String, name: String): String = when (template) {
-        ASSISTANT -> "You are $name, the user's personal assistant on their phone. Speak briefly and warmly, in the user's language.\n" +
-            "You look after their messages, notifications and plans, remind them of what matters, and get things done for them.\n" +
-            "Rules:\n- Never send a message for the user without asking, unless they allowed it for that chat.\n- Ask before anything that costs money.\n- Don't disturb the user during quiet hours unless it is urgent."
-        INBOX -> "You are $name. You keep the user's inbox calm: you read new messages and notifications, decide what needs them, " +
-            "and give short summaries. You draft replies but never send them without asking.\nRules:\n- Group chats are summarised, not answered.\n- Codes, bank and security messages are never repeated or sent anywhere."
-        WORK -> "You are $name, the user's work assistant. You follow work chats and email notifications, keep track of deadlines and " +
-            "commitments, and start coding sessions on this phone for technical work.\nRules:\n- Ask before replying to anyone senior or external.\n- Report progress at the end of each workday."
-        else -> "You are $name."
+    fun soul(template: String, name: String): String {
+        if (template !in listOf(ASSISTANT, INBOX, WORK)) return "# $name\n\n## Who I am\nI'm $name."
+        val who = when (template) {
+            INBOX -> "I'm $name. I keep your inbox calm: I read new messages and notifications, decide what needs you, " +
+                "and give short summaries. I draft replies but never send them without asking."
+            WORK -> "I'm $name, your work assistant. I follow work chats and email notifications, keep track of deadlines and " +
+                "commitments, and start coding sessions on this phone for technical work. I report progress at the end of each workday."
+            else -> "I'm $name, your assistant on this phone. I look after your messages, notifications and plans, remind you of what " +
+                "matters, and get things done for you."
+        }
+        return "# $name\n\n## Who I am\n$who\n\n" +
+            "## How I talk\nBriefly and warmly, in your language. One clear sentence beats three careful ones. I say when I'm unsure.\n\n" +
+            "## What I care about\n" +
+            "- Your attention: I bring you what needs you and keep the rest for your brief.\n" +
+            "- Being right: I check before I say something is done, and I show where a fact came from.\n" +
+            "- Learning you: I remember your preferences, people and routines, and I correct myself when you correct me.\n\n" +
+            "## Boundaries\n" +
+            "- I never send a message for you without asking, unless you allowed it for that chat.\n" +
+            "- I ask before anything that costs money, deletes something or can't be undone.\n" +
+            "- I don't disturb you in quiet hours unless it's urgent.\n" +
+            "- Codes, passwords and bank details are never repeated, stored or sent anywhere." + when (template) {
+                INBOX -> "\n- Group chats are summarised, not answered."
+                WORK -> "\n- I ask before replying to anyone senior or external."
+                else -> ""
+            }
     }
 }
 
@@ -160,6 +180,124 @@ class AgentStore(private val root: File) {
 
     fun soul(id: String): String = File(dir(id), "SOUL.md").takeIf { it.exists() }?.readText().orEmpty()
     fun setSoul(id: String, text: String) = writeAtomic(File(dir(id).apply { mkdirs() }, "SOUL.md"), text.trim() + "\n")
+
+    /** Daily experiences stay searchable without filling the durable facts or every wake's prompt. */
+    @Synchronized
+    fun appendNote(id: String, text: String, at: Long = System.currentTimeMillis()) {
+        val time = Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault())
+        val day = time.toLocalDate()
+        val today = LocalDate.now()
+        require(noteDate("$day.md") == day) { "Invalid note date" }
+        val clean = text.replace('\n', ' ').replace('\r', ' ').trim().take(2000)
+        require(clean.isNotBlank()) { "Empty note" }
+        val folder = agentFile(id, "memory").apply { mkdirs() }
+        val file = agentFile(id, "memory", "$day.md")
+        require(!file.exists() || file.length() <= 2_000_000) { "Notes file exceeds 2 MB" }
+        val previous = if (file.exists()) file.readText().trimEnd() + "\n" else ""
+        val next = previous + "- ${time.format(DateTimeFormatter.ofPattern("HH:mm"))} · $clean\n"
+        require(next.toByteArray(Charsets.UTF_8).size <= 2_000_000) { "Notes file exceeds 2 MB" }
+        writeAgentFile(file, next)
+        folder.listFiles().orEmpty().forEach { old ->
+            val date = noteDate(old.name)
+            if (date != null && date < today.minusDays(59)) agentFile(id, "memory", old.name).delete()
+        }
+    }
+
+    @Synchronized
+    fun notes(id: String, days: Int = 2): List<Pair<LocalDate, List<String>>> {
+        require(days in 1..60)
+        val folder = agentFile(id, "memory")
+        val today = LocalDate.now()
+        return folder.listFiles().orEmpty().mapNotNull { file ->
+            val day = noteDate(file.name) ?: return@mapNotNull null
+            if (day !in today.minusDays(days.toLong() - 1)..today) return@mapNotNull null
+            val safe = agentFile(id, "memory", file.name)
+            require(safe.length() <= 2_000_000) { "Notes file exceeds 2 MB" }
+            day to safe.readLines().filter { it.startsWith("- ") }.map { it.removePrefix("- ") }
+        }.sortedBy { it.first }
+    }
+
+    @Synchronized
+    fun searchNotes(id: String, query: String, days: Int = 30): List<Pair<LocalDate, List<String>>> {
+        val terms = app.umbra.agent.agents.proactive.EvidenceRanker.tokens(query)
+        return notes(id, days).mapNotNull { (day, lines) ->
+            val matches = lines.filter { line -> query.isNotBlank() && (line.contains(query, true) ||
+                app.umbra.agent.agents.proactive.EvidenceRanker.tokens(line).any { it in terms }) }
+            if (matches.isEmpty()) null else day to matches
+        }
+    }
+
+    @Synchronized
+    fun soulProposals(id: String): List<SoulProposal> {
+        val file = agentFile(id, "soul-proposals.json")
+        require(!file.exists() || file.length() <= 2_000_000) { "SOUL proposals exceed 2 MB" }
+        return readList(id, "soul-proposals.json", SoulProposal.serializer())
+    }
+
+    @Synchronized
+    fun proposeSoul(id: String, section: String, text: String, why: String): SoulProposal {
+        val heading = section.trim()
+        require(heading.isNotBlank() && heading.length <= 120 && heading.none { it == '\n' || it == '\r' || it == '#' }) { "Invalid SOUL section" }
+        require(text.isNotBlank() && text.length <= 10_000 && why.isNotBlank() && why.length <= 2000) { "Invalid SOUL proposal" }
+        val proposals = soulProposals(id)
+        val proposal = SoulProposal(java.util.UUID.randomUUID().toString(), heading, text.trim(), why.trim(), System.currentTimeMillis())
+        val next = proposals + proposal
+        val pending = next.filter { it.state == "pending" }.takeLast(20).map { it.id }.toSet()
+        writeAgentFile(agentFile(id, "soul-proposals.json"), UmbraJson.encodeToString(ListSerializer(SoulProposal.serializer()),
+            next.filter { it.state != "pending" || it.id in pending }))
+        return proposal
+    }
+
+    /** Only the user-facing acceptance path applies a proposal; an agent can merely put one in the pending list. */
+    @Synchronized
+    fun resolveSoulProposal(id: String, proposalId: String, accept: Boolean): Boolean {
+        val proposals = soulProposals(id)
+        val proposal = proposals.firstOrNull { it.id == proposalId && it.state == "pending" } ?: return false
+        if (accept) {
+            val file = agentFile(id, "SOUL.md")
+            require(!file.exists() || file.length() <= 2_000_000) { "SOUL file exceeds 2 MB" }
+            val lines = (if (file.exists()) file.readText() else "").trimEnd().lines().toMutableList()
+            val heading = "## ${proposal.section}"
+            val section = lines.indexOfFirst { it.trimEnd() == heading }
+            if (section < 0) lines += listOf("", heading, proposal.text)
+            else {
+                val end = (section + 1 until lines.size).firstOrNull { lines[it].startsWith("## ") || lines[it].startsWith("# ") } ?: lines.size
+                lines.addAll(end, listOf("", proposal.text, ""))
+            }
+            writeAgentFile(file, lines.joinToString("\n").trim() + "\n")
+        }
+        writeAgentFile(agentFile(id, "soul-proposals.json"), UmbraJson.encodeToString(ListSerializer(SoulProposal.serializer()),
+            proposals.map { if (it.id == proposalId) it.copy(state = if (accept) "accepted" else "declined") else it }))
+        return true
+    }
+
+    private fun noteDate(name: String): LocalDate? = if (name.matches(Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}\\.md")))
+        runCatching { LocalDate.parse(name.removeSuffix(".md")) }.getOrNull() else null
+
+    /** Reject links as well as path components so new note and proposal helpers cannot escape an agent's folder. */
+    private fun agentFile(id: String, vararg parts: String): File {
+        require(id.matches(Regex("[A-Za-z0-9_-]{1,128}"))) { "Invalid agent id" }
+        require(!java.nio.file.Files.isSymbolicLink(root.toPath())) { "Linked agent folders are not supported" }
+        var file = root
+        for (part in listOf(id) + parts) {
+            require(part.isNotBlank() && part != "." && part != ".." && '/' !in part && '\\' !in part) { "Invalid agent path" }
+            file = File(file, part)
+            require(!java.nio.file.Files.isSymbolicLink(file.toPath())) { "Linked agent files are not supported" }
+        }
+        require(file.canonicalPath.startsWith(root.canonicalPath + File.separator)) { "Invalid agent path" }
+        return file
+    }
+
+    private fun writeAgentFile(file: File, text: String) {
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        require(bytes.size <= 2_000_000) { "Agent file exceeds 2 MB" }
+        file.parentFile!!.mkdirs()
+        val temp = java.nio.file.Files.createTempFile(file.parentFile!!.toPath(), ".agent-", ".tmp")
+        try {
+            java.nio.file.Files.write(temp, bytes)
+            java.nio.file.Files.move(temp, file.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        } finally { java.nio.file.Files.deleteIfExists(temp) }
+    }
 
     fun timers(id: String): List<AgentTimer> = readList(id, "timers.json", AgentTimer.serializer())
     fun setTimers(id: String, list: List<AgentTimer>) = writeList(id, "timers.json", AgentTimer.serializer(), list)

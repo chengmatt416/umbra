@@ -77,6 +77,7 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
@@ -373,14 +374,15 @@ private fun CollapsedPill(
     val away by androidx.compose.animation.core.animateFloatAsState(if (yielding) 0f else 1f, if (moving) spring(dampingRatio = 0.9f, stiffness = 380f) else androidx.compose.animation.core.snap(), label = "capsule-yield")
     // Covered by the card growing out of it (the card's window is above this one): nothing to draw.
     val covered by capsule.pillHidden.collectAsState()
-    Row(
+    val edge by capsule.edge.collectAsState()
+    SteadyPill(
+        edge, moving,
+        Modifier.graphicsLayer {
+            val k = pop.value * pulse.value * (0.86f + 0.14f * away)
+            scaleX = k; scaleY = k; alpha = if (covered) 0f else away
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(when (edge) { android.view.Gravity.START -> 0f; android.view.Gravity.END -> 1f; else -> 0.5f }, 0f)
+        },
         Modifier
-            .graphicsLayer {
-                val k = pop.value * pulse.value * (0.86f + 0.14f * away)
-                scaleX = k; scaleY = k; alpha = if (covered) 0f else away
-                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
-            }
-            .clip(shape).background(Ink).animateContentSize(spring(dampingRatio = 0.82f, stiffness = 520f))
             .pointerInput(hole, tucked) {
                 // Toward the camera tucks it (the task goes on); outward brings it back; down expands it.
                 var total = Offset.Zero
@@ -413,7 +415,6 @@ private fun CollapsedPill(
                 }
             }
             .heightIn(min = height),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
         val wrap = hole
         if (wrap != null && wrap.centered) {
@@ -443,9 +444,58 @@ private fun CollapsedPill(
                 Box(Modifier.width(8.dp))
                 PillLabel(label, if (needsYou) Attention else Label, moving, Modifier.widthIn(max = room))
             }
-            if (!small && trailing != null) Text(trailing, Modifier.padding(start = 8.dp), fontSize = 12.sp, color = Small, maxLines = 1)
+            // Tabular digits: a clock that ticks keeps its width, so the pill (and its window) keep theirs.
+            if (!small && trailing != null) Text(trailing, Modifier.padding(start = 8.dp), fontSize = 12.sp, color = Small, maxLines = 1, style = TextStyle(fontFeatureSettings = P.tabular))
             Box(Modifier.width(if (gap != null && wrap.contentLeft) gap + 6.dp else 12.dp))
         }
+    }
+}
+
+/**
+ * The pill in a window that changes size as seldom as possible. The window wraps its content (WRAP_CONTENT), and every
+ * change of its width is a relayout in the window manager: animating the pill's width frame by frame resized the
+ * window on every frame, and a resized surface can show a frame before the pill is drawn into it (the flicker), while
+ * each resize also woke the accessibility service. Here the content takes its new size at once and the pill's outline
+ * (and the clip of its content) animates inside a frame that grows to the wider of the two sizes when a change starts
+ * and shrinks to the new one once it has settled: two relayouts per change instead of one per frame. [edge] is the
+ * window's gravity (where it is anchored), so the pill stays on its anchor while the frame changes.
+ */
+@Composable
+private fun SteadyPill(edge: Int, moving: Boolean, frameModifier: Modifier, pillModifier: Modifier, content: @Composable RowScope.() -> Unit) {
+    val drawn = remember { androidx.compose.animation.core.Animatable(-1f) }
+    var target by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    var frame by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    LaunchedEffect(target, moving) {
+        if (target <= 0) return@LaunchedEffect
+        if (drawn.value < 0f || !moving) { drawn.snapTo(target.toFloat()); frame = target; return@LaunchedEffect }
+        frame = maxOf(frame, target)
+        drawn.animateTo(target.toFloat(), spring(dampingRatio = 0.82f, stiffness = 520f))
+        frame = target
+    }
+    fun offset(outer: Float, inner: Float) = when (edge) {
+        android.view.Gravity.START -> 0f
+        android.view.Gravity.END -> outer - inner
+        else -> (outer - inner) / 2f
+    }
+    androidx.compose.ui.layout.Layout(
+        content = {
+            Row(pillModifier.onSizeChanged { target = it.width }, verticalAlignment = Alignment.CenterVertically, content = content)
+        },
+        modifier = frameModifier.drawWithContent {
+            val shown = drawn.value.takeIf { it >= 0f }?.coerceAtMost(size.width) ?: size.width
+            val left = offset(size.width, shown)
+            val outline = Path().apply {
+                addRoundRect(androidx.compose.ui.geometry.RoundRect(left, 0f, left + shown, size.height, CornerRadius(size.height / 2f)))
+            }
+            clipPath(outline) {
+                drawRect(Ink)
+                this@drawWithContent.drawContent()
+            }
+        },
+    ) { measurables, constraints ->
+        val row = measurables.first().measure(constraints.copy(minWidth = 0))
+        val width = maxOf(frame, row.width).coerceAtMost(constraints.maxWidth)
+        layout(width, row.height) { row.place(offset(width.toFloat(), row.width.toFloat()).toInt(), 0) }
     }
 }
 
@@ -458,7 +508,9 @@ private fun PillLabel(label: String, color: Color, moving: Boolean, modifier: Mo
             if (!moving) androidx.compose.animation.EnterTransition.None togetherWith androidx.compose.animation.ExitTransition.None
             else (androidx.compose.animation.slideInVertically(spring(dampingRatio = 0.86f, stiffness = 520f)) { it / 2 } + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(160))) togetherWith
                 (androidx.compose.animation.slideOutVertically(androidx.compose.animation.core.tween(140)) { -it / 2 } + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100))) using
-                androidx.compose.animation.SizeTransform(clip = true)
+                // The new size at once: the pill's outline animates the change (SteadyPill), and a size animated here
+                // would resize the pill's window on every frame.
+                androidx.compose.animation.SizeTransform(clip = true) { _, _ -> androidx.compose.animation.core.snap() }
         },
         label = "pill-label",
     ) { text -> Text(text, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis) }

@@ -169,6 +169,7 @@ fun FileViewerScreen(path: String, sessionId: String? = null, onBack: () -> Unit
                         }
                     }, tiny = true, enabled = !busy && !loading)
                     if (data.kind in setOf(FileKind.Markdown, FileKind.Json, FileKind.Html, FileKind.Svg)) PButton(stringResource(if (source) R.string.files_preview else R.string.files_source), { source = !source }, tiny = true, style = ButtonStyle.Ghost, enabled = !editing)
+                    if (data.kind == FileKind.Html && !editing) PublishChips(data.access.file)
                     if (data.kind == FileKind.Html && !source) PButton(stringResource(if (javaScript) R.string.files_js_disable else R.string.files_js_allow), { javaScript = !javaScript }, tiny = true, style = ButtonStyle.Ghost)
                     if (data.kind !in setOf(FileKind.Image, FileKind.Video, FileKind.Xlsx, FileKind.Csv, FileKind.Tsv, FileKind.Pptx, FileKind.Unsupported, FileKind.Xls) && (data.kind != FileKind.Doc || data.text.isNotEmpty())) {
                         PButton(stringResource(R.string.files_ask), {
@@ -178,6 +179,7 @@ fun FileViewerScreen(path: String, sessionId: String? = null, onBack: () -> Unit
                         }, tiny = true, style = ButtonStyle.Ghost)
                     }
                 }
+                if (data.kind == FileKind.Html) PublishStatus(data.access.file)
                 SelectionAsk(onAsk = { selection = AskSelection(it, resources.getString(R.string.files_selection)) }) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         when {
@@ -190,7 +192,7 @@ fun FileViewerScreen(path: String, sessionId: String? = null, onBack: () -> Unit
                                 else LocalHtml(data.docxHtml, false, Modifier.fillMaxSize()) { selection = AskSelection(it, resources.getString(R.string.files_selection)) }
                             data.kind == FileKind.Pptx -> SlidesViewer(data.pptx!!, editing, busy, ::save) { selection = it }
                             data.kind in setOf(FileKind.Xlsx, FileKind.Csv, FileKind.Tsv) -> SheetsViewer(data, editing, busy, ::save) { selection = it }
-                            data.kind == FileKind.Html && !source -> LocalHtml(data.text, javaScript, Modifier.fillMaxSize()) { selection = AskSelection(it, resources.getString(R.string.files_selection)) }
+                            data.kind == FileKind.Html && !source -> LocalHtml(data.text, javaScript, Modifier.fillMaxSize(), base = data.access.file.parentFile) { selection = AskSelection(it, resources.getString(R.string.files_selection)) }
                             data.kind == FileKind.Markdown && !source -> MarkdownText(data.text, Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), color = P.ink)
                             data.kind == FileKind.Json && !source && data.json != null -> JsonViewer(data.json)
                             else -> SourceText(draft, { draft = it }, editing, data.kind == FileKind.Json, busy)

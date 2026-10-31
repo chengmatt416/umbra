@@ -30,7 +30,7 @@ case "${1:-}" in
     "$ADB" install -r -t app/build/outputs/apk/debug/app-debug.apk
     "$ADB" shell "cmd package compile -m verify -f $PKG" >/dev/null ;;
   grant)
-    "$ADB" shell "am force-stop $PKG; appops set $PKG ACCESS_RESTRICTED_SETTINGS allow; pm grant $PKG android.permission.WRITE_SECURE_SETTINGS; pm grant $PKG android.permission.READ_LOGS; appops set $PKG SYSTEM_ALERT_WINDOW allow; settings put secure enabled_accessibility_services $ACC; settings put secure accessibility_enabled 1; cmd notification allow_listener $NOTIF; cmd deviceidle whitelist +$PKG; settings put global settings_enable_monitor_phantom_procs false; am start -n $PKG/.MainActivity" ;;
+    "$ADB" shell "am force-stop $PKG; appops set $PKG ACCESS_RESTRICTED_SETTINGS allow; pm grant $PKG android.permission.WRITE_SECURE_SETTINGS; pm grant $PKG android.permission.READ_LOGS; pm grant $PKG android.permission.POST_NOTIFICATIONS; appops set $PKG SYSTEM_ALERT_WINDOW allow; settings put secure enabled_accessibility_services $ACC; settings put secure accessibility_enabled 1; cmd notification allow_listener $NOTIF; cmd deviceidle whitelist +$PKG; settings put global settings_enable_monitor_phantom_procs false; am start -n $PKG/.MainActivity" ;;
   helper)
     port=$((41000 + RANDOM % 2000)); tok=$(token)
     apk=$("$ADB" shell pm path $PKG | tr -d '\r' | sed 's/^package://')

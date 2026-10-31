@@ -89,7 +89,12 @@ fun UserMessage(item: ChatItem.User, actions: MessageActions) {
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
                 if (item.steering) Text(stringResource(R.string.chat_steered), fontSize = 10.sp, color = P.amber, fontWeight = FontWeight.SemiBold)
-                if (item.text.isNotBlank()) Text(item.text, fontSize = 15.sp, lineHeight = 22.sp, color = if (app.umbra.agent.ui.porcelain.Theme.mono) app.umbra.agent.ui.porcelain.inkOnPrimary else P.ink)
+                // An answer given on a card reads as the answer, with the card it came from above it.
+                val fromCard = item.text.takeIf { it.startsWith("[Card · ") && "] " in it }
+                val ink = if (app.umbra.agent.ui.porcelain.Theme.mono) app.umbra.agent.ui.porcelain.inkOnPrimary else P.ink
+                if (fromCard != null) Text(fromCard.substringBefore("] ").removePrefix("["), fontSize = 10.5.sp, color = ink.copy(alpha = .7f), fontWeight = FontWeight.SemiBold)
+                val shown = fromCard?.substringAfter("] ") ?: item.text
+                if (shown.isNotBlank()) Text(shown, fontSize = 15.sp, lineHeight = 22.sp, color = ink)
                 if (item.images.isNotEmpty()) Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     item.images.forEach { Base64Picture(it.base64, 96) }
                 }
@@ -155,6 +160,9 @@ val LocalCompactTools = androidx.compose.runtime.staticCompositionLocalOf { fals
 /** One tool call: what it does, whether it runs, its output; specialised for the common tools. */
 @Composable
 fun ToolCard(call: Block.ToolCall, run: ToolRun?, images: List<app.umbra.core.orchestrator.Image>) {
+    // A card the agent showed is the card, not a tool row.
+    // A refused card (over the limit, or data the template could not use) is not drawn: the agent answers in text.
+    if (call.name == app.umbra.agent.cards.CardCalls.SHOW) { if (run?.isError != true) app.umbra.agent.cards.ToolCallCard(call, pending = run == null || run.running); return }
     // Writing to another session or starting a subagent reads as the message it sent.
     if (OutgoingSessionCard(call, run)) return
     var open by remember(call.id) { mutableStateOf(false) }

@@ -97,6 +97,7 @@
     <string name="dest_diagnostics">診斷</string>
     <string name="dest_settings">設定</string>
     <string name="dest_reference">參考</string>
+    <string name="dest_cards">卡片範本</string>
     <string name="ws_empty_title">還沒有工作區</string>
     <string name="ws_empty_body">每個任務都有一個專案資料夾，它產生的檔案會出現在這裡。</string>
     <plurals name="ws_tasks">
